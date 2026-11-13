@@ -78,6 +78,8 @@ jobs:
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action refuses bot-initiated runs by default; Greptile's review is the trigger.
+          allowed_bots: "greptile-apps"
           prompt: |
             Fix valid Greptile findings on the pull request identified
             by the REPO and PR_NUMBER environment variables. The checked-out
