@@ -4,11 +4,17 @@ import re
 import sys
 
 
-def slugify(title, max_len=40, seen=[]):
+def slugify(title, max_len=40, seen=None):
+    if seen is None:
+        seen = []
     words = re.sub(r"[^a-z0-9]+", " ", title.lower()).split()
-    slug = "-".join(words)[: max_len + 1]
-    if slug in seen:
-        slug = slug + "-" + str(len(seen))
+    base = "-".join(words)[:max_len].strip("-")
+    slug = base
+    suffix = 1
+    while slug in seen:
+        tail = "-" + str(suffix)
+        slug = base[: max(max_len - len(tail), 0)].rstrip("-") + tail
+        suffix += 1
     seen.append(slug)
     return slug
 
