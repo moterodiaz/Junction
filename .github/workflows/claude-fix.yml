@@ -75,7 +75,7 @@ jobs:
       - name: Record head before Claude
         id: before
         if: steps.pr.outputs.proceed == 'true'
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: echo "sha=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)" >> "$GITHUB_OUTPUT"
 
       - uses: anthropics/claude-code-action@v1
         if: steps.pr.outputs.proceed == 'true'
@@ -156,11 +156,12 @@ jobs:
             | awk '{s+=$1} END {print s+0}')"
           if [ "$open" = 0 ]; then
             gh pr merge --auto --squash "$PR_NUMBER" --repo "$REPO"
-          elif [ "$(git rev-parse HEAD)" = "$BEFORE_SHA" ]; then
+          elif [ "$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)" = "$BEFORE_SHA" ]; then
+            author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login)"
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
-              --body "needs human: claude-fix could not resolve $open thread(s): $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID"
+              --body "@$author needs human: claude-fix could not resolve $open thread(s): $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID"
             gh api "repos/$REPO/issues/1/comments" \
-              -f body="[Junction's claude-fix] PR #$PR_NUMBER needs human: $open unresolved thread(s), no fix pushed" >/dev/null
+              -f body="[Junction's claude-fix] @$author PR #$PR_NUMBER needs human: $open unresolved thread(s), no fix pushed" >/dev/null
           else
             echo "$open unresolved thread(s); not enabling auto-merge"
           fi
