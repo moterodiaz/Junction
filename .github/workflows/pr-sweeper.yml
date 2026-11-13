@@ -1,0 +1,75 @@
+name: PR Sweeper
+
+# Un-sticks the PR pipeline: nudges missing reviews, and pings the PR author on the
+# board for conflicts or failing CI. Also announces merges so dependents pull main.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  REPO: ${{ github.repository }}
+
+jobs:
+  sweep:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sweep open PRs
+        shell: bash
+        run: |
+          set -euo pipefail
+          board() { gh api "repos/$REPO/issues/1/comments" -f body="[Junction's sweeper] $1" >/dev/null; }
+          # Dedup window: board posts from the last day.
+          since="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)"
+          recent="$(gh api --paginate "repos/$REPO/issues/1/comments?since=$since" --jq '.[].body')"
+          seen() { grep -qF -- "$1" <<<"$recent"; }
+
+          gh pr list -R "$REPO" --state open \
+            --json number,author,isDraft,createdAt,mergeStateStatus,reviews,comments,statusCheckRollup \
+            --jq '.[] | select(.isDraft | not) | @base64' |
+          while read -r row; do
+            j="$(base64 -d <<<"$row")"
+            n="$(jq -r .number <<<"$j")"
+            a="$(jq -r .author.login <<<"$j")"
+
+            # 1. No bot review after 20 min: nudge Greptile once (Devin reviews on its own).
+            reviewed="$(jq '[(.reviews[].author.login), (.comments[].author.login)] | any(test("greptile|devin"))' <<<"$j")"
+            old="$(jq '(now - (.createdAt | fromdateiso8601)) > 1200' <<<"$j")"
+            if [ "$reviewed" = false ] && [ "$old" = true ] \
+               && ! jq -e '.comments[].body | select(test("@greptileai review"))' <<<"$j" >/dev/null; then
+              gh pr comment "$n" -R "$REPO" --body "@greptileai review"
+            fi
+
+            # 2. Conflicts with main: auto-merge is blocked until the author resolves them.
+            if [ "$(jq -r .mergeStateStatus <<<"$j")" = DIRTY ] && ! seen "PR #$n conflicts"; then
+              board "@$a PR #$n conflicts with main. Run git pull --no-rebase, merge origin/main (no rebase, no force-push), then push."
+            fi
+
+            # 3. Failing CI: bots only react to reviews, so nothing else will notice.
+            if jq -e 'any(.statusCheckRollup[]?; .conclusion == "FAILURE")' <<<"$j" >/dev/null && ! seen "PR #$n CI failing"; then
+              board "@$a PR #$n CI failing. Fix on the PR branch and push; auto-merge resumes when checks pass."
+            fi
+          done
+
+  merged:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+      AUTHOR: ${{ github.event.pull_request.user.login }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Announce merge on board
+        run: |
+          gh api "repos/$REPO/issues/1/comments" \
+            -f body="[Junction's sweeper] PR #$PR merged: $TITLE (by @$AUTHOR). Everyone: git pull origin main before your next push." >/dev/null
