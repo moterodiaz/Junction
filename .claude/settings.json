@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"$(git -C \"$CLAUDE_PROJECT_DIR\" branch --show-current)\" != main ] || { echo 'On main: start a worktree first (tools/wt <issue#>-<slug>), then work there.' >&2; exit 2; }",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/no-edit-on-main.sh",
             "timeout": 5
           }
         ]
