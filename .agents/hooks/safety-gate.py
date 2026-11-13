@@ -12,6 +12,47 @@ GIT_OPTS_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PROTECTED = {"main", "master"}
 
 
+def split_segments(cmd):
+    """Split on shell separators, ignoring those inside quotes.
+
+    Inside double quotes only command substitution ($( and backtick) still
+    starts a new command; inside single quotes nothing does.
+    """
+    segs, buf, quote, i = [], [], None, 0
+    while i < len(cmd):
+        c = cmd[i]
+        if c == "\\" and quote != "'" and i + 1 < len(cmd):
+            buf.append(cmd[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+            elif quote == '"' and (c == "`" or cmd.startswith("$(", i)):
+                segs.append("".join(buf))
+                buf = []
+                i += 2 if c == "$" else 1
+                continue
+            buf.append(c)
+            i += 1
+            continue
+        if c in "'\"":
+            quote = c
+            buf.append(c)
+            i += 1
+            continue
+        m = SEGMENT_RE.match(cmd, i)
+        if m:
+            segs.append("".join(buf))
+            buf = []
+            i = m.end()
+            continue
+        buf.append(c)
+        i += 1
+    segs.append("".join(buf))
+    return segs
+
+
 def _git_sub(tokens):
     """Return (subcommand, args) after skipping git's global options."""
     i = 1
@@ -80,7 +121,7 @@ def check_tool_call(tool_call):
         # .env: any mention in the command line, whichever command touches it
         if ENV_RE.search(cmd):
             return False, "Accessing .env via shell commands is prohibited."
-        for seg in SEGMENT_RE.split(cmd):
+        for seg in split_segments(cmd):
             try:
                 tokens = shlex.split(seg)
             except ValueError:
