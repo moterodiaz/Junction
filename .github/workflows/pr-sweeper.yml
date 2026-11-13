@@ -34,7 +34,7 @@ jobs:
           recent="$(gh api --paginate "repos/$REPO/issues/1/comments?since=$since" --jq '.[].body')"
           seen() { grep -qF -- "$1" <<<"$recent"; }
 
-          gh pr list -R "$REPO" --state open \
+          gh pr list -R "$REPO" --state open --limit 200 \
             --json number,author,isDraft,createdAt,mergeStateStatus,reviews,comments,statusCheckRollup \
             --jq '.[] | select(.isDraft | not) | @base64' |
           while read -r row; do
@@ -56,7 +56,7 @@ jobs:
             fi
 
             # 3. Failing CI: bots only react to reviews, so nothing else will notice.
-            if jq -e 'any(.statusCheckRollup[]?; .conclusion == "FAILURE")' <<<"$j" >/dev/null && ! seen "PR #$n CI failing"; then
+            if jq -e 'any(.statusCheckRollup[]?; .conclusion | IN("FAILURE","TIMED_OUT","CANCELLED"))' <<<"$j" >/dev/null && ! seen "PR #$n CI failing"; then
               board "@$a PR #$n CI failing. Fix on the PR branch and push; auto-merge resumes when checks pass."
             fi
           done
