@@ -6,7 +6,10 @@ set -u
 
 ISSUE="${BOARD_ISSUE:-1}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-STATE_DIR="$ROOT/.board"
+# Shared across all worktrees of one clone, so the read cursor and `wait` are per human, not per worktree.
+COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || COMMON=""
+STATE_DIR="${COMMON:+$COMMON/board}"
+STATE_DIR="${STATE_DIR:-$ROOT/.board}"
 
 die() { echo "board: $*" >&2; exit 1; }
 command -v gh >/dev/null 2>&1 || die "gh not found (https://cli.github.com), then run: gh auth login"

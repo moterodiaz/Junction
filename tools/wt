@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# One worktree per agent session: tools/wt <slug> | tools/wt rm <slug>
+# Worktrees live next to the repo in ../<repo>-wt/<slug>, branched from fresh origin/main.
+# ponytail: no registry; `git worktree list` is the registry.
+set -euo pipefail
+main="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+dir="$(dirname "$main")/$(basename "$main")-wt"
+case "${1:-}" in
+  rm) [ -n "${2:-}" ] || { echo "usage: tools/wt rm <slug>" >&2; exit 1; }
+      git -C "$main" worktree remove "$dir/$2" ;;
+  ""|-h|--help) echo "usage: tools/wt <slug>   (e.g. 12-hud-cards)   |   tools/wt rm <slug>" >&2; exit 1 ;;
+  *) git -C "$main" fetch -q origin
+     git -C "$main" worktree add -q "$dir/$1" -b "$1" origin/main
+     echo "$dir/$1" ;;
+esac
