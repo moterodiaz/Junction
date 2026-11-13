@@ -142,8 +142,11 @@ unlock() { rmdir "$STATE_DIR/lock" 2>/dev/null; }
 do_unread() {
   local rc
   lock || return 1
+  # Release on every exit path, including SIGINT/SIGTERM from a killed `wait` or a timed-out hook.
+  # SIGKILL can't be trapped: the stale-lock steal in lock() covers that.
+  trap unlock EXIT; trap 'exit 130' INT; trap 'exit 143' TERM HUP
   _do_unread; rc=$?
-  unlock
+  trap - EXIT INT TERM HUP; unlock
   return $rc
 }
 _do_unread() {
