@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # List local branches already merged into main, and optionally delete them.
+# Branches checked out in any worktree are skipped.
 # Usage: tools/stale-branches [--delete]
 set -euo pipefail
 
-while IFS= read -r b; do
+# Capture first so a failed lookup (no repo, no local main) fails the helper.
+branches=$(git for-each-ref --merged main --format='%(refname:short)%09%(worktreepath)' refs/heads)
+
+while IFS=$'\t' read -r b wt; do
   [ -n "$b" ] || continue
   [ "$b" = "main" ] && continue
+  [ -z "$wt" ] || continue
   echo "$b"
   if [ "${1:-}" = "--delete" ]; then
     git branch -d -- "$b"
   fi
-done < <(git branch --merged main --format='%(refname:short)')
+done <<< "$branches"
