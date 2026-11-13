@@ -42,8 +42,8 @@ jobs:
             n="$(jq -r .number <<<"$j")"
             a="$(jq -r .author.login <<<"$j")"
 
-            # 1. No bot review after 20 min: nudge Greptile once (Devin reviews on its own).
-            reviewed="$(jq '[(.reviews[].author.login), (.comments[].author.login)] | any(test("greptile|devin"))' <<<"$j")"
+            # 1. No Greptile review after 20 min: nudge it once.
+            reviewed="$(jq '[(.reviews[].author.login), (.comments[].author.login)] | any(test("greptile"))' <<<"$j")"
             old="$(jq '(now - (.createdAt | fromdateiso8601)) > 1200' <<<"$j")"
             if [ "$reviewed" = false ] && [ "$old" = true ] \
                && ! jq -e '.comments[].body | select(test("@greptileai review"))' <<<"$j" >/dev/null; then
