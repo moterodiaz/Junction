@@ -26,9 +26,10 @@ Humans over agents. Only the team lead reassigns work between teammates. If anyo
 1. Pick or file an issue. Comment on it or post on the board when you take it.
 2. Branch `<issue#>-<slug>` from fresh `main`.
 3. Small commits. Stage only your own files (no `git add -A`).
-4. Open a PR with `Closes #N`. The author merges their own PR once it works locally.
-5. Always `git fetch` and rebase before pushing. Never force-push shared branches.
-6. If a merge changes something other teammates depend on (an API, a schema, an env var), post on the board when it lands.
+4. Open a PR with `Closes #N`. Greptile reviews it; `claude-fix` addresses its comments and enables auto-merge. Don't hand-fix bot threads unless the board says `needs human`.
+5. Bots push to PR branches, so before pushing run `git pull --no-rebase`. Resolve conflicts by merging `origin/main` into your branch. Never rebase or force-push a pushed branch.
+6. Agents never run `gh pr merge` or approve a PR; only `claude-fix` enables auto-merge. After opening a PR, post its link on the board and move on. The board pings you on conflicts, `needs human`, and merge.
+7. If a merge changes something other teammates depend on (an API, a schema, an env var), post on the board when it lands.
 
 ## 4. Who owns what
 
@@ -40,3 +41,13 @@ TEMPLATE split, not final. The team will agree owners together; until then ask t
 | iPhone orchestrator (STT, prompt router, Claude calls) | TBD | `ios/` |
 | HUD renderer | TBD | `hud/` |
 | Shared contracts (WS message schema) | @moterodiaz (lead) | `contracts/` |
+
+## 5. Supervisor + sub-agents
+
+For an agent that fans work out to sub-agents (Claude → Codex, etc.):
+- Split by file, never by feature. Two sub-agents never edit the same file.
+- One worktree per implementer (`isolation: "worktree"` or `git worktree add`). Never share a working tree.
+- Give each sub-agent an explicit list of files it may touch, plus the contract excerpt it needs.
+- Sub-agents commit on their own branch and stop. They never push, open PRs, merge, or touch `main`.
+- The supervisor reviews each diff, pushes, and opens the PR. Use a fresh reviewer, not the implementer, to check the final diff.
+- Stop and ask the lead on the board for a contract change, a cross-owner edit, or a failing test you did not cause. Never delete or skip a test to pass.

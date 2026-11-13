@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          for f in tools/board .claude/hooks/*.sh; do bash -n "$f"; done
+      # ponytail: placeholder areas; each area drops in an executable test.sh, add real jobs when pi/ios/hud need more.
+      - name: Area tests
+        run: |
+          for d in pi ios hud contracts; do
+            if [ -x "$d/test.sh" ]; then (cd "$d" && ./test.sh); fi
+          done
