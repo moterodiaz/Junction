@@ -116,6 +116,7 @@ jobs:
       # denies `gh pr merge` for agents. Auto-merge still waits for the required `ci` check.
       - name: Enable auto-merge when review threads are resolved
         if: steps.pr.outputs.proceed == 'true'
+        shell: bash  # pipefail: a failed graphql call must fail the step, not read as 0 open threads
         run: |
           # --paginate runs the jq once per page, so sum the per-page counts.
           open="$(gh api graphql --paginate \
