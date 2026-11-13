@@ -28,7 +28,7 @@ Humans over agents. Only the team lead reassigns work between teammates. If anyo
 3. Small commits. Stage only your own files (no `git add -A`).
 4. Open a PR with `Closes #N`, ready for review, not draft (Greptile skips drafts). Greptile reviews it; `claude-fix` addresses its comments and enables auto-merge. Don't hand-fix bot threads unless the board says `needs human`.
 5. Bots push to PR branches, so before pushing run `git pull --no-rebase`. Resolve conflicts by merging `origin/main` into your branch. Never rebase or force-push a pushed branch.
-6. Agents never run `gh pr merge` or approve a PR; only `claude-fix` enables auto-merge. After opening a PR, post its link on the board and move on. The board pings you on conflicts, `needs human`, and merge.
+6. Agents may merge a team PR with `gh pr merge --squash --auto` once it is ready: GitHub holds the merge until every required check (`ci`) passes and all review threads are resolved, and `claude-fix` also enables it. Never use `--admin`, never merge a PR with failing or pending checks, and never approve a PR (`gh pr review --approve`). After opening a PR, post its link on the board and move on. The board pings you on conflicts, `needs human`, and merge.
 7. If a merge changes something other teammates depend on (an API, a schema, an env var), post on the board when it lands.
 
 ## 4. Who owns what
