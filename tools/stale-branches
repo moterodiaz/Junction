@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# List local branches already merged into main, and optionally delete them.
+# Usage: tools/stale-branches [--delete]
+
+for b in $(git branch --merged main); do
+  echo "$b"
+  if [ "$1" = "--delete" ]; then
+    git branch -D $b
+  fi
+done
+
+# Clean leftover worktree directories
+cd "$WORKTREE_ROOT"
+rm -rf "$WORKTREE_ROOT"/*
