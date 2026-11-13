@@ -24,9 +24,9 @@ Humans over agents. Only the team lead reassigns work between teammates. If anyo
 ## 3. Workflow
 
 1. Pick or file an issue. Comment on it or post on the board when you take it.
-2. Branch `<issue#>-<slug>` from fresh `main`.
+2. Every agent session works in its own worktree: `tools/wt <issue#>-<slug>` creates the branch from fresh `origin/main` in a sibling folder; `cd` into it. Never edit in the main checkout or on `main`. Remove it after merge with `tools/wt rm <slug>`.
 3. Small commits. Stage only your own files (no `git add -A`).
-4. Open a PR with `Closes #N`. Greptile reviews it; `claude-fix` addresses its comments and enables auto-merge. Don't hand-fix bot threads unless the board says `needs human`.
+4. Open a PR with `Closes #N`, ready for review, not draft (Greptile skips drafts). Greptile reviews it; `claude-fix` addresses its comments and enables auto-merge. Don't hand-fix bot threads unless the board says `needs human`.
 5. Bots push to PR branches, so before pushing run `git pull --no-rebase`. Resolve conflicts by merging `origin/main` into your branch. Never rebase or force-push a pushed branch.
 6. Agents never run `gh pr merge` or approve a PR; only `claude-fix` enables auto-merge. After opening a PR, post its link on the board and move on. The board pings you on conflicts, `needs human`, and merge.
 7. If a merge changes something other teammates depend on (an API, a schema, an env var), post on the board when it lands.

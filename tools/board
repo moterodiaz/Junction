@@ -6,7 +6,10 @@ set -u
 
 ISSUE="${BOARD_ISSUE:-1}"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-STATE_DIR="$ROOT/.board"
+# Shared across all worktrees of one clone, so the read cursor and `wait` are per human, not per worktree.
+COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || COMMON=""
+STATE_DIR="${COMMON:+$COMMON/board}"
+STATE_DIR="${STATE_DIR:-$ROOT/.board}"
 
 die() { echo "board: $*" >&2; exit 1; }
 command -v gh >/dev/null 2>&1 || die "gh not found (https://cli.github.com), then run: gh auth login"
@@ -122,8 +125,31 @@ render() {
   done
 }
 
+# Serialise the whole read-fetch-print-save cycle: sessions sharing one cursor must not print the same post twice.
+# mkdir is atomic; a lock older than a minute is from a killed process and is stolen.
+lock() {
+  local n=0
+  mkdir -p "$STATE_DIR"
+  until mkdir "$STATE_DIR/lock" 2>/dev/null; do
+    [ -n "$(find "$STATE_DIR/lock" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$STATE_DIR/lock" 2>/dev/null
+    n=$((n + 1)); [ "$n" -le 100 ] || return 1
+    sleep 0.1
+  done
+}
+unlock() { rmdir "$STATE_DIR/lock" 2>/dev/null; }
+
 # Emit unread comments by others, advance cursor. Returns 0 and prints nothing if none. 1 on fetch failure.
 do_unread() {
+  local rc
+  lock || return 1
+  # Release on every exit path, including SIGINT/SIGTERM from a killed `wait` or a timed-out hook.
+  # SIGKILL can't be trapped: the stale-lock steal in lock() covers that.
+  trap unlock EXIT; trap 'exit 130' INT; trap 'exit 143' TERM HUP
+  _do_unread; rc=$?
+  trap - EXIT INT TERM HUP; unlock
+  return $rc
+}
+_do_unread() {
   local all login cur cid cts new maxrow
   login="$(me)" || return 1
   cur="$(get_cursor)"; cid="${cur%% *}"; cts="${cur#* }"
