@@ -106,6 +106,18 @@ jobs:
           claude_args: |
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git add:*),Bash(git commit:*),Bash(git fetch:*),Bash(git merge:*),Bash(git push origin HEAD:*),Bash(git diff:*),Bash(git status:*),Bash(gh api:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(bash -n:*),Bash(./test.sh:*)"
 
+      # A run can finish green while every tool call was denied (nothing pushed, nothing resolved).
+      # Print only the denied calls from the action's saved log so allow-list gaps are visible.
+      - name: Show denied tool calls
+        if: always() && steps.pr.outputs.proceed == 'true'
+        run: |
+          f="$RUNNER_TEMP/claude-execution-output.json"
+          if [ -f "$f" ]; then
+            jq -r '(if type=="array" then .[] else . end) | select(.type=="result") | .permission_denials[]? | "DENIED \(.tool_name): \(.tool_input | tostring | .[0:300])"' "$f"
+          else
+            echo "no execution log at $f"
+          fi
+
       # Pushes made with GITHUB_TOKEN do not trigger pull_request workflows, so the
       # required `ci` check would stay pending on the new head. Dispatch it explicitly.
       - name: Re-run ci on the fixed head
