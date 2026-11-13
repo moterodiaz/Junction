@@ -1,0 +1,32 @@
+{
+  "board-sync": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 hooks/session-start.py",
+        "timeout": 20
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 hooks/board-prompt.py",
+        "timeout": 15
+      }
+    ]
+  },
+  "safety-gate": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command|read_file|edit_file|write_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/safety-gate.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
