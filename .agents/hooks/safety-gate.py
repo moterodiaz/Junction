@@ -7,31 +7,33 @@ from pathlib import Path
 
 
 ENV_RE = re.compile(r"(?:^|[\s/=<>'\"])\.env(?:\.[\w.-]+)?(?=$|[\s'\";|&<>)])")
-SEGMENT_RE = re.compile(r"&&|\|\||[;|&\n]|\$\(|`|\(|\)")
+SEGMENT_RE = re.compile(r"&&|\|\||[;|&\n]")
 GIT_OPTS_WITH_ARG = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 PROTECTED = {"main", "master"}
 
 
-def split_segments(cmd):
-    """Split on shell separators, ignoring those inside quotes.
-
-    Inside double quotes only command substitution ($( and backtick) still
-    starts a new command; inside single quotes nothing does.
-    """
-    segs, buf, quote, i = [], [], None, 0
+def _split(cmd, i=0, stop=None):
+    """Split cmd from index i until `stop` (')' for $(...) or '`' for backticks)."""
+    segs, buf, quote = [], [], None
+    paren_depth = 1 if stop == ")" else 0
     while i < len(cmd):
         c = cmd[i]
         if c == "\\" and quote != "'" and i + 1 < len(cmd):
             buf.append(cmd[i:i + 2])
             i += 2
             continue
+        if stop == "`" and c == "`":
+            segs.append("".join(buf))
+            return segs, i + 1
         if quote:
             if c == quote:
                 quote = None
             elif quote == '"' and (c == "`" or cmd.startswith("$(", i)):
                 segs.append("".join(buf))
                 buf = []
-                i += 2 if c == "$" else 1
+                sub_stop = ")" if c == "$" else "`"
+                sub_segs, i = _split(cmd, i + (2 if c == "$" else 1), sub_stop)
+                segs.extend(sub_segs)
                 continue
             buf.append(c)
             i += 1
@@ -39,6 +41,34 @@ def split_segments(cmd):
         if c in "'\"":
             quote = c
             buf.append(c)
+            i += 1
+            continue
+        if cmd.startswith("$(", i):
+            segs.append("".join(buf))
+            buf = []
+            sub_segs, i = _split(cmd, i + 2, ")")
+            segs.extend(sub_segs)
+            continue
+        if c == "`":
+            segs.append("".join(buf))
+            buf = []
+            sub_segs, i = _split(cmd, i + 1, "`")
+            segs.extend(sub_segs)
+            continue
+        if c == "(":
+            segs.append("".join(buf))
+            buf = []
+            if stop == ")":
+                paren_depth += 1
+            i += 1
+            continue
+        if c == ")":
+            segs.append("".join(buf))
+            buf = []
+            if stop == ")":
+                paren_depth -= 1
+                if paren_depth == 0:
+                    return segs, i + 1
             i += 1
             continue
         m = SEGMENT_RE.match(cmd, i)
@@ -50,6 +80,17 @@ def split_segments(cmd):
         buf.append(c)
         i += 1
     segs.append("".join(buf))
+    return segs, i
+
+
+def split_segments(cmd):
+    """Split on shell separators, ignoring those inside quotes.
+
+    Inside double quotes only command substitution ($( and backtick) still
+    starts a new command with its own quote state; inside single quotes
+    nothing does.
+    """
+    segs, _ = _split(cmd)
     return segs
 
 
