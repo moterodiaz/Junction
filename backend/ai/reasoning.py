@@ -156,7 +156,10 @@ class HttpGeminiClient:
         spoiler_instruction = ""
         use_spoiler_guard = is_spoiler_guard_enabled(spoiler_guard)
         if use_spoiler_guard:
-            reading_horizon = session.get_reading_horizon_summary() or session.book.location or "current position"
+            reading_horizon = (
+                session.get_reading_horizon_summary()
+                or "only the currently visible passage (exact book position unknown)"
+            )
             spoiler_instruction = (
                 f"\nAnti-Spoiler Guard ACTIVE:\n"
                 f"- Reading Horizon: {reading_horizon}\n"
@@ -306,7 +309,10 @@ class StubGeminiClient:
         if is_hamlet:
             if asks_future_spoiler:
                 if use_spoiler_guard:
-                    horizon = session.get_reading_horizon_summary() or location or "current position"
+                    horizon = (
+                        session.get_reading_horizon_summary()
+                        or "only the currently visible passage (exact book position unknown)"
+                    )
                     caption = f"Avoiding spoilers beyond {horizon}."
                     speech_text = (
                         f"Without spoiling events after {horizon}, Hamlet is focused on his current dilemma "
@@ -566,20 +572,21 @@ async def think(
         # No verified passage: never emit unverified source citations
         answer["sources"] = []
 
-    # Update session location and record Q&A exchange
+    # Update session metadata (only record location when grounded to avoid trusting model guesses)
     book = answer.get("book")
     if isinstance(book, dict):
         title = book.get("title")
         author = book.get("author") or ""
-        location = book.get("location") or ""
+        raw_location = book.get("location") or ""
+        trusted_location = raw_location.strip() if (passage_match is not None and isinstance(raw_location, str)) else ""
         if isinstance(title, str) and title.strip():
             session.set_active_book(
                 title=title.strip(),
                 author=author.strip() if isinstance(author, str) else "",
-                location=location.strip() if isinstance(location, str) else "",
+                location=trusted_location,
             )
-        elif isinstance(location, str) and location.strip():
-            session.update_location(location.strip())
+        elif trusted_location:
+            session.update_location(trusted_location)
 
     session.add_exchange(
         question=command,

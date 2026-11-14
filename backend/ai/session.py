@@ -73,6 +73,14 @@ class BookSession:
         self.created_at = time.time()
         self.max_position = max_position
         self.seen_passages = list(seen_passages) if seen_passages is not None else []
+        self._horizon_by_book: Dict[str, Tuple[Optional[Tuple[int, int, int]], List[str]]] = {}
+        active_key = self._book_key(self.book.title)
+        if active_key:
+            self._horizon_by_book[active_key] = (self.max_position, list(self.seen_passages))
+
+    @staticmethod
+    def _book_key(title: Optional[str]) -> str:
+        return (title or "").strip().lower()
 
     def record_seen_passage(
         self,
@@ -99,15 +107,19 @@ class BookSession:
             except (ValueError, TypeError):
                 pass
 
+        active_key = self._book_key(self.book.title) if self.book else ""
+        if active_key:
+            self._horizon_by_book[active_key] = (self.max_position, list(self.seen_passages))
+
     def get_reading_horizon_summary(self) -> str:
-        """Return human-readable summary of furthest reading position."""
+        """Return verified furthest reading position without trusting ungrounded book locations."""
         if self.max_position is not None:
             act, scene, line = self.max_position
             if line:
                 return f"Act {act}, Scene {scene}, line {line}"
             return f"Act {act}, Scene {scene}"
-        if self.book and getattr(self.book, "location", None):
-            return str(self.book.location).strip()
+        if self.seen_passages:
+            return f"Observed {len(self.seen_passages)} unverified passage(s); exact book position unknown"
         return ""
 
     def add_candidate_book(self, book: BookInfo) -> None:
@@ -124,11 +136,15 @@ class BookSession:
         self.candidate_books.append(book)
 
     def set_active_book(self, title: str, author: str = "", location: str = "") -> None:
-        """Update self.book and ensure it is in candidate_books."""
-        norm = title.strip().lower()
+        """Update self.book, keep per-book horizon state isolated, and track in candidate_books."""
+        old_key = self._book_key(self.book.title) if self.book else ""
+        norm = self._book_key(title)
+        if old_key and old_key != norm:
+            self._horizon_by_book[old_key] = (self.max_position, list(self.seen_passages))
+
         matched: Optional[BookInfo] = None
         for b in self.candidate_books:
-            if b.title.strip().lower() == norm:
+            if self._book_key(b.title) == norm:
                 matched = b
                 break
         if matched is not None:
@@ -141,6 +157,13 @@ class BookSession:
             new_book = BookInfo(title=title, author=author, location=location)
             self.book = new_book
             self.candidate_books.append(new_book)
+
+        if old_key != norm:
+            saved_pos, saved_passages = self._horizon_by_book.get(norm, (None, []))
+            self.max_position = saved_pos
+            self.seen_passages = list(saved_passages)
+            if norm:
+                self._horizon_by_book[norm] = (self.max_position, list(self.seen_passages))
 
     def add_exchange(
         self,

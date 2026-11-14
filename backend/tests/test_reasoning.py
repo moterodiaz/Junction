@@ -702,15 +702,17 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.max_position, (3, 1, 64))
 
     def test_get_reading_horizon_summary(self):
-        """REQ-REASON-01: get_reading_horizon_summary formatting."""
-        session = BookSession("s-horizon-1", book=BookInfo(location="Act 1, Scene 1"))
+        """REQ-REASON-01: get_reading_horizon_summary never trusts ungrounded book.location."""
+        session = BookSession("s-horizon-1", book=BookInfo(location="Act 5, Scene 2"))
 
-        # When max_position is None, returns book location
-        self.assertEqual(session.get_reading_horizon_summary(), "Act 1, Scene 1")
+        # When max_position is None and no passage seen, returns empty string (never guessed book.location)
+        self.assertEqual(session.get_reading_horizon_summary(), "")
 
-        # When book location is empty and max_position is None, returns empty string
-        session_empty = BookSession("s-horizon-empty", book=BookInfo(location=""))
-        self.assertEqual(session_empty.get_reading_horizon_summary(), "")
+        # When only unverified passage text was seen (no coordinates), returns unknown-position boundary
+        session.record_seen_passage("Some unrecognized page text")
+        summary_unverified = session.get_reading_horizon_summary()
+        self.assertIn("unknown", summary_unverified.lower())
+        self.assertNotIn("Act 5", summary_unverified)
 
         # When max_position has line=0, returns Act and Scene
         session.record_seen_passage("line 0 test", act=2, scene=2)
@@ -719,6 +721,55 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         # When max_position has line > 0, returns Act, Scene, and line
         session.record_seen_passage("line 68 test", act=3, scene=1, line=68)
         self.assertEqual(session.get_reading_horizon_summary(), "Act 3, Scene 1, line 68")
+
+    def test_book_switch_isolates_reading_horizon_and_seen_passages(self):
+        """PR #221 review: switching books isolates max_position and seen_passages per book."""
+        session = BookSession("s-switch-horizon", book=BookInfo(title="Hamlet"))
+        session.record_seen_passage("Now cracks a noble heart.", act=5, scene=2, line=359)
+        self.assertEqual(session.max_position, (5, 2, 359))
+        self.assertEqual(session.get_reading_horizon_summary(), "Act 5, Scene 2, line 359")
+
+        # Switch to Macbeth -> must NOT inherit Hamlet Act 5 horizon or seen passages
+        session.set_active_book("Macbeth", "William Shakespeare", "")
+        self.assertIsNone(session.max_position)
+        self.assertEqual(session.seen_passages, [])
+        self.assertEqual(session.get_reading_horizon_summary(), "")
+
+        session.record_seen_passage("Fair is foul, and foul is fair", act=1, scene=1, line=12)
+        self.assertEqual(session.max_position, (1, 1, 12))
+
+        # Switching back to Hamlet restores Hamlet's Act 5 progress cleanly
+        session.set_active_book("Hamlet")
+        self.assertEqual(session.max_position, (5, 2, 359))
+        self.assertEqual(session.seen_passages, ["Now cracks a noble heart."])
+
+    async def test_ungrounded_response_does_not_advance_horizon_via_guessed_location(self):
+        """PR #221 review: ungrounded answer with guessed Act 5 location does not pollute horizon."""
+        class _GuessingClient:
+            async def generate_reasoning(self, command, page_text, session, model=DEFAULT_MODEL_REASON, passage_match=None, spoiler_guard=False):
+                return {
+                    "title": "Unknown Novel, Act 5, Scene 2",
+                    "caption": "Guessed later scene.",
+                    "speech_text": "Guessed later scene.",
+                    "image_prompt": "Minimal line art, pure black background (#000000).",
+                    "book": {"title": "Unknown Novel", "author": "Unknown", "location": "Act 5, Scene 2"},
+                    "sources": [],
+                }
+
+        store = SessionStore()
+        await think(
+            "What is happening here?",
+            "Unrecognized passage not in Hamlet corpus at all.",
+            "s-ungrounded-horizon",
+            client=_GuessingClient(),
+            session_store=store,
+            spoiler_guard=True,
+        )
+        session = store.get("s-ungrounded-horizon")
+        self.assertIsNotNone(session)
+        self.assertIsNone(session.max_position)
+        self.assertNotIn("Act 5", session.book.location)
+        self.assertNotIn("Act 5", session.get_reading_horizon_summary())
 
     async def test_think_advances_reading_horizon_automatically(self):
         """REQ-REASON-01: think() records seen passages and monotonically advances max_position."""
