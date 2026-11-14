@@ -8,6 +8,7 @@ Secrets never live in the repo.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -66,6 +67,13 @@ def auth_config(env: Mapping[str, str] | None = None) -> AuthConfig:
     return AuthConfig(enabled=True, ready=mode in ON and bool(token), token=token)
 
 
+def trust_proxy(env: Mapping[str, str] | None = None) -> bool:
+    """Whether X-Forwarded-Proto may be believed. Only behind a proxy that sets it (Modal's
+    modal_app.py image turns this on); a directly exposed server must not trust client headers."""
+    env = os.environ if env is None else env
+    return env.get("WS_TRUST_PROXY", "").strip().lower() in ON and bool(env.get("WS_TRUST_PROXY", "").strip())
+
+
 def max_connections(env: Mapping[str, str] | None = None) -> int:
     env = os.environ if env is None else env
     try:
@@ -87,7 +95,7 @@ def config_problems(env: Mapping[str, str]) -> list[str]:
         except ValueError:
             problems.append(f"{name} must be a number of seconds")
             return None
-        if value <= 0:
+        if not math.isfinite(value) or value <= 0:
             problems.append(f"{name} must be above 0")
             return None
         return value

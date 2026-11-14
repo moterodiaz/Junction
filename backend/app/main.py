@@ -17,7 +17,7 @@ from ai.page_reader import PageReadError
 from stt.speak import audio_router
 
 from . import pipeline
-from .config import auth_config, get_settings, max_connections
+from .config import auth_config, get_settings, max_connections, trust_proxy
 from .latency import StageTimer
 from .messages import Error, Invoke, Stage, Status
 
@@ -84,9 +84,13 @@ def handshake_refusal(websocket: WebSocket) -> int | None:
 
 
 def secure(websocket: WebSocket) -> bool:
-    """WSS, or TLS ended by a proxy in front of the app (Modal sets X-Forwarded-Proto)."""
-    forwarded = websocket.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
-    return websocket.url.scheme == "wss" or forwarded == "https"
+    """WSS, or (only with WS_TRUST_PROXY on) TLS ended by a proxy that sets X-Forwarded-Proto.
+    Without it the header is client-controlled and ignored."""
+    if websocket.url.scheme == "wss":
+        return True
+    if not trust_proxy():
+        return False
+    return websocket.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower() == "https"
 
 
 async def refuse(websocket: WebSocket, status: int) -> None:

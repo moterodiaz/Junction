@@ -31,6 +31,8 @@ image = (
     # Bake the Whisper weights into the image, so a cold start loads them from disk instead of
     # downloading ~0.5 GB (73 s measured) while the phone waits.
     .run_commands(f"python -c \"from faster_whisper import download_model; download_model('{WHISPER_MODEL}')\"")
+    # Modal's proxy ends TLS and sets X-Forwarded-Proto; only here may the app believe it.
+    .env({"WS_TRUST_PROXY": "on"})
     # Never upload local secrets or build junk: keys come only from the Modal secret.
     .add_local_dir(BACKEND_DIR, REMOTE_BACKEND,
                    ignore=[".env", "**/.env", ".venv", "**/__pycache__", "tests"])

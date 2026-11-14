@@ -90,6 +90,11 @@ class DeployValidationTest(unittest.TestCase):
         self.assertIn("STAGE_TIMEOUT_S must be a number of seconds", self.problems(STAGE_TIMEOUT_S="soon"))
         self.assertIn("REQUEST_TIMEOUT_S must be above 0", self.problems(REQUEST_TIMEOUT_S="0"))
 
+    def test_non_finite_timeouts_are_rejected(self):
+        for value in ("nan", "inf"):
+            self.assertIn("STAGE_TIMEOUT_S must be above 0", self.problems(STAGE_TIMEOUT_S=value))
+            self.assertIn("REQUEST_TIMEOUT_S must be above 0", self.problems(REQUEST_TIMEOUT_S=value))
+
     def test_every_problem_is_named_at_once(self):
         msg = self.problems(STAGE_TIMEOUT_S="40", WS_AUTH="on", WS_MAX_CONNECTIONS="0")
         for part in ("STAGE_TIMEOUT_S", "WS_AUTH is on but WS_AUTH_TOKEN is empty", "WS_MAX_CONNECTIONS"):

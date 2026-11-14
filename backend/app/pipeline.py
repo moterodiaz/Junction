@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import math
 import os
 import re
 import threading
@@ -51,8 +52,18 @@ class PipelineError(Exception):
 
 # Both limits sit inside the phone's deadlines (ios/.../Deadline.swift: 30 s without a server
 # message, 90 s overall), so the phone always receives model_timeout instead of hanging up.
-STAGE_TIMEOUT_S = float(os.environ.get("STAGE_TIMEOUT_S", "25"))
-REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "85"))
+def _seconds(name: str, default: float) -> float:
+    """An unparsable value falls back to the default here; config.config_problems reports it
+    by name at startup, so import never dies on a raw ValueError first."""
+    try:
+        value = float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+    return value if math.isfinite(value) else default
+
+
+STAGE_TIMEOUT_S = _seconds("STAGE_TIMEOUT_S", 25.0)
+REQUEST_TIMEOUT_S = _seconds("REQUEST_TIMEOUT_S", 85.0)
 
 # A timed-out transcription cannot be stopped, so cap how many can run (and hold audio) at once.
 _STT_WORKERS = 2
