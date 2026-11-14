@@ -13,7 +13,7 @@ Every agent-written PR names a requirement id and a human owner (the CODEOWNERS 
 | Piece | What it does |
 |---|---|
 | `tools/metrics --gate <PR>` | Works out the PR's areas from its files, the open escapes per area, and who approved the **head commit**. Exit 0 passes; exit 3 holds, naming the escape and who must approve. |
-| `.github/workflows/trust.yml` | Posts the commit status `trust` on the PR's head when the PR changes, a review is submitted or dismissed, an escape issue changes, and every 30 minutes as a backstop. A `gh` failure posts `error`, so the PR stays held. |
+| `.github/workflows/trust.yml` (handed to the lead on #186; agent tokens cannot push workflows) | Posts the commit status `trust` on the PR's head when the PR changes, a review is submitted or dismissed, an escape issue changes, and every 30 minutes as a backstop. A `gh` failure posts `error`, so the PR stays held. |
 | main-protect ruleset | Lists `trust` as a required check, so GitHub itself refuses the merge, auto-merge from `claude-fix` included. **Pending:** the lead adds it; agents cannot change rulesets. |
 
 Choices, with the reason for each:
@@ -22,7 +22,7 @@ Choices, with the reason for each:
 - **A later "changes requested" withdraws an approval.** A comment-only review changes nothing.
 - **The fix for an escape is held too.** It is the change most worth a human look.
 
-The offline tests (`tools/tests/trust_gate.test.sh`, run in `ci`) drive the gate through a fake `gh`:
+The offline tests (`tools/tests/trust_gate.test.sh`; the `ci` step that runs them is in the same handoff) drive the gate through a fake `gh`:
 
 ```
 earned: no open escape
@@ -118,7 +118,7 @@ A retroactive replay over the same PRs found:
 
 ## 6. Limits: what this does not prove
 
-- **The hold is not enforced until the lead adds `trust` to main-protect's required checks.** Until then it is a red status that a merge can ignore. *Owner: @moterodiaz.*
+- **The hold is not enforced until the lead commits `trust.yml` and adds `trust` to main-protect's required checks.** Until then it is a red status that a merge can ignore. *Owner: @moterodiaz.*
 - **"Human approval" rests on a team rule, not on cryptography.** Agents push from their human's account, and an agent could in principle approve another owner's PR. AGENTS.md §3 rule 9 forbids agents from approving; nothing technical stops them.
 - **Escapes are only as complete as the audits.** An escape is a defect someone found. There is no estimate of defects nobody has found.
 - **The cost of a hold was not measured.** That cost is the owner's approval latency. The replay counts the holds, not the minutes they would have taken.
