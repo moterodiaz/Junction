@@ -355,6 +355,76 @@ class SourceLoaderTest(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             find_passage("To be, or not to be", play="Unknown Book")
 
+    def test_find_passage_min_score_one_multiline(self) -> None:
+        """Verify find_passage with min_score=1.0 returns an exact 3-line passage without pruning."""
+        passage = (
+            "To be, or not to be, that is the question:\n"
+            "Whether 'tis nobler in the mind to suffer\n"
+            "The slings and arrows of outrageous fortune"
+        )
+        match = find_passage(passage, play="Hamlet", min_score=1.0)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertEqual(match.line_start, 64)
+        self.assertEqual(match.line_end, 66)
+        self.assertEqual(match.score, 1.0)
+
+    def test_find_passage_shortest_span_across_scenes(self) -> None:
+        """Verify find_passage returns shortest matching line span across multiple candidate scenes."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            play_data = {
+                "id": "tiny_play",
+                "title": "Tiny Play",
+                "full_title": "The Tiny Play",
+                "author": "Tester",
+                "source_url": "https://example.com",
+                "license": "Public Domain",
+                "acts": [
+                    {
+                        "act": 1,
+                        "act_roman": "I",
+                        "scenes": [
+                            {
+                                "scene": 1,
+                                "scene_roman": "I",
+                                "location_desc": "Scene 1",
+                                "lines": [
+                                    {"type": "line", "line": 1, "speaker": "A", "text": "alpha beta"},
+                                    {"type": "line", "line": 2, "speaker": "A", "text": "gamma"},
+                                    {"type": "line", "line": 3, "speaker": "A", "text": "delta epsilon"},
+                                ],
+                            },
+                            {
+                                "scene": 2,
+                                "scene_roman": "II",
+                                "location_desc": "Scene 2",
+                                "lines": [
+                                    {"type": "line", "line": 1, "speaker": "B", "text": "alpha beta gamma"},
+                                    {"type": "line", "line": 2, "speaker": "B", "text": "delta epsilon"},
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+            (tmp_path / "tiny_play.json").write_text(json.dumps(play_data), encoding="utf-8")
+            play = load_play("tiny_play", data_dir=tmp_path)
+            self.assertEqual(play.title, "Tiny Play")
+
+            query = "alpha beta gamma delta epsilon"
+            match = find_passage(query, play="tiny_play", data_dir=tmp_path)
+            self.assertIsNotNone(match)
+            assert match is not None
+            self.assertEqual(match.act, 1)
+            self.assertEqual(match.scene, 2)
+            self.assertEqual(match.line_start, 1)
+            self.assertEqual(match.line_end, 2)
+            self.assertEqual(match.speaker, "B")
+            self.assertEqual(match.text, "alpha beta gamma\ndelta epsilon")
+
 
 if __name__ == "__main__":
     unittest.main()
