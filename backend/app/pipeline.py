@@ -101,7 +101,10 @@ async def read_page(frame: Media) -> str:
     if not os.environ.get("NVIDIA_API_KEY", "").strip():
         return "To be, or not to be, that is the question."
 
-    return await page_reader.read_page(frame)
+    try:
+        return await page_reader.read_page_with_fallback(frame)
+    except page_reader.NoTextFoundError as exc:
+        raise PipelineError("no_text_found", "No readable text was found on the page.", True) from exc
 
 
 async def think(
@@ -168,7 +171,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     await send_stage("reading")
     page_text = await timed(read_page(invoke.frame))
 
-    _read_model = (
+    _read_model = getattr(page_text, "model", None) or (
         page_reader._resolve_config()[2]
         if os.environ.get("NVIDIA_API_KEY", "").strip()
         else "stub"

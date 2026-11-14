@@ -5,13 +5,17 @@ from __future__ import annotations
 # Page reader (PRD Section 4, Issue #28)
 try:
     from .page_reader import (
+        GeminiPageReader,
         NemotronClient,
         NoTextFoundError,
         PageReadError,
         PageReadTimeoutError,
+        PageText,
+        StubGeminiPageReader,
         StubNemotronClient,
         extract_frame_data,
         read_page,
+        read_page_with_fallback,
     )
 except ImportError:
     pass
@@ -61,13 +65,17 @@ except ImportError:
 
 __all__ = [
     # Page reading
+    "GeminiPageReader",
     "NemotronClient",
     "NoTextFoundError",
     "PageReadError",
     "PageReadTimeoutError",
+    "PageText",
+    "StubGeminiPageReader",
     "StubNemotronClient",
     "extract_frame_data",
     "read_page",
+    "read_page_with_fallback",
     # Image generation
     "draw",
     "cleanup_session",
