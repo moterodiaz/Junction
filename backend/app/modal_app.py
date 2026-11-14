@@ -41,6 +41,9 @@ app = modal.App("metalab", image=image)
 @modal.asgi_app()
 def web():
     sys.path.insert(0, REMOTE_BACKEND)
+    import stt
     from app.main import create_app
 
-    return create_app(require_keys=True)  # a missing key in the secret fails the deploy here
+    fastapi_app = create_app(require_keys=True)  # a missing key in the secret fails the deploy here
+    stt.warm()  # download and load Whisper now, so the first spoken request does not wait for it
+    return fastapi_app
