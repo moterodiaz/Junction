@@ -68,23 +68,34 @@ jobs:
       - name: Upsert trust header
         run: |
           set -euo pipefail
+          _rl() {
+            # Non-fatal rate-limit guard: if the command fails and its stderr matches /rate limit/i,
+            # emit a workflow warning and exit 0; any other failure still propagates.
+            local _errf="$RUNNER_TEMP/_rl.err" _rc=0
+            "$@" 2>"$_errf" || _rc=$?
+            if [ "$_rc" -ne 0 ] && grep -qi 'rate limit' "$_errf"; then
+              echo "::warning::trust header skipped: GitHub API rate limit (not a header failure); the next run refreshes it" >&2
+              exit 0
+            fi
+            [ "$_rc" -ne 0 ] && { cat "$_errf" >&2; exit "$_rc"; }
+          }
           if [ ! -x tools/metrics ]; then echo "tools/metrics not on the default branch yet; skipping"; exit 0; fi
           if [ -n "$EVENT_PR" ]; then
             prs="$EVENT_PR"
           elif [ -n "$RUN_PR" ]; then
             prs="$RUN_PR"
           elif [ -n "$RUN_BRANCH" ] && [ "$RUN_BRANCH" != main ]; then
-            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$RUN_BRANCH" --state open --json number --jq '.[].number')"
+            prs="$(_rl gh pr list --repo "$GITHUB_REPOSITORY" --head "$RUN_BRANCH" --state open --json number --jq '.[].number')"
           else
             # Schedule, a run on main, or a claude-fix run started by a PR comment (which reports main as its branch).
-            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number --jq '.[].number')"
+            prs="$(_rl gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number --jq '.[].number')"
           fi
           marker='<!-- metalab-pr-header -->'
-          tools/metrics > "$RUNNER_TEMP/table.md"
+          _rl tools/metrics > "$RUNNER_TEMP/table.md"
           export METRICS_TABLE="$RUNNER_TEMP/table.md"
           for pr in $prs; do
             [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $pr"; exit 1; }
-            tools/metrics --pr "$pr" > "$RUNNER_TEMP/header.md"
+            _rl tools/metrics --pr "$pr" > "$RUNNER_TEMP/header.md"
             list_headers() {
               gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr/comments?per_page=100" \
                 --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id"
