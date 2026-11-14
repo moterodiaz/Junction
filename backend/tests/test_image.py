@@ -4,11 +4,11 @@ import re
 import unittest
 from unittest import mock
 
+from ai import image
 from ai.image import (
     BillingNotEnabledError,
-    DEFAULT_BASE_URL,
-    DEFAULT_MODEL_IMAGE,
     DUMMY_PNG,
+    ImageConfigError,
     StubImageClient,
     asgi_image_app,
     cleanup_session,
@@ -30,11 +30,16 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         clear_all_images()
         reset_billing_state()
         set_image_client(None)
+        self.base_url = mock.patch.dict(
+            "os.environ", {"IMAGE_BASE_URL": "https://images.test"}
+        )
+        self.base_url.start()
 
     def tearDown(self):
         clear_all_images()
         reset_billing_state()
         set_image_client(None)
+        self.base_url.stop()
 
     async def test_draw_success_with_stub(self):
         stub = StubImageClient(billing_enabled=True)
@@ -141,6 +146,45 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         deleted_count = cleanup_session("session-B")
         self.assertEqual(deleted_count, 1)
         self.assertIsNone(get_image(id3))
+
+    async def test_cleanup_discards_generation_that_finishes_afterward(self):
+        started = asyncio.Event()
+        finish = asyncio.Event()
+        stub = StubImageClient(billing_enabled=True)
+
+        async def delayed_generation(model, prompt):
+            started.set()
+            await finish.wait()
+            return DUMMY_PNG
+
+        stub.generate_image = delayed_generation
+        task = asyncio.create_task(draw("Prompt", session_id="racing", client=stub))
+        await started.wait()
+        cleanup_session("racing")
+        finish.set()
+
+        self.assertIsNone(await task)
+        self.assertFalse(any(item.session_id == "racing" for item in image._images.values()))
+        self.assertNotIn("racing", image._session_epochs)
+
+    async def test_missing_base_url_raises_configuration_error(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ImageConfigError, "IMAGE_BASE_URL"):
+                await draw("Prompt", client=StubImageClient())
+
+    def test_unowned_eviction_preserves_active_session_images(self):
+        store_image("active", b"active", session_id="live")
+        for index in range(image.MAX_STORED_IMAGES + 1):
+            store_image(f"unowned-{index}", b"data")
+
+        self.assertIsNotNone(get_image("active"))
+        self.assertIsNone(get_image("unowned-0"))
+        self.assertIsNotNone(get_image(f"unowned-{image.MAX_STORED_IMAGES}"))
+
+    def test_cleanup_without_pending_generation_does_not_retain_epoch(self):
+        for index in range(250):
+            cleanup_session(f"finished-{index}")
+        self.assertEqual(image._session_epochs, {})
 
     def test_single_image_deletion(self):
         item = store_image("test-123", b"pngdata", session_id="s1")

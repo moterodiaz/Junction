@@ -43,7 +43,6 @@ DUMMY_PNG = (
     b"\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
-DEFAULT_BASE_URL = "https://api.metalab.example"
 DEFAULT_MODEL_IMAGE = "gemini-nano-banana-2.1"
 MAX_STORED_IMAGES = 200
 
@@ -62,7 +61,8 @@ _lock = threading.Lock()
 _images: dict[str, StoredImage] = {}
 _session_images: dict[str, set[str]] = defaultdict(set)
 # Bumped on cleanup so in-flight generations for an ended session can be discarded
-_session_epochs: dict[str, int] = defaultdict(int)
+_session_epochs: dict[str, int] = {}
+_pending_generations: dict[str, int] = defaultdict(int)
 
 # Billing state cache: None = not checked yet, True/False = cached check result
 _billing_checked: bool = False
@@ -70,6 +70,16 @@ _billing_enabled: bool = False
 
 # Active client override (e.g. for testing)
 _client_override: Optional[Any] = None
+
+
+def _store_image_locked(item: StoredImage) -> None:
+    _images[item.image_id] = item
+    if item.session_id:
+        _session_images[item.session_id].add(item.image_id)
+    unowned = [stored for stored in _images.values() if stored.session_id is None]
+    while len(unowned) > MAX_STORED_IMAGES:
+        old = unowned.pop(0)
+        _images.pop(old.image_id, None)
 
 
 def store_image(
@@ -87,15 +97,8 @@ def store_image(
         session_id=session_id,
     )
     with _lock:
-        _images[clean_id] = item
-        if session_id:
-            _session_images[session_id].add(clean_id)
-        # Bound memory: evict oldest images (dicts keep insertion order)
-        while len(_images) > MAX_STORED_IMAGES:
-            old_id = next(iter(_images))
-            old = _images.pop(old_id)
-            if old.session_id:
-                _session_images[old.session_id].discard(old_id)
+        # Active-session images live until cleanup; only unowned images are capped.
+        _store_image_locked(item)
     return item
 
 
@@ -119,7 +122,10 @@ def delete_image(image_id: str) -> bool:
 def cleanup_session(session_id: str) -> int:
     """Delete all images associated with session_id. Returns number of deleted images."""
     with _lock:
-        _session_epochs[session_id] += 1
+        if _pending_generations.get(session_id, 0):
+            _session_epochs[session_id] = _session_epochs.get(session_id, 0) + 1
+        else:
+            _session_epochs.pop(session_id, None)
         ids_to_delete = list(_session_images.pop(session_id, set()))
         count = 0
         for img_id in ids_to_delete:
@@ -133,6 +139,8 @@ def clear_all_images() -> None:
     with _lock:
         _images.clear()
         _session_images.clear()
+        _session_epochs.clear()
+        _pending_generations.clear()
 
 
 def reset_billing_state() -> None:
@@ -172,6 +180,10 @@ def format_display_prompt(prompt: str) -> str:
 
 class BillingNotEnabledError(RuntimeError):
     """Raised when pay-as-you-go billing is not enabled for image models."""
+
+
+class ImageConfigError(RuntimeError):
+    """Raised when image serving cannot produce a reachable URL."""
 
 
 class StubImageClient:
@@ -277,11 +289,11 @@ def _get_active_client() -> Any:
 
 def _resolve_base_url(override_url: Optional[str] = None) -> str:
     """Resolve the HTTPS base URL for serving images."""
-    url = (
-        override_url
-        or os.environ.get("IMAGE_BASE_URL")
-        or DEFAULT_BASE_URL
-    ).strip().rstrip("/")
+    url = (override_url or os.environ.get("IMAGE_BASE_URL", "")).strip().rstrip("/")
+    if not url:
+        raise ImageConfigError(
+            "Image serving requires base_url or the IMAGE_BASE_URL environment variable"
+        )
     if not url.startswith("https://"):
         if url.startswith("http://"):
             url = "https://" + url[7:]
@@ -304,6 +316,7 @@ async def draw(
     global _billing_checked, _billing_enabled
 
     active_client = client or _get_active_client()
+    root_url = _resolve_base_url(base_url)
 
     # 1. Billing check on first call (PRD Section 9, Risk C3)
     with _lock:
@@ -347,51 +360,60 @@ async def draw(
 
     # 4. Generate image
     with _lock:
-        start_epoch = _session_epochs[session_id] if session_id else 0
+        start_epoch = _session_epochs.get(session_id, 0) if session_id else 0
+        if session_id:
+            _pending_generations[session_id] += 1
     try:
-        image_bytes = await active_client.generate_image(
-            model=model_name,
-            prompt=conditioned_prompt,
-        )
-    except BillingNotEnabledError as b_err:
-        with _lock:
-            _billing_enabled = False
-        log.warning(
-            "Gemini image generation failed due to billing/tier restriction: %s. "
-            "Returning card with text and speech only.",
-            b_err,
-        )
-        return None
-    except Exception as exc:
-        log.warning(
-            "Gemini image generation failed (%s: %s). Returning card with text and speech only.",
-            type(exc).__name__,
-            exc,
-        )
-        return None
-
-    if not image_bytes:
-        log.warning("Gemini image generator returned empty image bytes.")
-        return None
-
-    # 5. Store image in memory for session lifecycle
-    if session_id:
-        with _lock:
-            ended = _session_epochs[session_id] != start_epoch
-        if ended:
-            log.info("Discarding generated image: session ended during generation.")
+        try:
+            image_bytes = await active_client.generate_image(
+                model=model_name,
+                prompt=conditioned_prompt,
+            )
+        except BillingNotEnabledError as b_err:
+            with _lock:
+                _billing_enabled = False
+            log.warning(
+                "Gemini image generation failed due to billing/tier restriction: %s. "
+                "Returning card with text and speech only.",
+                b_err,
+            )
+            return None
+        except Exception as exc:
+            log.warning(
+                "Gemini image generation failed (%s: %s). Returning card with text and speech only.",
+                type(exc).__name__,
+                exc,
+            )
             return None
 
-    image_id = uuid.uuid4().hex[:16]
-    store_image(
-        image_id=image_id,
-        data=image_bytes,
-        mime_type="image/png",
-        session_id=session_id,
-    )
+        if not image_bytes:
+            log.warning("Gemini image generator returned empty image bytes.")
+            return None
+
+        # Check the epoch and store under one lock so cleanup cannot race between them.
+        image_id = uuid.uuid4().hex[:16]
+        with _lock:
+            if session_id and _session_epochs.get(session_id, 0) != start_epoch:
+                log.info("Discarding generated image: session ended during generation.")
+                return None
+            item = StoredImage(
+                image_id=image_id,
+                data=image_bytes,
+                mime_type="image/png",
+                session_id=session_id,
+            )
+            _store_image_locked(item)
+    finally:
+        if session_id:
+            with _lock:
+                pending = _pending_generations.get(session_id, 1) - 1
+                if pending:
+                    _pending_generations[session_id] = pending
+                else:
+                    _pending_generations.pop(session_id, None)
+                    _session_epochs.pop(session_id, None)
 
     # 6. Build HTTPS URL
-    root_url = _resolve_base_url(base_url)
     image_url = f"{root_url}/img/{image_id}.png"
     return image_url
 
