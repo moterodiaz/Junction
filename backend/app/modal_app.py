@@ -41,6 +41,6 @@ app = modal.App("metalab", image=image)
 @modal.asgi_app()
 def web():
     sys.path.insert(0, REMOTE_BACKEND)
-    from app.main import app as fastapi_app
+    from app.main import create_app
 
-    return fastapi_app
+    return create_app(require_keys=True)  # a missing key in the secret fails the deploy here
