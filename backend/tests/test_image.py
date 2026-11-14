@@ -301,6 +301,28 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(count, 1)
         self.assertIsNone(get_image("env-img"))
 
+    async def test_gemini_image_client_uses_generate_content(self):
+        fake_inline = mock.MagicMock(data=b"\x89PNG\r\n\x1a\nfake")
+        fake_part = mock.MagicMock(inline_data=fake_inline)
+        fake_candidate = mock.MagicMock(content=mock.MagicMock(parts=[fake_part]))
+        fake_response = mock.MagicMock(candidates=[fake_candidate])
+
+        fake_aio_models = mock.MagicMock()
+        fake_aio_models.generate_content = mock.AsyncMock(return_value=fake_response)
+        fake_client = mock.MagicMock()
+        fake_client.aio.models = fake_aio_models
+
+        with mock.patch("google.genai.Client", return_value=fake_client):
+            client = image.GeminiImageClient(api_key="test-key", model="gemini-nano-banana-2.1")
+            result = await client.generate_image("gemini-nano-banana-2.1", "A glowing skull on black")
+
+        self.assertEqual(result, b"\x89PNG\r\n\x1a\nfake")
+        fake_aio_models.generate_content.assert_awaited_once()
+        call_kwargs = fake_aio_models.generate_content.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], "gemini-nano-banana-2.1")
+        self.assertEqual(call_kwargs["contents"], "A glowing skull on black")
+        self.assertEqual(call_kwargs["config"].response_modalities, ["IMAGE"])
+
 
 if __name__ == "__main__":
     unittest.main()
