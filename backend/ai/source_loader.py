@@ -490,15 +490,15 @@ def find_passage(
 
     # 2. Multi-line window search (exact normalized substring)
     if 0.92 >= min_score and getattr(loaded_play, "_scenes", None):
-        for sc in loaded_play._scenes:
-            if padded_query not in sc.norm_text:
-                continue
-            sc_lines = lines[sc.start_idx : sc.end_idx]
-            n_sc = len(sc_lines)
-            max_w = min(max_window_lines, n_sc)
-            first_word = query_words[0]
-
-            for window_size in range(2, max_w + 1):
+        first_word = query_words[0]
+        cand_scenes = [sc for sc in loaded_play._scenes if padded_query in sc.norm_text]
+        # Shortest span across all scenes wins, so window size is the outer loop.
+        for window_size in range(2, max_window_lines + 1):
+            for sc in cand_scenes:
+                sc_lines = lines[sc.start_idx : sc.end_idx]
+                n_sc = len(sc_lines)
+                if window_size > n_sc:
+                    continue
                 for i in range(n_sc - window_size + 1):
                     # To be the shortest matching window, the first line must contain the first word
                     if first_word not in sc_lines[i].norm:
@@ -598,7 +598,7 @@ def find_passage(
         scene_candidates.sort(key=lambda s: s[0], reverse=True)
 
         for overlap, sc in scene_candidates:
-            if 0.6 * overlap + 0.4 <= _best_score:
+            if 0.6 * overlap + 0.4 < _best_score:
                 break
 
             sc_lines = lines[sc.start_idx : sc.end_idx]
@@ -627,14 +627,14 @@ def find_passage(
                         continue
                     real_quick = 2.0 * min(len_query_chars, len_w) / (len_query_chars + len_w)
                     upper_bound = 0.6 * tok_sim + 0.4 * real_quick
-                    if upper_bound > _best_score:
+                    if upper_bound >= _best_score:
                         candidates.append((upper_bound, tok_sim, real_quick, i, w, len_w))
 
             # Sort candidate windows by upper bound descending, tie-breaking by i ascending, w ascending
             candidates.sort(key=lambda c: (-c[0], c[3], c[4]))
 
             for upper_bound, tok_sim, real_quick, i, w, len_w in candidates:
-                if upper_bound <= _best_score:
+                if upper_bound < _best_score:
                     break
                 window_norm = " ".join(sc_lines[k].norm for k in range(i, i + w))
                 sm = SequenceMatcher(None, norm_query, window_norm)
