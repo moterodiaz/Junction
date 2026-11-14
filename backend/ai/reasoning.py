@@ -262,10 +262,14 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
 
     title = str(data.get("title") or f"{session.book.title}, {session.book.location}").strip()
     caption = str(data.get("caption") or "").strip()
+    speech_text = str(data.get("speech_text") or "").strip()
+    if not caption and not speech_text:
+        raise ReasoningError("Model output is missing both caption and speech text")
     if not caption:
-        raise ReasoningError("Model output is missing a caption")
-    speech_text = str(data.get("speech_text") or caption).strip()
-    image_prompt = str(data.get("image_prompt") or f"Illustration of {caption}").strip()
+        caption = speech_text
+    elif not speech_text:
+        speech_text = caption
+    image_prompt = str(data.get("image_prompt") or f"Illustration of {caption or speech_text}").strip()
 
     # Enforce optical lens conditioning on image_prompt if missing
     if "black background" not in image_prompt.lower():
