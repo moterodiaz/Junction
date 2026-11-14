@@ -269,7 +269,7 @@ class GeminiImageClient:
         except Exception as exc:
             msg = str(exc).lower()
             if any(term in msg for term in ("billing", "quota", "payment", "tier", "permission")):
-                log.warning("Billing probe failed (%s)", type(exc).__name__)
+                log.warning("Billing probe failed: %s", exc)
                 return False
             return True
 
@@ -366,7 +366,7 @@ async def draw(
             else:
                 billing_ok = True
         except Exception as exc:
-            log.warning("Image billing check encountered error (%s)", type(exc).__name__)
+            log.warning("Image billing check encountered error: %s", exc)
             billing_ok = False
 
         with _lock:
@@ -409,15 +409,16 @@ async def draw(
             with _lock:
                 _billing_enabled = False
             log.warning(
-                "Gemini image generation failed due to billing/tier restriction (%s). "
+                "Gemini image generation failed due to billing/tier restriction: %s. "
                 "Returning card with text and speech only.",
-                type(b_err).__name__,
+                b_err,
             )
             return None
         except Exception as exc:
             log.warning(
-                "Gemini image generation failed (%s). Returning card with text and speech only.",
+                "Gemini image generation failed (%s: %s). Returning card with text and speech only.",
                 type(exc).__name__,
+                exc,
             )
             return None
 
