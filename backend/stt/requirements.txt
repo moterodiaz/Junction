@@ -1,0 +1,3 @@
+# Speech engine for production (the Modal image, #69). Not installed by test.sh: tests use a stub engine.
+faster-whisper==1.2.1
+av<16  # av 16+ dropped open(metadata_errors=...), which faster-whisper 1.2.1 still passes

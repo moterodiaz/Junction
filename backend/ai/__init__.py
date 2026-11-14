@@ -1,4 +1,4 @@
-"""Backend AI module: page reading, source text loading, book reasoning, and image generation."""
+"""Backend AI module: page reading, source text, book session and reasoning, image generation."""
 
 from __future__ import annotations
 
@@ -33,6 +33,24 @@ from .source_loader import (
     load_play,
     locate_passage,
     set_plays_directory,
+)
+from .session import (
+    BookInfo,
+    BookSession,
+    QAExchange,
+    SessionStore,
+    default_session_store,
+)
+from .reasoning import (
+    DEFAULT_MODEL_REASON,
+    GeminiReasoningClient,
+    HttpGeminiClient,
+    ReasoningError,
+    StubGeminiClient,
+    get_reasoning_client,
+    parse_reasoning_json,
+    set_reasoning_client,
+    think,
 )
 
 # Optional sibling modules if present
@@ -69,4 +87,19 @@ __all__ = [
     "load_play",
     "locate_passage",
     "set_plays_directory",
+    # Book session and reasoning
+    "BookInfo",
+    "BookSession",
+    "QAExchange",
+    "SessionStore",
+    "default_session_store",
+    "DEFAULT_MODEL_REASON",
+    "GeminiReasoningClient",
+    "HttpGeminiClient",
+    "ReasoningError",
+    "StubGeminiClient",
+    "get_reasoning_client",
+    "parse_reasoning_json",
+    "set_reasoning_client",
+    "think",
 ]

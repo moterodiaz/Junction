@@ -6,6 +6,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+import stt
 from ai.page_reader import DEFAULT_MODEL_READ, NoTextFoundError, PageReadTimeoutError, StubNemotronClient
 from app import pipeline
 from app.main import app
@@ -39,7 +40,7 @@ def exchange_bytes(payload, expect):
 
 class WsTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -104,6 +105,8 @@ class WsTest(unittest.TestCase):
         self.assertEqual(reply["message"], "Invalid request.")
 
     def test_audio_command_adds_transcribing_stage(self):
+        stt.set_engine(lambda audio: "explain")
+        self.addCleanup(stt.set_engine, None)
         replies = exchange(invoke(text=None, audio={"mime": "audio/wav", "b64": "AAAA"}), 5)
         self.assertEqual([r.get("stage") for r in replies[:4]],
                          ["transcribing", "reading", "thinking", "drawing"])
@@ -153,7 +156,7 @@ class WsTest(unittest.TestCase):
     def test_real_page_reader_text_reaches_card(self):
         reader = StubNemotronClient(default_response="Text read by Nemotron")
 
-        async def think_with_page_text(command, page_text, session_id):
+        async def think_with_page_text(command, page_text, session_id, **kwargs):
             return {
                 "title": "Read page",
                 "caption": page_text,
