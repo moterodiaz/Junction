@@ -1,0 +1,74 @@
+name: pr-header
+
+# One sticky trust comment per PR (requirement, risk tier, what AI verified, what it refused or escalated,
+# human sign-off), plus a check that the PR names a REQ id (AGENTS.md section 3 rules 7 to 9).
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to refresh
+        required: true
+
+concurrency:
+  group: pr-header-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  req-id:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+      BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - name: PR names a requirement id
+        run: |
+          if ! printf '%s\n%s\n' "$TITLE" "$BODY" | grep -qE 'REQ-[A-Z]+-[0-9]+'; then
+            echo "::error::No REQ id in the PR title or body. Add one from docs/REQUIREMENTS.md (AGENTS.md section 3 rule 7)."
+            exit 1
+          fi
+
+  header:
+    # Fork PRs get a read-only token, so they cannot post; skip them instead of failing.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: read
+      statuses: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      METRICS_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+    steps:
+      # The default branch, not the PR head: the script runs with a write token.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Upsert trust header
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $PR"; exit 1; }
+          if [ ! -x tools/metrics ]; then echo "tools/metrics not on the default branch yet; skipping"; exit 0; fi
+          tools/metrics --pr "$PR" > /tmp/header.md
+          marker='<!-- metalab-pr-header -->'
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@/tmp/header.md >/dev/null
+            echo "updated comment $id"
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@/tmp/header.md >/dev/null
+            echo "created header comment"
+          fi
