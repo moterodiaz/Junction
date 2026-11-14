@@ -124,6 +124,8 @@ Data handling, stated plainly because it is a scoring item and a real concern in
 - Cleared development evidence may persist only without user content or secrets. Do not upload existing agent transcripts wholesale to Entire. Hardware recordings require a cleared public-domain demo, consent and review, not captured user sessions.
 - The camera is meant to be pointed at a page. If a frame has no readable text, we say so and discard it.
 
+<a id="7-websocket-contract-draft"></a>
+
 ## 7. WebSocket contract
 
 `contracts/ws-messages.schema.json` is authoritative (#24). The examples below summarize it, not a parallel draft. Exactly one of `audio` or `text` is non-null; `frame` is currently required in both paths. Display-off/audio-only output does not mean a frame-free input. Frame-free follow-ups, explicit session-end/cancel messages, locality metadata and drawing regions require a coordinated contract task before consumers change.
