@@ -44,7 +44,7 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 
 ## Task specifications
 
-Published dependencies below use actual issue numbers; stable task IDs remain the coordination keys. All 41 new issues were created blocked; 11 existing issues were enriched without changing assignees or open/closed state. The documentation PR is [#127](https://github.com/moterodiaz/Junction/pull/127), pending review/acceptance. Each task is bounded to its named files; proposed new files are not present implementations. Existing issue text/acceptance remains authoritative for already claimed work, augmented by the coordinated metadata rather than silently reassigned.
+Published dependencies below use actual issue numbers; stable task IDs remain the coordination keys. All 41 new issues were created blocked; 11 existing issues were enriched without changing assignees or open/closed state. The specification PR [#127](https://github.com/moterodiaz/Junction/pull/127) merged; documentation task [#123](https://github.com/moterodiaz/Junction/issues/123) gates acceptance of the numbered publication follow-up. Each task is bounded to its named files; proposed new files are not present implementations. Existing issue text/acceptance remains authoritative for already claimed work, augmented by the coordinated metadata rather than silently reassigned.
 
 <!-- task:BASE-C0 -->
 ## BASE-C0: Verify the existing Hamlet source loader
