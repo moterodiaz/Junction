@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import unittest
 from unittest import mock
 
 from ai.decision import DecisionResult, StubDecisionClient, set_decision_client
-from ai.reasoning import DEFAULT_MODEL_REASON, StubGeminiClient, set_reasoning_client
+from ai.reasoning import DEFAULT_MODEL_REASON, StubGeminiClient, parse_reasoning_json, set_reasoning_client
 from ai.session import default_session_store
 from app import pipeline
 from app.messages import Audio, Frame, Invoke, Media
@@ -330,7 +331,8 @@ class PipelineDynamicRoutingTest(unittest.IsolatedAsyncioTestCase):
             card = await pipeline.run(invoke, _noop_send_stage)
 
         self.assertIsNotNone(card)
-        self.assertEqual(card.title, "Hamlet, Act 3, Scene 1")
+        self.assertEqual(card.book.title, "Hamlet")
+        self.assertEqual(card.book.location, pipeline.NO_SOURCE_TEXT)  # "passage" matches no source line
 
     async def test_dynamic_routing_off_preserves_model_reason(self):
         """When DYNAMIC_MODEL_ROUTING is explicitly false, MODEL_REASON env override is preserved."""
@@ -683,3 +685,86 @@ class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCas
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _ModelLikeReasoningClient:
+    """Answers like a model that guesses Hamlet coordinates and a citation for every page, then
+    applies the production parser, so these tests see what a live card would carry."""
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    async def generate_reasoning(self, command, page_text, session, model=DEFAULT_MODEL_REASON, passage_match=None):
+        self.calls.append(passage_match)
+        guessed = json.dumps({
+            "title": "Hamlet, Act 4, Scene 7",
+            "caption": "A guessed caption.",
+            "speech_text": "A guessed explanation.",
+            "image_prompt": "A guessed prompt, pure black background (#000000).",
+            "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 4, Scene 7, line 1"},
+            "sources": [{"title": "Invented edition", "url": "https://example.com/hamlet"}],
+        })
+        return parse_reasoning_json(guessed, session, passage_match=passage_match)
+
+
+# Act/scene from the standard Hamlet act and scene division (Folger/Arden), not from our corpus.
+# Line numbers differ between editions, so only act and scene are checked against the reference.
+_HAMLET_REFERENCE = [
+    ("Frailty, thy name is woman!", "Act 1, Scene 2"),
+    ("Neither a borrower nor a lender be", "Act 1, Scene 3"),
+    ("Something is rotten in the state of Denmark.", "Act 1, Scene 4"),
+    ("Brevity is the soul of wit", "Act 2, Scene 2"),
+    ("To be, or not to be, that is the question", "Act 3, Scene 1"),
+    ("The lady doth protest too much, methinks.", "Act 3, Scene 2"),
+    ("Alas, poor Yorick! I knew him, Horatio", "Act 5, Scene 1"),
+]
+
+_NOT_HAMLET = [
+    "Call me Ishmael. Some years ago, never mind how long precisely",
+    "It is a truth universally acknowledged, that a single man in possession of a good fortune",
+    "Is this a dagger which I see before me, the handle toward my hand?",
+]
+
+
+class PipelineCitationReferenceTest(unittest.IsolatedAsyncioTestCase):
+    """REQ-SRC-01, REQ-BASE-01: citations on the card come from the source text, never the model."""
+
+    def setUp(self):
+        default_session_store.clear()
+        self._client = _ModelLikeReasoningClient()
+        set_reasoning_client(self._client)
+        self._env_patch = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy"})
+        self._env_patch.start()
+        os.environ.pop("DYNAMIC_MODEL_ROUTING", None)
+
+    def tearDown(self):
+        self._env_patch.stop()
+        set_reasoning_client(None)
+        default_session_store.clear()
+
+    async def _card_for(self, page: str, session_id: str):
+        invoke = Invoke(
+            type="invoke", request_id=f"r-{session_id}", session_id=session_id,
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=page):
+            return await pipeline.run(invoke, _noop_send_stage)
+
+    async def test_reference_passages_cite_act_scene_line_and_source_text(self):
+        for i, (page, act_scene) in enumerate(_HAMLET_REFERENCE):
+            with self.subTest(page=page):
+                card = await self._card_for(page, f"s-ref-{i}")
+                self.assertEqual(card.book.title, "Hamlet")
+                self.assertTrue(card.book.location.startswith(act_scene + ", line"), card.book.location)
+                self.assertRegex(card.book.location, r", lines? \d+(-\d+)?$")
+                self.assertEqual(card.title, f"Hamlet, {card.book.location}")
+                self.assertEqual(card.sources[0].url, "https://www.gutenberg.org/ebooks/1524")
+
+    async def test_other_books_take_the_no_source_path(self):
+        for i, page in enumerate(_NOT_HAMLET):
+            with self.subTest(page=page):
+                card = await self._card_for(page, f"s-other-{i}")
+                self.assertIsNone(self._client.calls[-1])
+                self.assertEqual(card.sources, [])
+                self.assertEqual(card.book.location, pipeline.NO_SOURCE_TEXT)
+                self.assertNotRegex(card.title, r"Act \d|Scene \d|line \d")

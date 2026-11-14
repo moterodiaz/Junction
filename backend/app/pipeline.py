@@ -124,6 +124,21 @@ async def read_page(frame: Media) -> str:
         raise PipelineError("no_text_found", "No readable text was found on the page.", True) from exc
 
 
+NO_SOURCE_TEXT = "No source text"
+
+
+def _mark_ungrounded(answer: dict) -> dict:
+    """A card without a verified source passage says so (PRD §2) instead of carrying the
+    model's act/scene/line guess. The reasoning stage empties `sources` exactly when no
+    passage was verified."""
+    if answer.get("sources"):
+        return answer
+    book = dict(answer.get("book")) if isinstance(answer.get("book"), dict) else {}
+    book["location"] = NO_SOURCE_TEXT
+    title = _text(book.get("title")) or "Your page"
+    return {**answer, "title": title, "book": book, "sources": []}
+
+
 async def think(
     command: str,
     page_text: str,
@@ -143,14 +158,16 @@ async def think(
         }
     _ai_sig = inspect.signature(_ai_think)
     if "passage_match" in _ai_sig.parameters:
-        return await _ai_think(
+        answer = await _ai_think(
             command,
             page_text,
             session_id,
             model=model,
             passage_match=passage_match,
         )
-    return await _ai_think(command, page_text, session_id, model=model)
+    else:
+        answer = await _ai_think(command, page_text, session_id, model=model)
+    return _mark_ungrounded(answer)
 
 
 async def draw(image_prompt: str, session_id: str) -> str | None:
