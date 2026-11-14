@@ -159,5 +159,17 @@ reset true
 chain=0 run_step "$SW" "Heartbeat"
 check "heartbeat still chains for a dirty normal PR" '^workflow run pr-sweeper.yml'
 
+# Early pause check: new step runs before secrets and outputs paused correctly.
+reset true
+PR_NUMBER=7 run_step "$CF" "Check integration-paused"
+out_has "paused=true" && ok || bad "early pause: labelled PR should output paused=true: $(cat "$GITHUB_OUTPUT")"
+
+reset true
+PR_NUMBER=8 run_step "$CF" "Check integration-paused"
+out_has "paused=false" && ok || bad "early pause: unlabelled PR should output paused=false: $(cat "$GITHUB_OUTPUT")"
+
+# Structural: Require Claude token and Alert on failure must carry the paused guard.
+grep -qE "steps\.pause\.outputs\.paused != 'true'" "$CF" && ok || bad "workflow must gate on steps.pause.outputs.paused"
+
 echo "pause_automation.test.sh: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]

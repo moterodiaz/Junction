@@ -155,5 +155,26 @@ expect "after release ahmed may claim #200" ok 'Claimed #200' Ahm3d-KA claim 200
 # Lanes still come first after a release.
 expect "after release marcus still gets his lane" ok '^#192 ' Marcus228 next
 
+# Lane task with integration-paused: non-lead owner must be refused.
+# #191 is maksymmatviievskyi's lane step 1, already assigned to them; add integration-paused.
+reset_db
+db '(.issues[] | select(.number == 191) | .labels) += [{name: "integration-paused"}]'
+expect "paused lane claim rejected for non-lead owner" fail 'paused' maksymmatviievskyi claim 191
+expect "paused lane next shows Waiting/paused (not Continue)" ok 'Waiting.*integration-paused' maksymmatviievskyi next
+refute "paused lane next does not say Continue" 'Continue' maksymmatviievskyi next
+# Same task without integration-paused: owner may still continue.
+reset_db
+expect "unpaused lane: claim returns already-yours" ok 'already yours' maksymmatviievskyi claim 191
+expect "unpaused lane: next says Assigned to you" ok 'Assigned to you' maksymmatviievskyi next
+# Unassigned lane step with integration-paused: next offers Waiting, not claim.
+reset_db
+db '(.issues[] | select(.number == 182) | .assignees) = [] | (.issues[] | select(.number == 182) | .labels) += [{name: "integration-paused"}]'
+expect "unassigned paused lane: next shows Waiting" ok 'Waiting.*integration-paused' Ahm3d-KA next
+refute "unassigned paused lane: next does not offer claim" 'Next: tools/task claim 182' Ahm3d-KA next
+# Lead keeps existing behavior: not blocked by pause-label check (is_exempt guard).
+reset_db
+db '(.issues[] | select(.number == 191) | .labels) += [{name: "integration-paused"}]'
+expect "lead claim other owner paused lane: owner error not pause" fail "maksymmatviievskyi's priority-lane" moterodiaz claim 191
+
 echo "task.test.sh: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]

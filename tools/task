@@ -167,6 +167,8 @@ lane_next() {
     printf 'Waiting: #%s is labelled blocked. Do not take other work; wait for the lead (tools/board wait).\n' "$number"
   elif dependencies_open "$body"; then
     printf 'Waiting: #%s has open (or unreadable) dependencies. Do not take other work; wait (tools/board wait).\n' "$number"
+  elif ! is_exempt && has_label "$labels" "$PAUSE_LABEL"; then
+    printf 'Waiting: #%s is paused by the lead (%s). Do not take other work; wait for @%s to release it.\n' "$number" "$PAUSE_LABEL" "$LEAD"
   elif [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
     printf 'Assigned to you. Continue: tools/wt %s-%s (reuse your worktree if it exists)\n' "$number" "$task_slug"
   elif [ -n "$assignees" ]; then
@@ -267,6 +269,7 @@ cmd_claim() {
 
   ! has_label "$labels" blocked || die "#$n is labelled blocked"
   ! dependencies_open "$body" || die "#$n has open (or unreadable) dependencies"
+  ! is_exempt && has_label "$labels" "$PAUSE_LABEL" && die "#$n carries the $PAUSE_LABEL label; only @$LEAD works it until released (AGENTS.md §3 rule 10)"
   if [ -n "$lane_owner" ] && [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
     printf '#%s is already yours. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
     return 0

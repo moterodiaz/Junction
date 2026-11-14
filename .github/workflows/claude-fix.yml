@@ -58,8 +58,17 @@ jobs:
       REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
     steps:
+      - name: Check integration-paused
+        id: pause
+        run: |
+          if out="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '[.labels[].name] | index("integration-paused") != null' 2>/dev/null)"; then
+            echo "paused=$out" >> "$GITHUB_OUTPUT"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
       # A missing secret otherwise passes green while doing nothing, stalling the PR silently.
       - name: Require Claude token
+        if: steps.pause.outputs.paused != 'true'
         env:
           TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
@@ -316,7 +325,7 @@ jobs:
           fi
 
       - name: Alert on failure
-        if: failure()
+        if: failure() && steps.pause.outputs.paused != 'true'
         shell: bash
         run: |
           author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login || true)"
