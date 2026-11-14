@@ -175,13 +175,15 @@ final class AppModel: ObservableObject {
                 }
             }
         } catch is CancellationError {
-            glasses?.stopCamera()
+            // A newer request may own the camera now; whoever cancelled already stopped it.
+            return
         } catch let problem as GlassesProblem {
+            if Task.isCancelled { return }
             glasses?.stopCamera()
             fail(kind(problem), retryable: true)
         } catch {
-            glasses?.stopCamera()
             if Task.isCancelled { return }
+            glasses?.stopCamera()
             fail(.backend, retryable: true)
         }
     }
@@ -191,6 +193,7 @@ final class AppModel: ObservableObject {
             fail(.backend, retryable: false)
             return
         }
+        try Task.checkCancellation()
         let requestId = UUID().uuidString
         activeRequest = requestId
         let message = try Contract.makeInvoke(

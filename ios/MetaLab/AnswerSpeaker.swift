@@ -26,6 +26,7 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
                 if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                     throw URLError(.badServerResponse)
                 }
+                try Task.checkCancellation()
                 try configureRoute()
                 let player = try AVAudioPlayer(data: data)
                 self.player = player
@@ -37,6 +38,7 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
                     try? await Task.sleep(for: .seconds(duration + 0.2))
                 }
             } catch {
+                if Task.isCancelled { return }
                 await speakText(fallbackText)
             }
         }
@@ -65,7 +67,7 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
 
     private func speakText(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, !Task.isCancelled else { return }
         try? configureRoute()
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
