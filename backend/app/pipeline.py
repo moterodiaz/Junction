@@ -10,15 +10,17 @@ import logging
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Awaitable, Callable, TypeVar
+from typing import Awaitable, Callable, Optional, TypeVar
 
 import httpx
 
 import stt
 from ai import image
 from ai import page_reader
+from ai.reasoning import resolve_reason_model
+from ai import think as _ai_think
 
-from .messages import Book, Card, ErrorCode, Invoke, Media, Stage
+from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
 T = TypeVar("T")
@@ -99,14 +101,23 @@ async def read_page(frame: Media) -> str:
     return await page_reader.read_page(frame)
 
 
-async def think(command: str, page_text: str, session_id: str) -> dict:
-    return {
-        "title": "Hamlet, Act 3, Scene 1",
-        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
-        "speech_text": "Hamlet is alone, weighing whether to keep living.",
-        "image_prompt": "A lone prince on a dark stage, bright outline on black",
-        "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
-    }
+async def think(
+    command: str,
+    page_text: str,
+    session_id: str,
+    *,
+    model: Optional[str] = None,
+) -> dict:
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        # offline/test path: byte-identical stub so CI and conformance exchanges are unaffected
+        return {
+            "title": "Hamlet, Act 3, Scene 1",
+            "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+            "speech_text": "Hamlet is alone, weighing whether to keep living.",
+            "image_prompt": "A lone prince on a dark stage, bright outline on black",
+            "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+        }
+    return await _ai_think(command, page_text, session_id, model=model)
 
 
 async def draw(image_prompt: str, session_id: str) -> str | None:
@@ -151,8 +162,24 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         else "stub"
     )
 
+    _reason_model = (
+        resolve_reason_model()
+        if os.environ.get("GEMINI_API_KEY", "").strip()
+        else "stub"
+    )
+
     await send_stage("thinking")
-    answer = await timed(think(command, page_text, invoke.session_id))
+    answer = await timed(think(
+        command, page_text, invoke.session_id,
+        model=_reason_model if _reason_model != "stub" else None,
+    ))
+
+    raw_sources = answer.get("sources") or []
+    sources = [
+        Source(title=s.get("title") or "Source", url=s["url"])
+        for s in raw_sources
+        if isinstance(s, dict) and str(s.get("url") or "").startswith("https://")
+    ]
 
     await send_stage("drawing")
     image_url = await timed(draw(answer["image_prompt"], invoke.session_id))
@@ -164,10 +191,10 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         image_url=image_url,
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
-        sources=[],
+        sources=sources,
         models={
             "read": _read_model,
-            "reason": "stub",
+            "reason": _reason_model,
             "image": _image_model() if image_url else "stub",
         },
     )

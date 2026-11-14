@@ -40,7 +40,7 @@ def exchange_bytes(payload, expect):
 
 class WsTest(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -156,7 +156,7 @@ class WsTest(unittest.TestCase):
     def test_real_page_reader_text_reaches_card(self):
         reader = StubNemotronClient(default_response="Text read by Nemotron")
 
-        async def think_with_page_text(command, page_text, session_id):
+        async def think_with_page_text(command, page_text, session_id, **kwargs):
             return {
                 "title": "Read page",
                 "caption": page_text,

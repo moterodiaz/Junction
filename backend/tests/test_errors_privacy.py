@@ -58,7 +58,7 @@ class ErrorMappingTest(OfflineKeysMixin, unittest.TestCase):
             return replies_to(invoke())[-1]
 
     def test_slow_stage_is_model_timeout(self):
-        async def slow(*args):
+        async def slow(*args, **kwargs):
             await asyncio.sleep(5)
 
         with mock.patch.object(pipeline, "STAGE_TIMEOUT_S", 0.05):
@@ -75,7 +75,7 @@ class ErrorMappingTest(OfflineKeysMixin, unittest.TestCase):
         self.assertNotIn("upstream", reply["message"])
 
     def test_http_client_timeout_is_model_timeout(self):
-        async def http_timeout(*args):
+        async def http_timeout(*args, **kwargs):
             raise httpx.ReadTimeout("read timed out")
 
         reply = self.last_reply_with("think", http_timeout)

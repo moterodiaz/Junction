@@ -1,4 +1,4 @@
-"""Backend AI module: page reading, source text loading, book reasoning, and image generation."""
+"""Backend AI module: page reading, source text, book session and reasoning, image generation."""
 
 from .image import draw, cleanup_session, get_image, format_display_prompt, StubImageClient
 from .page_reader import (
@@ -9,6 +9,24 @@ from .page_reader import (
     StubNemotronClient,
     extract_frame_data,
     read_page,
+)
+from .session import (
+    BookInfo,
+    BookSession,
+    QAExchange,
+    SessionStore,
+    default_session_store,
+)
+from .reasoning import (
+    DEFAULT_MODEL_REASON,
+    GeminiReasoningClient,
+    HttpGeminiClient,
+    ReasoningError,
+    StubGeminiClient,
+    get_reasoning_client,
+    parse_reasoning_json,
+    set_reasoning_client,
+    think,
 )
 
 __all__ = [
@@ -24,4 +42,18 @@ __all__ = [
     "StubNemotronClient",
     "extract_frame_data",
     "read_page",
+    "BookInfo",
+    "BookSession",
+    "QAExchange",
+    "SessionStore",
+    "default_session_store",
+    "DEFAULT_MODEL_REASON",
+    "GeminiReasoningClient",
+    "HttpGeminiClient",
+    "ReasoningError",
+    "StubGeminiClient",
+    "get_reasoning_client",
+    "parse_reasoning_json",
+    "set_reasoning_client",
+    "think",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import unittest
 from unittest import mock
 
@@ -27,6 +28,12 @@ class DummyMedia:
 
 
 class PageReaderTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("MODEL_READ", None)
+
     def test_extract_frame_data_various_types(self):
         # Dict
         mime, b64 = extract_frame_data({"b64": "QUFBQQ==", "mime": "image/jpeg"})

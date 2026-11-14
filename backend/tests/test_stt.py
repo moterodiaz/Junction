@@ -66,6 +66,9 @@ class SpokenInvokeTest(unittest.TestCase):
         self.transcript = " Draw this. "
         stt.set_engine(engine)
         self.addCleanup(stt.set_engine, None)
+        patcher = mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def exchange(self, message, expect):
         with TestClient(app).websocket_connect("/ws") as ws:
