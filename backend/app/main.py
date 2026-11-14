@@ -36,8 +36,8 @@ async def handle(websocket: WebSocket, raw: str) -> None:
     request_id = None
     try:
         data = json.loads(raw)
-        if isinstance(data, dict):
-            request_id = data.get("request_id")
+        if isinstance(data, dict) and isinstance(data.get("request_id"), str):
+            request_id = data["request_id"]
         invoke = Invoke.model_validate(data)
     except (ValueError, ValidationError) as exc:
         await send(websocket, Error(request_id=request_id, code="internal",
@@ -51,6 +51,11 @@ async def handle(websocket: WebSocket, raw: str) -> None:
         card = await pipeline.run(invoke, send_stage)
     except WebSocketDisconnect:
         raise
+    except pipeline.PipelineError as exc:
+        log.info("request %s failed: %s", invoke.request_id, exc.code)
+        await send(websocket, Error(request_id=invoke.request_id, code=exc.code,
+                                    message=exc.message, retryable=exc.retryable))
+        return
     except Exception:
         log.exception("pipeline failed for %s", invoke.request_id)
         await send(websocket, Error(request_id=invoke.request_id, code="internal",

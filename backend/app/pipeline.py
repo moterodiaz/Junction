@@ -1,18 +1,54 @@
-"""Pipeline stages (PRD section 3, step 4). Each stage is a stub that later tasks replace:
-transcribe -> #27 (backend/stt/), read_page -> #28, think -> #30, draw -> #31.
+"""Pipeline stages (PRD section 3, step 4). Stubs that later tasks replace:
+read_page -> #28, think -> #30, draw -> #31. Speech to text lives in backend/stt/ (#27).
 """
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import binascii
+import logging
 from typing import Awaitable, Callable
 
-from .messages import Book, Card, Invoke, Media, Stage
+import stt
+
+from .messages import Book, Card, ErrorCode, Invoke, Media, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
 
+log = logging.getLogger("metalab")
+
+
+class PipelineError(Exception):
+    """A failure the phone should see as a contract error with this code."""
+
+    def __init__(self, code: ErrorCode, message: str, retryable: bool):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+
+
+UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this."
+
 
 async def transcribe(audio: Media) -> str:
-    return "explain"
+    try:
+        clip = base64.b64decode(audio.b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise PipelineError("stt_failed", "The audio clip could not be decoded.", True) from exc
+    try:
+        return await asyncio.to_thread(stt.transcribe, clip)
+    except Exception as exc:
+        log.exception("speech engine failed on a %d byte %s clip", len(clip), audio.mime)
+        raise PipelineError("stt_failed", "Speech recognition failed. Try again.", True) from exc
+
+
+def command_from(utterance: str) -> stt.Command:
+    command = stt.match_command(utterance)
+    if command is None:
+        raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
+    return command
 
 
 async def read_page(frame: Media) -> str:
@@ -34,15 +70,25 @@ async def draw(image_prompt: str) -> str | None:
 
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
-    """Run every stage in order, reporting each one before it starts."""
+    """Run every stage, reporting each one before the phone waits on it.
+
+    Transcribing and reading the page run at the same time; reading is cancelled
+    if the spoken command is not one we know, or anything else fails before it is used.
+    """
     if invoke.text is not None:
-        command = invoke.text.strip()
+        command = command_from(invoke.text)
+        await send_stage("reading")
+        page_text = await read_page(invoke.frame)
     else:
         await send_stage("transcribing")
-        command = await transcribe(invoke.audio)
-
-    await send_stage("reading")
-    page_text = await read_page(invoke.frame)
+        reading = asyncio.create_task(read_page(invoke.frame))
+        try:
+            command = command_from(await transcribe(invoke.audio))
+            await send_stage("reading")
+            page_text = await reading
+        finally:
+            if not reading.done():  # any early exit: do not leave the page read running
+                reading.cancel()
 
     await send_stage("thinking")
     answer = await think(command, page_text, invoke.session_id)

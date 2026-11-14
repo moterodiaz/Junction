@@ -4,6 +4,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+import stt
 from app import pipeline
 from app.main import app
 
@@ -39,6 +40,8 @@ class WsTest(unittest.TestCase):
         self.assertIsNone(card["audio_url"])
 
     def test_audio_command_adds_transcribing_stage(self):
+        stt.set_engine(lambda audio: "explain")
+        self.addCleanup(stt.set_engine, None)
         replies = exchange(invoke(text=None, audio={"mime": "audio/wav", "b64": "AAAA"}), 5)
         self.assertEqual([r.get("stage") for r in replies[:4]],
                          ["transcribing", "reading", "thinking", "drawing"])
@@ -60,6 +63,15 @@ class WsTest(unittest.TestCase):
         with TestClient(app).websocket_connect("/ws") as ws:
             ws.send_text("not json")
             self.assertEqual(ws.receive_json()["type"], "error")
+            ws.send_json(invoke())
+            self.assertEqual(ws.receive_json()["type"], "status")
+
+    def test_non_string_request_id_is_rejected_without_closing(self):
+        with TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_json(invoke(request_id={}))
+            reply = ws.receive_json()
+            self.assertEqual(reply["type"], "error")
+            self.assertIsNone(reply["request_id"])
             ws.send_json(invoke())
             self.assertEqual(ws.receive_json()["type"], "status")
 
