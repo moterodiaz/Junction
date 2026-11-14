@@ -13,7 +13,27 @@ jobs:
       - uses: actions/checkout@v4
       - name: Shell syntax
         run: |
-          for f in tools/board tools/wt .claude/hooks/*.sh; do bash -n "$f"; done
+          for f in tools/* .claude/hooks/*.sh; do
+            [ -f "$f" ] || continue
+            if head -n1 "$f" | grep -q bash; then bash -n "$f"; fi
+          done
+      - name: Guard hook tests
+        run: |
+          if [ -x ".claude/hooks/bash-guard.test.sh" ]; then
+            .claude/hooks/bash-guard.test.sh
+          fi
+      - name: Areas have tests
+        run: |
+          for d in ios backend contracts; do
+            [ -d "$d" ] || continue
+            code_files="$(git ls-files "$d" | grep -vE "^${d}/(test\.sh|README[^/]*|\.gitkeep)$" | head -1)"
+            if [ -n "$code_files" ]; then
+              if [ ! -x "$d/test.sh" ]; then
+                echo "::error::$d has code but no executable test.sh"
+                exit 1
+              fi
+            fi
+          done
       # ponytail: placeholder areas; each area drops in an executable test.sh, add real jobs when ios/backend/contracts need more.
       - name: Area tests
         run: |
