@@ -1,0 +1,5 @@
+MetaLabCore/.build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.build/
