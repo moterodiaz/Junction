@@ -9,7 +9,7 @@ from unittest import mock
 from ai.reasoning import DEFAULT_MODEL_REASON, StubGeminiClient, set_reasoning_client
 from ai.session import default_session_store
 from app import pipeline
-from app.messages import Invoke, Media
+from app.messages import Frame, Invoke, Media
 
 _STUB_ANSWER = {
     "title": "Hamlet, Act 3, Scene 1",
@@ -81,14 +81,6 @@ async def _noop_send_stage(stage):
     pass
 
 
-_INVOKE = Invoke(
-    type="invoke",
-    request_id="r-run",
-    session_id="s-run",
-    frame=Media(mime="image/jpeg", b64="AAAA"),
-    text="explain",
-)
-
 _STUB_ANSWER_WITH_SOURCES = {
     "title": "Hamlet, Act 3, Scene 1",
     "caption": "Live caption.",
@@ -101,6 +93,10 @@ _STUB_ANSWER_WITH_SOURCES = {
 
 class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self._invoke = Invoke(
+            type="invoke", request_id="r-run", session_id="s-run",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
         default_session_store.clear()
         self._stub = StubGeminiClient(default_answer=_STUB_ANSWER_WITH_SOURCES)
         set_reasoning_client(self._stub)
@@ -109,6 +105,7 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("MODEL_REASON", None)  # restored when the patch stops; keeps default-model asserts hermetic
 
     def tearDown(self):
+        del self._invoke
         self._env_patch.stop()
         set_reasoning_client(None)
         default_session_store.clear()
@@ -116,7 +113,7 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
     async def test_sources_populated_and_reason_model_reported(self):
         """Live path: card.sources mirrors Gemini sources; models.reason is DEFAULT_MODEL_REASON."""
         with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
-            card = await pipeline.run(_INVOKE, _noop_send_stage)
+            card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(len(card.sources), 1)
         self.assertEqual(card.sources[0].url, "https://www.gutenberg.org/ebooks/1524")
         self.assertEqual(card.sources[0].title, "Project Gutenberg Hamlet")
@@ -135,7 +132,7 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
         })
         set_reasoning_client(stub)
         with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
-            card = await pipeline.run(_INVOKE, _noop_send_stage)
+            card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(len(card.sources), 2)
         self.assertEqual(card.sources[0].url, "https://example.com/good")
         self.assertEqual(card.sources[1].url, "https://example.com/no-title")
@@ -146,7 +143,7 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
         custom_model = "gemini-custom-7b"
         with mock.patch.dict(os.environ, {"MODEL_REASON": custom_model}), \
              mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page"):
-            card = await pipeline.run(_INVOKE, _noop_send_stage)
+            card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(card.models["reason"], custom_model)
         self.assertEqual(self._stub.calls[0]["model"], custom_model)
 
@@ -163,25 +160,30 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
         })
         set_reasoning_client(stub)
         with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
-            card = await pipeline.run(_INVOKE, _noop_send_stage)
+            card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(len(card.sources), 1)
         self.assertEqual(card.sources[0].url, "https://example.com/ok")
 
 
 class PipelineRunOfflinePathTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self._invoke = Invoke(
+            type="invoke", request_id="r-run", session_id="s-run",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
         self._env_patch = mock.patch.dict(os.environ)
         self._env_patch.start()
         os.environ.pop("GEMINI_API_KEY", None)
         os.environ.pop("NVIDIA_API_KEY", None)
 
     def tearDown(self):
+        del self._invoke
         self._env_patch.stop()
 
     async def test_sources_empty_and_reason_model_is_stub(self):
         """Offline path: card.sources is empty; models.reason is 'stub'."""
         with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
-            card = await pipeline.run(_INVOKE, _noop_send_stage)
+            card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(card.sources, [])
         self.assertEqual(card.models["reason"], "stub")
 
