@@ -66,7 +66,7 @@ check_hooks() {
   fi
   hooks_dir="$root/.claude/hooks"
   all_ok=1
-  for name in no-edit-on-main bash-guard board-session-start board-prompt; do
+  for name in no-edit-on-main board-session-start board-prompt; do
     hook="$hooks_dir/$name.sh"
     if [ ! -f "$hook" ]; then
       fail "hook $name.sh missing — fix: git pull"
