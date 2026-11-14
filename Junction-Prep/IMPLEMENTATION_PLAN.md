@@ -68,8 +68,7 @@ By agreement with the lead (@moterodiaz), @Marcus228 is authorized for cross-are
 | `STT_ENGINE` | `whisper` | Optional | Speech-to-text engine selection: `whisper` (`faster-whisper`) or `gemini` (`gemini-3.5-transcribe` with vocabulary biasing). |
 | `DECISION_ENABLE_SPOILER_CHECK` | `false` | Optional | Flag (`true`/`false`) enabling anti-spoiler reading horizon check via modular `DecisionQuestionSpec`. |
 | `DECISION_TIMEOUT_S` | `2.0` | Optional | Maximum timeout for decision routing (bounded <= 2.0s). |
-| `IMAGE_BASE_URL` | *(Derived from request / host)* | Optional | Base URL for serving generated PNG images and synthesized WAV audio clips over HTTPS. |
-| `MODAL_SECRET_NAME` | `metalab` | Optional | Modal secret holding deployed backend credentials. |
+| `IMAGE_BASE_URL` | *(None)* | Required for generated media URLs | Explicit public HTTPS base URL for serving generated PNG images and synthesized WAV audio clips; not derived from the request or host. |
 
 ## Four-stream entry points
 
