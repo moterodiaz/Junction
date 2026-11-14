@@ -63,7 +63,12 @@ class GeminiSpeechClient:
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE))),
             ),
         )
-        part = next(p for p in response.candidates[0].content.parts if p.inline_data)
+        if not response.candidates or not response.candidates[0].content:
+            raise RuntimeError("no content candidates in speech response")
+        parts = response.candidates[0].content.parts or []
+        part = next((p for p in parts if p.inline_data), None)
+        if part is None or not part.inline_data:
+            raise RuntimeError("no inline audio data in speech response")
         rate = re.search(r"rate=(\d+)", part.inline_data.mime_type or "")
         return part.inline_data.data, int(rate.group(1)) if rate else SAMPLE_RATE
 
@@ -146,12 +151,32 @@ def to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
     return out.getvalue()
 
 
+def _resolve_base_url() -> Optional[str]:
+    """Resolve public HTTPS base URL for audio clips (PRD section 4, section 7)."""
+    base = os.environ.get("IMAGE_BASE_URL", "").strip().rstrip("/")
+    if not base:
+        return None
+    if not base.startswith("https://"):
+        if base.startswith("http://"):
+            base = "https://" + base[7:]
+        else:
+            base = f"https://{base}"
+    return base
+
+
 async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     """Return an https URL for the spoken text, or None to let the phone speak it."""
     # Same public base as generated images (backend/ai/image.py); the contract needs https.
-    base = os.environ.get("IMAGE_BASE_URL", "").strip().rstrip("/")
+    base = _resolve_base_url()
     client = _client or _gemini_client()
-    if client is None or not base.startswith("https://"):
+    if client is None:
+        log.info("speech synthesis skipped: no TTS client or GEMINI_API_KEY unset")
+        return None
+    if base is None:
+        log.info("speech synthesis skipped: IMAGE_BASE_URL unset")
+        return None
+    if not text or not text.strip():
+        log.info("speech synthesis skipped: empty speech_text")
         return None
     epoch = _epochs.get(session_id, 0) if session_id is not None else None
     try:
@@ -161,8 +186,12 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
                     type(exc).__name__)
         return None
     if session_id is not None and _epochs.get(session_id, 0) != epoch:
+        log.info("speech synthesis dropped: session ended during synthesis")
         return None  # the session ended while this speech was being made
     pcm, rate = (result, SAMPLE_RATE) if isinstance(result, bytes) else result
+    if not pcm:
+        log.warning("speech synthesis returned empty audio")
+        return None
     return f"{base}/audio/{store(to_wav(pcm, rate), session_id)}.wav"
 
 

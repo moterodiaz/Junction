@@ -19,6 +19,7 @@ import httpx
 
 import stt
 from stt.speak import discard as discard_clip, speak
+import ai.decision
 from ai import image
 from ai import page_reader
 from ai.reasoning import default_session_store, resolve_reason_model
@@ -162,6 +163,36 @@ def _image_model() -> str:
     return name.strip() or image.DEFAULT_MODEL_IMAGE
 
 
+def _is_dynamic_routing_active() -> bool:
+    val = os.environ.get("DYNAMIC_MODEL_ROUTING")
+    if val is not None and val.strip().lower() in ("0", "false", "no", "off"):
+        return False
+
+    try:
+        client = ai.decision.get_decision_client()
+        if not isinstance(client, ai.decision.GeminiDecisionClient):
+            return True
+    except Exception:
+        pass
+
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return False
+
+    if val is not None and val.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+
+    try:
+        from .config import get_settings
+
+        cfg_val = get_settings().dynamic_model_routing
+        if str(cfg_val).strip().lower() in ("1", "true", "yes", "on"):
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
 _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
@@ -228,12 +259,19 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run every stage in order, reporting each one before it starts.
 
     An unknown command fails before the page is read, so no model call is wasted on it.
+    When dynamic routing is active, the student utterance is preserved and evaluated
+    via Gemini Decisions API before thinking.
     """
+    dynamic_routing = _is_dynamic_routing_active()
+
     if invoke.text is not None:
-        command = command_from(invoke.text)
+        utterance = invoke.text
     else:
         await send_stage("transcribing")
-        command = command_from(await timed(transcribe(invoke.audio)))
+        utterance = await timed(transcribe(invoke.audio))
+
+    if not dynamic_routing:
+        command = command_from(utterance)
 
     await send_stage("reading")
     page_text = await timed(read_page(invoke.frame))
@@ -244,25 +282,40 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         else "stub"
     )
 
-    _reason_model = (
-        resolve_reason_model()
-        if os.environ.get("GEMINI_API_KEY", "").strip()
-        else "stub"
-    )
+    decision = None
+    if dynamic_routing:
+        session = default_session_store.get_or_create(invoke.session_id)
+        decision = await timed(ai.decision.decide(utterance, page_text, session))
+        if decision.fallback_used and (stt.match_command(utterance) is None):
+            raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
+
+        client = ai.decision.get_decision_client()
+        if os.environ.get("GEMINI_API_KEY", "").strip() or not isinstance(client, ai.decision.GeminiDecisionClient):
+            _reason_model = decision.recommended_model
+        else:
+            _reason_model = "stub"
+        think_prompt = utterance
+    else:
+        _reason_model = (
+            resolve_reason_model()
+            if os.environ.get("GEMINI_API_KEY", "").strip()
+            else "stub"
+        )
+        think_prompt = command
 
     await send_stage("thinking")
     answer = await timed(think(
-        command, page_text, invoke.session_id,
+        think_prompt, page_text, invoke.session_id,
         model=_reason_model if _reason_model != "stub" else None,
     ))
-
 
     await send_stage("drawing")
     # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit
     # would see. It is optional: None on any failure or timeout, and the phone speaks the text.
     async def _speak() -> str | None:
         try:
-            return await asyncio.wait_for(speak(answer["speech_text"], invoke.session_id), STAGE_TIMEOUT_S)
+            speech_text = answer.get("speech_text") or answer.get("caption") or ""
+            return await asyncio.wait_for(speak(speech_text, invoke.session_id), STAGE_TIMEOUT_S)
         except Exception as exc:
             log.warning("Speech unavailable: %s", type(exc).__name__)
             return None
@@ -279,7 +332,11 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
 
     speaking = asyncio.create_task(_speak())
     try:
-        image_url = await _draw()
+        skip_draw = decision is not None and (decision.speak_only or not decision.needs_image)
+        if skip_draw:
+            image_url = None
+        else:
+            image_url = await _draw()
     except BaseException:
         # The request fails, so its clip would never reach the phone: stop or delete it (#109).
         speaking.cancel()

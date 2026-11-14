@@ -25,6 +25,10 @@ DEFAULTS = {
     "MODEL_REASON": "gemini-4-argon",
     "MODEL_IMAGE": "gemini-nano-banana-2.1",
     "MODEL_TTS": "gemini-3.8-flash-tts",
+    "MODEL_DECISION": "gemini-decision-1",
+    "MODEL_REASON_FAST": "gemini-3.5-flash-lite",
+    "MODEL_REASON_DEEP": "gemini-4-carbon",
+    "DYNAMIC_MODEL_ROUTING": "false",
 }
 
 
@@ -41,6 +45,10 @@ class Settings:
     model_reason: str
     model_image: str
     model_tts: str
+    model_decision: str = "gemini-decision-1"
+    model_reason_fast: str = "gemini-3.5-flash-lite"
+    model_reason_deep: str = "gemini-4-carbon"
+    dynamic_model_routing: str = "false"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
