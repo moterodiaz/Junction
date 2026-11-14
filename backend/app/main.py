@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 
@@ -46,10 +48,16 @@ async def health() -> dict:
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
+    """Handle one request at a time, but keep listening while it runs: a disconnect cancels
+    the request (no further model calls, nothing saved to the book session), and a message
+    that arrives meanwhile is handled next (#111)."""
     await websocket.accept()
+    receiving: asyncio.Task | None = None
     try:
         while True:
-            event = await websocket.receive()
+            receiving = receiving or asyncio.create_task(websocket.receive())
+            event = await receiving
+            receiving = None
             if event["type"] == "websocket.disconnect":
                 break
             raw = event.get("text")
@@ -57,9 +65,20 @@ async def ws(websocket: WebSocket) -> None:
                 raw = event.get("bytes")  # the iPhone client sends JSON as binary frames
             if raw is None:
                 continue
-            await handle(websocket, raw)
+            handling = asyncio.create_task(handle(websocket, raw))
+            receiving = asyncio.create_task(websocket.receive())
+            await asyncio.wait({handling, receiving}, return_when=asyncio.FIRST_COMPLETED)
+            if receiving.done() and receiving.result()["type"] == "websocket.disconnect":
+                handling.cancel()
+                with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect):
+                    await handling
+                break
+            await handling  # a new message (if any) waits in `receiving` for the next turn
     except WebSocketDisconnect:
         pass
+    finally:
+        if receiving is not None and not receiving.done():
+            receiving.cancel()
 
 
 async def handle(websocket: WebSocket, raw: str | bytes) -> None:
@@ -93,6 +112,9 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         card = await pipeline.run(invoke, send_stage)
         await send(websocket, card)
         outcome = "card"
+    except asyncio.CancelledError:
+        outcome = "cancelled"  # the phone hung up mid-request
+        raise
     except WebSocketDisconnect:
         outcome = "disconnected"
         raise
