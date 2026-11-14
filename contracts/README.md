@@ -57,3 +57,22 @@ It also checks that every recording passes the schema, that every sent invoke pa
 ### When to run `record.py`
 
 Only for an intentional contract change (a new stage, a new error code, a changed flow). A failing harness otherwise means the backend drifted from the contract: fix the backend, not the recording.
+
+## Remote mode
+
+`test_remote.py` replays the same exchanges against a running backend over a real socket. It is opt-in:
+
+```sh
+WS_URL=wss://<modal-url>/ws ./test.sh
+WS_URL=wss://<modal-url>/ws WS_TIMEOUT_S=600 ./test.sh   # longer per-reply wait
+```
+
+- `WS_URL`: the backend's `/ws` endpoint. Without it the remote test is reported as skipped.
+- `WS_TIMEOUT_S`: how long to wait for each reply, in seconds (default 300, since Nemotron page reading takes minutes). A missing reply, a refused connection or an unknown host fails the run with a clear message instead of hanging.
+
+A live server runs real models on the recorded media (an empty WAV, a 20-byte JPEG), so its outcomes can differ from the stubbed recordings, for example `stt_failed` instead of a card. Remote mode therefore:
+
+- **enforces** that every reply passes `ws-messages.schema.json` and that the flow is valid: status stages in PRD order, then exactly one `card` or `error` per send, each echoing the invoke's `request_id`;
+- **reports only** differences from the recordings (`type`, `stage`, `request_id`, `code`, `retryable`, reply count) as drift on stderr. Drift never fails the run.
+
+CI never sets `WS_URL`, so it stays local and needs no network or keys. It still covers the socket path: `LocalServerRemoteModeTests` starts `uvicorn app.main:app` from `../backend` on a free localhost port with the model keys unset, and runs remote mode against it.
