@@ -140,8 +140,8 @@ def check_segment(tokens):
         if sub == "commit" and "--amend" in rest:
             return "git commit --amend is prohibited."
     elif exe == "gh":
-        if args[:2] == ["pr", "merge"]:
-            return "gh pr merge is prohibited (only claude-fix auto-merges per AGENTS.md)."
+        if args[:2] == ["pr", "merge"] and "--admin" in args:
+            return "gh pr merge --admin is prohibited (AGENTS.md §3 rule 9)."
         if args[:2] == ["pr", "review"] and any(a == "--approve" or a == "-a" for a in args):
             return "Approving PRs via gh CLI is prohibited for agents."
     elif exe == "rm":
