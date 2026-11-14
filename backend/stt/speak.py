@@ -44,17 +44,26 @@ _gemini: Optional["GeminiSpeechClient"] = None
 
 class GeminiSpeechClient:
     def __init__(self, api_key: str, model: str):
-        self.api_key, self.model = api_key, model
+        self.api_key, self.model, self._configured_model = api_key, model, model
         self._genai: Any = None
 
-    async def synthesize(self, text: str) -> tuple[bytes, int]:
-        """Return (16-bit mono PCM, sample rate) for text."""
+    async def list_tts_models(self) -> list[str]:
+        """Names of the models this key can use for speech, for diagnosing a wrong MODEL_TTS."""
         from google import genai
-        from google.genai import types
 
         if self._genai is None:
             self._genai = genai.Client(api_key=self.api_key)
-        response = await self._genai.aio.models.generate_content(
+        names = []
+        async for m in await self._genai.aio.models.list():
+            name = (getattr(m, "name", "") or "").removeprefix("models/")
+            if "tts" in name.lower():
+                names.append(name)
+        return sorted(names)
+
+    async def _generate(self, text: str) -> Any:
+        from google.genai import types
+
+        return await self._genai.aio.models.generate_content(
             model=self.model,
             contents=text,
             config=types.GenerateContentConfig(
@@ -63,6 +72,37 @@ class GeminiSpeechClient:
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE))),
             ),
         )
+
+    async def synthesize(self, text: str) -> tuple[bytes, int]:
+        """Return (16-bit mono PCM, sample rate) for text.
+
+        If the configured model does not exist for this key (HTTP 404), switch once to the best
+        TTS model the key can use (Flash before Pro, stable before preview) and retry, so a
+        wrong MODEL_TTS in the secret costs one slower request instead of every spoken answer."""
+        from google import genai
+
+        if self._genai is None:
+            self._genai = genai.Client(api_key=self.api_key)
+        failed_model = self.model
+        try:
+            response = await self._generate(text)
+        except Exception as exc:
+            if getattr(exc, "code", None) != 404 and getattr(exc, "status", None) != "NOT_FOUND":
+                raise
+            _orig_exc = exc
+            try:
+                names = await self.list_tts_models()
+            except Exception as lookup_exc:
+                log.warning("TTS model list failed during fallback: %s", type(lookup_exc).__name__)
+                raise _orig_exc from None
+            best = min(names, key=lambda n: ("flash" not in n.lower(), "preview" in n.lower(), n), default=None)
+            if best is None or best == failed_model:
+                exc.tts_models = names
+                raise
+            if self.model == failed_model:
+                log.warning("TTS model %s not found; using %s from now on", failed_model, best)
+                self.model = best
+            response = await self._generate(text)
         if not response.candidates or not response.candidates[0].content:
             raise RuntimeError("no content candidates in speech response")
         parts = response.candidates[0].content.parts or []
@@ -164,6 +204,47 @@ def _resolve_base_url() -> Optional[str]:
     return base
 
 
+def describe_failure(exc: BaseException, text: str = "", key: str = "") -> str:
+    """What to log about a failed synthesis: the exception type, the provider's HTTP code and
+    status name, and a short single-line reason. Never the answer text or the API key."""
+    parts = [type(exc).__name__]
+    code, status = getattr(exc, "code", None), getattr(exc, "status", None)
+    if isinstance(code, int):
+        parts.append(f"code={code}")
+    if isinstance(status, str) and status:
+        parts.append(f"status={status}")
+    raw = " ".join(str(getattr(exc, "message", "") or "").split())
+    for secret in (" ".join(key.split()), " ".join(text.split())):
+        if secret and secret in raw:
+            raw = raw.replace(secret, "[redacted]")
+    reason = raw[:200]
+    if reason:
+        parts.append(f"reason={reason}")
+    return " ".join(parts)
+
+
+_listed_models = False
+
+
+async def log_tts_models(client: Any, exc: Any = None) -> None:
+    """After a model-not-found error, log which TTS models this key can use (names only, once per
+    process), so a wrong MODEL_TTS can be fixed from the log. Reuses names already fetched by
+    synthesize() (attached as exc.tts_models) to avoid a second network round-trip."""
+    global _listed_models
+    if _listed_models or not hasattr(client, "list_tts_models"):
+        return
+    _listed_models = True
+    cached = getattr(exc, "tts_models", None) if exc is not None else None
+    if cached is not None:
+        log.warning("TTS models available to this key: %s", ", ".join(cached[:12]) or "none")
+        return
+    try:
+        names = await asyncio.wait_for(client.list_tts_models(), 10)
+        log.warning("TTS models available to this key: %s", ", ".join(names[:12]) or "none")
+    except Exception as exc:
+        log.warning("could not list TTS models: %s", type(exc).__name__)
+
+
 async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     """Return an https URL for the spoken text, or None to let the phone speak it."""
     # Same public base as generated images (backend/ai/image.py); the contract needs https.
@@ -183,7 +264,9 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
         result = await asyncio.wait_for(client.synthesize(text), TTS_TIMEOUT_S)
     except Exception as exc:
         log.warning("speech synthesis failed, the phone will use its own voice: %s",
-                    type(exc).__name__)
+                    describe_failure(exc, text, getattr(client, "api_key", "")))
+        if getattr(exc, "code", None) == 404 or getattr(exc, "status", None) == "NOT_FOUND":
+            await log_tts_models(client, exc)
         return None
     if session_id is not None and _epochs.get(session_id, 0) != epoch:
         log.info("speech synthesis dropped: session ended during synthesis")
@@ -202,9 +285,14 @@ def _gemini_client() -> Optional[GeminiSpeechClient]:
     model = os.environ.get("MODEL_TTS", "").strip() or DEFAULT_MODEL_TTS
     if not key:
         return None
-    if _gemini is None or (_gemini.api_key, _gemini.model) != (key, model):
+    if _gemini is None or (_gemini.api_key, _gemini._configured_model) != (key, model):
         _gemini = GeminiSpeechClient(key, model)
     return _gemini
+
+
+def active_speech_client() -> Optional[Any]:
+    """Return the current TTS client without creating one; None if no client or key."""
+    return _client or _gemini
 
 
 audio_router = APIRouter()

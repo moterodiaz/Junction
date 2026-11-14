@@ -109,6 +109,275 @@ class SpeakTest(SpeakBase):
         self.assertNotIn(secret_user_speech, log_text)
         self.assertIn("RuntimeError", log_text)
 
+    def provider_error(self, code, status, message):
+        """What google.genai raises for an HTTP error: .code, .status and .message."""
+        err = RuntimeError(message)
+        err.code, err.status, err.message = code, status, message
+        return err
+
+    def failure_log(self, error, text="hello there", api_key="KEY-do-not-log-1234"):
+        client = StubSpeech(error=error)
+        client.api_key = api_key
+        speak.set_speech_client(client)
+        with self.assertLogs("metalab.speak", level="INFO") as captured:
+            self.assertIsNone(asyncio.run(speak.speak(text, "s1")))
+        return " ".join(captured.output)
+
+    def test_a_provider_failure_logs_its_status_and_reason(self):
+        out = self.failure_log(self.provider_error(400, "INVALID_ARGUMENT", "Unsupported voice name\nfor this model"))
+        self.assertIn("code=400", out)
+        self.assertIn("status=INVALID_ARGUMENT", out)
+        self.assertIn("reason=Unsupported voice name for this model", out)
+
+    def test_the_failure_log_never_holds_the_key_or_the_text(self):
+        message = "bad request for KEY-do-not-log-1234 while speaking: secret words here"
+        out = self.failure_log(self.provider_error(403, "PERMISSION_DENIED", message), text="secret words here")
+        self.assertNotIn("KEY-do-not-log-1234", out)
+        self.assertNotIn("secret words here", out)
+        self.assertIn("[redacted]", out)
+
+    def test_the_reason_is_cut_to_one_short_line(self):
+        out = self.failure_log(self.provider_error(500, "INTERNAL", "x" * 5000))
+        self.assertLess(len(out), 600)
+
+    def test_a_missing_model_logs_the_tts_models_the_key_can_use(self):
+        class Lister(StubSpeech):
+            async def list_tts_models(self):
+                return ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"]
+        speak._listed_models = False
+        client = Lister(error=self.provider_error(404, "NOT_FOUND", "models/gemini-3.8-flash-tts is not found"))
+        speak.set_speech_client(client)
+        with self.assertLogs("metalab.speak", level="INFO") as captured:
+            asyncio.run(speak.speak("hello", "s1"))
+        out = " ".join(captured.output)
+        self.assertIn("status=NOT_FOUND", out)
+        self.assertIn("TTS models available to this key: gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts", out)
+
+    def fake_genai(self, models, fail_models):
+        """A stand-in for genai.Client: calls to a model in fail_models raise a 404 like the provider."""
+        calls = []
+
+        class Err(Exception):
+            code, status = 404, "NOT_FOUND"
+            message = "model not found"
+
+        async def generate_content(model, contents, config):
+            calls.append(model)
+            if model in fail_models:
+                raise Err("not found")
+            part = SimpleNamespace(inline_data=SimpleNamespace(data=b"\x01\x00" * 100, mime_type="audio/L16;rate=24000"))
+            return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))])
+
+        async def listing():
+            for name in models:
+                yield SimpleNamespace(name="models/" + name)
+
+        async def list_models():
+            return listing()
+
+        client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+            generate_content=generate_content, list=list_models)))
+        return client, calls
+
+    def test_a_missing_model_falls_back_to_the_best_tts_model_and_retries_once(self):
+        fake, calls = self.fake_genai(
+            ["gemini-2.5-pro-preview-tts", "gemini-2.5-flash-preview-tts", "gemini-2.0-flash", "gemini-3.1-flash-tts"],
+            fail_models={"gemini-3.8-flash-tts"})
+        client = speak.GeminiSpeechClient("KEY", "gemini-3.8-flash-tts")
+        client._genai = fake
+        pcm, rate = asyncio.run(client.synthesize("hello"))
+        self.assertEqual((len(pcm), rate), (200, 24000))
+        self.assertEqual(calls, ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts"])  # stable Flash beats preview and Pro
+        self.assertEqual(client.model, "gemini-3.1-flash-tts")
+        asyncio.run(client.synthesize("again"))
+        self.assertEqual(calls[2:], ["gemini-3.1-flash-tts"])  # remembered: no second 404
+
+    def test_no_other_tts_model_means_the_error_stands(self):
+        fake, calls = self.fake_genai(["gemini-2.0-flash"], fail_models={"gemini-3.8-flash-tts"})
+        client = speak.GeminiSpeechClient("KEY", "gemini-3.8-flash-tts")
+        client._genai = fake
+        with self.assertRaises(Exception) as caught:
+            asyncio.run(client.synthesize("hello"))
+        self.assertEqual(caught.exception.code, 404)
+        self.assertEqual(calls, ["gemini-3.8-flash-tts"])
+
+    def test_other_errors_never_switch_models(self):
+        fake, calls = self.fake_genai(["gemini-3.1-flash-tts"], fail_models=set())
+
+        async def boom(model, contents, config):
+            calls.append(model)
+            err = RuntimeError("bad voice")
+            err.code, err.status = 400, "INVALID_ARGUMENT"
+            raise err
+        fake.aio.models.generate_content = boom
+        client = speak.GeminiSpeechClient("KEY", "gemini-3.8-flash-tts")
+        client._genai = fake
+        with self.assertRaises(RuntimeError):
+            asyncio.run(client.synthesize("hello"))
+        self.assertEqual(calls, ["gemini-3.8-flash-tts"])
+        self.assertEqual(client.model, "gemini-3.8-flash-tts")
+
+    def test_recovered_model_not_reset_on_next_speak_call(self):
+        """Thread 1: after model recovery, speak() must reuse the client without reverting to the broken model."""
+        speak._gemini = None
+        speak._listed_models = False
+        calls = []
+
+        class Err(Exception):
+            code, status, message = 404, "NOT_FOUND", "not found"
+
+        async def gen(model, contents, config):
+            calls.append(model)
+            if model == "gemini-broken":
+                raise Err()
+            part = SimpleNamespace(inline_data=SimpleNamespace(
+                data=b"\x01\x00" * 8, mime_type="audio/L16;rate=24000"))
+            return SimpleNamespace(
+                candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))])
+
+        async def listing():
+            yield SimpleNamespace(name="models/gemini-flash-tts")
+
+        async def list_models():
+            return listing()
+
+        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+            generate_content=gen, list=list_models)))
+
+        patched_env = {"GEMINI_API_KEY": "KEY", "MODEL_TTS": "gemini-broken", "IMAGE_BASE_URL": BASE}
+        with mock.patch.dict(os.environ, patched_env):
+            with mock.patch("google.genai.Client", lambda api_key: fake):
+                asyncio.run(speak.speak("first", "s1"))
+                after_first = len(calls)
+                asyncio.run(speak.speak("second", "s1"))
+
+        self.assertIn("gemini-broken", calls[:after_first])
+        self.assertEqual(calls[after_first:], ["gemini-flash-tts"])  # no retry of broken model
+
+    def test_describe_failure_redacts_secret_spanning_truncation_boundary(self):
+        """Thread 2: a secret that starts before the 200-char cutoff must still be fully redacted."""
+        padding = "x" * 190
+        secret_text = "TOP_SECRET_DATA"
+        message = padding + secret_text + " extra"
+        err = self.provider_error(400, "BAD", message)
+        result = speak.describe_failure(err, text=secret_text)
+        self.assertNotIn("TOP_SECRET_DATA", result)
+        self.assertIn("[redacted]", result)
+
+    def test_describe_failure_redacts_multiline_speech_text(self):
+        """Thread 2: multiline speech text must be matched after whitespace normalization."""
+        secret = "my secret\nphrase"
+        message = "leaked: my secret phrase here"
+        err = self.provider_error(400, "BAD", message)
+        result = speak.describe_failure(err, text=secret)
+        self.assertNotIn("my secret phrase", result)
+        self.assertIn("[redacted]", result)
+
+    def test_model_list_error_in_synthesize_reraises_original_404(self):
+        """Thread 3: if list_tts_models() raises during fallback, the original 404 is preserved."""
+        speak._listed_models = False
+
+        class Err(Exception):
+            code, status, message = 404, "NOT_FOUND", "model not found"
+
+        async def gen(model, contents, config):
+            raise Err()
+
+        async def list_models():
+            raise ConnectionError("network down")
+
+        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+            generate_content=gen, list=list_models)))
+
+        client = speak.GeminiSpeechClient("KEY", "gemini-broken")
+        client._genai = fake
+        speak.set_speech_client(client)
+        with self.assertLogs("metalab.speak", level="INFO") as captured:
+            result = asyncio.run(speak.speak("hello", "s1"))
+        self.assertIsNone(result)
+        out = " ".join(captured.output)
+        self.assertIn("status=NOT_FOUND", out)
+        self.assertIn("TTS model list failed", out)
+
+    def test_model_list_called_at_most_once_on_persistent_404(self):
+        """Thread 4: list_tts_models() must be called once total, not once in synthesize and again in speak."""
+        list_calls = []
+
+        class Err(Exception):
+            code, status, message = 404, "NOT_FOUND", "not found"
+
+        async def gen(model, contents, config):
+            raise Err()
+
+        async def listing():
+            list_calls.append(1)
+            if False:
+                yield  # make this an empty async generator
+
+        async def list_models():
+            return listing()
+
+        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+            generate_content=gen, list=list_models)))
+
+        speak._listed_models = False
+        client = speak.GeminiSpeechClient("KEY", "gemini-broken")
+        client._genai = fake
+        speak.set_speech_client(client)
+
+        with self.assertLogs("metalab.speak", level="INFO"):
+            asyncio.run(speak.speak("hello", "s1"))
+
+        self.assertEqual(len(list_calls), 1)
+
+    def test_active_speech_client_exposes_recovered_model(self):
+        """Thread 5: active_speech_client().model is the recovered model; _configured_model is original."""
+        speak._gemini = None
+        speak._listed_models = False
+
+        class Err(Exception):
+            code, status, message = 404, "NOT_FOUND", "not found"
+
+        async def gen(model, contents, config):
+            if model == "gemini-broken":
+                raise Err()
+            part = SimpleNamespace(inline_data=SimpleNamespace(
+                data=b"\x01\x00" * 8, mime_type="audio/L16;rate=24000"))
+            return SimpleNamespace(
+                candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))])
+
+        async def listing():
+            yield SimpleNamespace(name="models/gemini-flash-tts")
+
+        async def list_models():
+            return listing()
+
+        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+            generate_content=gen, list=list_models)))
+
+        patched_env = {"GEMINI_API_KEY": "KEY", "MODEL_TTS": "gemini-broken", "IMAGE_BASE_URL": BASE}
+        with mock.patch.dict(os.environ, patched_env):
+            with mock.patch("google.genai.Client", lambda api_key: fake):
+                asyncio.run(speak.speak("hello", "s1"))
+
+        client = speak.active_speech_client()
+        self.assertIsNotNone(client)
+        self.assertEqual(client.model, "gemini-flash-tts")
+        self.assertEqual(client._configured_model, "gemini-broken")
+
+    def test_other_failures_do_not_list_models(self):
+        class Lister(StubSpeech):
+            listed = False
+
+            async def list_tts_models(self):
+                Lister.listed = True
+                return []
+        speak._listed_models = False
+        speak.set_speech_client(Lister(error=self.provider_error(429, "RESOURCE_EXHAUSTED", "quota")))
+        with self.assertLogs("metalab.speak", level="INFO"):
+            asyncio.run(speak.speak("hello", "s1"))
+        self.assertFalse(Lister.listed)
+
     def test_logging_never_echoes_speech_text_when_skipped(self):
         secret_user_speech = "SUPER_SECRET_USER_WORDS_67890"
         speak.set_speech_client(None)
