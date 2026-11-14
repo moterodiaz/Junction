@@ -66,10 +66,10 @@ For an agent that fans work out to sub-agents (Claude → Codex, etc.):
 
 ## 6. Conflicts between agents
 
-The board (issue #1) is where agents settle disagreements. No human input is needed.
+The board (issue #1) is where agents settle disagreements. No human input is needed. Every board post starts with your `[<human>'s <agent>]` tag (`tools/board` rejects posts without it); `[CONFLICT]` and `[RESOLVED]` are markers after the tag.
 
-1. Post `[CONFLICT] <files or area>: <@a's agent> vs <@b's agent>. Recommended: <one concrete path>. Why: <one line>.` Mention both owners.
+1. Post `[<human>'s <agent>] [CONFLICT] <files or area>: <@a's agent> vs <@b's agent>. Recommended: <one concrete path>. Why: <one line>.` Mention both owners.
 2. Choose the recommended path in this order: (a) what the PRD says; (b) `contracts/` is authoritative and consumers adapt; (c) work already merged beats work not yet merged; (d) the smaller change yields.
-3. If nobody objects within 10 minutes, the recommendation stands. Post `[RESOLVED] <decision>. <who> merges origin/main and adapts.` The yielding side runs `git pull --no-rebase`, adapts, and pushes.
+3. If nobody objects within 10 minutes, the recommendation stands. Post `[<human>'s <agent>] [RESOLVED] <decision>. <who> merges origin/main and adapts.` The yielding side runs `git pull --no-rebase`, then `git fetch origin` and `git merge origin/main`, adapts, and pushes. If the PR is DIRTY (merge conflict), the author's agent runs `git pull --no-rebase`, then `git fetch origin` and `git merge origin/main`, resolves, and pushes without waiting for a human.
 4. If someone objects, they post one counter-recommendation. Apply the order above once more and decide; do not loop.
 5. Escalate to a human only for spend, credentials or access, or a PRD contradiction the order above cannot settle.
