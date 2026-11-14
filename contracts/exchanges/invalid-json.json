@@ -1,0 +1,65 @@
+{
+  "description": "Unparseable frame gets an error with request_id null; the socket stays open for the next invoke.",
+  "send": [
+    {
+      "text": "not json"
+    },
+    {
+      "text": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "explain"
+      }
+    }
+  ],
+  "receive": [
+    {
+      "type": "error",
+      "request_id": null,
+      "code": "internal",
+      "message": "invalid invoke: Expecting value: line 1 column 1 (char 0)",
+      "retryable": false
+    },
+    {
+      "type": "status",
+      "request_id": "r2",
+      "stage": "reading"
+    },
+    {
+      "type": "status",
+      "request_id": "r2",
+      "stage": "thinking"
+    },
+    {
+      "type": "status",
+      "request_id": "r2",
+      "stage": "drawing"
+    },
+    {
+      "type": "card",
+      "request_id": "r2",
+      "title": "Hamlet, Act 3, Scene 1",
+      "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+      "image_url": null,
+      "speech_text": "Hamlet is alone, weighing whether to keep living.",
+      "audio_url": null,
+      "book": {
+        "title": "Hamlet",
+        "author": "William Shakespeare",
+        "location": "Act 3, Scene 1"
+      },
+      "sources": [],
+      "models": {
+        "read": "stub",
+        "reason": "stub",
+        "image": "stub"
+      }
+    }
+  ]
+}

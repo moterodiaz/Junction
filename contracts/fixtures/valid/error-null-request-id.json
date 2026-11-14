@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "request_id": null,
+  "code": "internal",
+  "message": "invalid invoke: could not parse message",
+  "retryable": false
+}

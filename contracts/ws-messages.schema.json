@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://junction.local/contracts/ws-messages.schema.json",
+  "title": "MetaLab WebSocket Message",
+  "description": "Shared WebSocket contract between the iOS thin client and the FastAPI orchestrator (PRD section 7). An invoke carries exactly one of audio (glasses path) or text (test-only path).",
+  "oneOf": [
+    { "$ref": "#/$defs/invokeMessage" },
+    { "$ref": "#/$defs/statusMessage" },
+    { "$ref": "#/$defs/cardMessage" },
+    { "$ref": "#/$defs/errorMessage" }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base64String": {
+      "type": "string",
+      "minLength": 4,
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+    },
+    "httpsUrl": {
+      "type": "string",
+      "pattern": "^https://[^\\s/?#]+[^\\s]*$"
+    },
+    "framePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mime", "b64"],
+      "properties": {
+        "mime": { "const": "image/jpeg" },
+        "b64": { "$ref": "#/$defs/base64String" }
+      }
+    },
+    "audioPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mime", "b64"],
+      "properties": {
+        "mime": { "const": "audio/wav" },
+        "b64": { "$ref": "#/$defs/base64String" }
+      }
+    },
+    "invokeMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id", "frame"],
+      "properties": {
+        "type": { "const": "invoke" },
+        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "session_id": { "$ref": "#/$defs/nonEmptyString" },
+        "frame": { "$ref": "#/$defs/framePayload" },
+        "audio": {
+          "oneOf": [
+            { "$ref": "#/$defs/audioPayload" },
+            { "type": "null" }
+          ]
+        },
+        "text": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonEmptyString" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["audio"],
+          "properties": {
+            "audio": { "$ref": "#/$defs/audioPayload" },
+            "text": { "type": "null" }
+          }
+        },
+        {
+          "required": ["text"],
+          "properties": {
+            "text": { "$ref": "#/$defs/nonEmptyString" },
+            "audio": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "statusStage": {
+      "type": "string",
+      "enum": ["transcribing", "reading", "thinking", "drawing"]
+    },
+    "statusMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "stage"],
+      "properties": {
+        "type": { "const": "status" },
+        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "stage": { "$ref": "#/$defs/statusStage" }
+      }
+    },
+    "bookInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "author", "location"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "author": { "$ref": "#/$defs/nonEmptyString" },
+        "location": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "sourceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "url": { "$ref": "#/$defs/httpsUrl" }
+      }
+    },
+    "modelInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read", "reason", "image"],
+      "properties": {
+        "read": { "$ref": "#/$defs/nonEmptyString" },
+        "reason": { "$ref": "#/$defs/nonEmptyString" },
+        "image": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "cardMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "title",
+        "caption",
+        "image_url",
+        "speech_text",
+        "audio_url",
+        "book",
+        "sources",
+        "models"
+      ],
+      "properties": {
+        "type": { "const": "card" },
+        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "caption": { "$ref": "#/$defs/nonEmptyString" },
+        "image_url": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/httpsUrl" }
+          ]
+        },
+        "speech_text": { "$ref": "#/$defs/nonEmptyString" },
+        "audio_url": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/httpsUrl" }
+          ]
+        },
+        "book": { "$ref": "#/$defs/bookInfo" },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sourceItem" }
+        },
+        "models": { "$ref": "#/$defs/modelInfo" }
+      }
+    },
+    "errorCode": {
+      "type": "string",
+      "enum": ["no_text_found", "stt_failed", "model_timeout", "internal"]
+    },
+    "errorMessage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "code", "message", "retryable"],
+      "properties": {
+        "type": { "const": "error" },
+        "request_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "code": { "$ref": "#/$defs/errorCode" },
+        "message": { "$ref": "#/$defs/nonEmptyString" },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  }
+}
