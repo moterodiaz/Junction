@@ -250,5 +250,16 @@ class EngineLoadTest(unittest.TestCase):
         self.assertEqual(self.builds, 1)
 
 
+class SetEngineTest(unittest.TestCase):
+    def test_set_engine_returns_the_engine_it_replaces(self):
+        first = lambda audio: "first"  # noqa: E731
+        second = lambda audio: "second"  # noqa: E731
+        stt.set_engine(first)
+        self.addCleanup(stt.set_engine, None)
+        self.assertIs(stt.set_engine(second), first)
+        self.assertIs(stt.set_engine(first), second)
+        self.assertEqual(stt.transcribe(b"clip"), "first")
+
+
 if __name__ == "__main__":
     unittest.main()

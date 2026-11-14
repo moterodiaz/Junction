@@ -19,10 +19,12 @@ _engine: Engine | None = None
 _engine_lock = threading.Lock()
 
 
-def set_engine(engine: Engine | None) -> None:
-    """Replace the speech engine (None restores the default)."""
+def set_engine(engine: Engine | None) -> Engine | None:
+    """Replace the speech engine (None restores the default); return the one it replaced."""
     global _engine
-    _engine = engine
+    with _engine_lock:
+        previous, _engine = _engine, engine
+    return previous
 
 
 def warm() -> None:
