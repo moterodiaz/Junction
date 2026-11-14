@@ -46,7 +46,7 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
    - In-memory telemetry in `backend/ai/decision.py` / `backend/app/latency.py` recording distribution counts across models (`decision`, `read`, `reason`, `image`, `tts`, and fallbacks) without user text, audio, or prompts.
 7. **#199 (`LANE-C7`, Order 7, P3):** [LANE-C7] backend: Optional Gemini transcription (`gemini-3.5-transcribe`) & status earcon polish (`REQ-VOICE-02`, `REQ-STT-01`).
    - Optional `gemini-3.5-transcribe` under `STT_ENGINE=whisper|gemini` in `backend/stt/engine.py` with Shakespeare vocabulary biasing and fallback to whisper, plus client-side status stage earcons in `ios/MetaLab/AnswerSpeaker.swift` preserving `contracts/ws-messages.schema.json`.
-8. **#231 (`LANE-C8`, Order 8):** Final item of Marcus's priority lane, after #199 (`REQ-PROC-01`).
+8. **#231 (`LANE-C8`, Order 8):** Unknown-book cards stop naming the session's default Hamlet; the no-source path keeps `sources: []` and `No source text` (`REQ-SRC-01`).
 
 **Cross-Area Takeover Override:**
 By agreement with the lead (@moterodiaz), @Marcus228 is authorized for cross-area delivery across `backend/ai/`, `backend/app/pipeline.py`, `backend/stt/`, and client earcons for the DeepMind priority lane issues (#185, #194–#199) to avoid blocking priority execution.
