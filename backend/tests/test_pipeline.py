@@ -897,5 +897,151 @@ class PipelineCitationReferenceTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotRegex(card.title, r"Act \d|Scene \d|line \d")
 
 
+class PipelineTerminalReplyTest(unittest.IsolatedAsyncioTestCase):
+    """#133 part 2: a request that does not end in a card leaves the book session exactly as it
+    found it (history, active book, candidates, location), and no spoken clip outlives it."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "DYNAMIC_MODEL_ROUTING": "false"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.session_id = f"s-terminal-{self._testMethodName}"
+        self.session = default_session_store.get_or_create(self.session_id)
+        self.session.add_exchange(question="earlier", answer="earlier answer")
+        self.history = list(self.session.history)
+        self.book = self.session.book
+        self.candidates = list(self.session.candidate_books)
+        self.fields = [(b.title, b.author, b.location) for b in self.candidates]
+
+    def invoke(self):
+        return Invoke(type="invoke", request_id="r-terminal", session_id=self.session_id,
+                      frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain")
+
+    async def think_that_records(self, command, page_text, session_id, *, model=None, passage_match=None):
+        # What ai.think does to the session before the picture is drawn.
+        session = default_session_store.get_or_create(session_id)
+        session.add_exchange(question=command, answer="unseen answer")
+        session.update_location("Act 9, Scene 9")
+        session.set_active_book("Moby-Dick", "Herman Melville", "Chapter 1")
+        return dict(_STUB_ANSWER, sources=[{"title": "Gutenberg", "url": "https://www.gutenberg.org/ebooks/1524"}])
+
+    def assert_session_untouched(self):
+        self.assertEqual(self.session.history, self.history)
+        self.assertIs(self.session.book, self.book)
+        self.assertEqual(self.session.candidate_books, self.candidates)
+        self.assertEqual([(b.title, b.author, b.location) for b in self.candidates], self.fields)
+
+    def patches(self, draw, speak=None):
+        return (mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Some page text"),
+                mock.patch.object(pipeline, "_ai_think", self.think_that_records),
+                mock.patch.object(pipeline, "draw", draw),
+                mock.patch.object(pipeline, "speak", speak or mock.AsyncMock(return_value=None)))
+
+    async def run_with(self, draw, speak=None, request_timeout=None):
+        p = self.patches(draw, speak)
+        with p[0], p[1], p[2], p[3]:
+            if request_timeout is None:
+                return await pipeline.run(self.invoke(), mock.AsyncMock())
+            with mock.patch.object(pipeline, "REQUEST_TIMEOUT_S", request_timeout):
+                return await pipeline.run(self.invoke(), mock.AsyncMock())
+
+    async def test_a_failed_request_restores_the_session(self):
+        async def failing_draw(*args, **kwargs):
+            raise pipeline.PipelineError("internal", "Something went wrong. Try again.", True)
+        with self.assertRaises(pipeline.PipelineError):
+            await self.run_with(failing_draw)
+        self.assert_session_untouched()
+
+    async def test_a_request_timeout_restores_the_session(self):
+        async def slow_draw(*args, **kwargs):
+            await asyncio.sleep(5)
+        with self.assertRaises(pipeline.PipelineError) as caught:
+            await self.run_with(slow_draw, request_timeout=0.2)
+        self.assertEqual(caught.exception.code, "model_timeout")
+        self.assert_session_untouched()
+
+    async def test_a_cancelled_request_restores_the_book_too(self):
+        started = asyncio.Event()
+
+        async def slow_draw(*args, **kwargs):
+            started.set()
+            await asyncio.sleep(5)
+        p = self.patches(slow_draw)
+        with p[0], p[1], p[2], p[3]:
+            task = asyncio.create_task(pipeline.run(self.invoke(), mock.AsyncMock()))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assert_session_untouched()
+
+    async def test_a_timeout_while_waiting_for_speech_stops_the_speech(self):
+        stopped = asyncio.Event()
+
+        async def slow_speak(*args, **kwargs):
+            try:
+                await asyncio.sleep(5)
+            finally:
+                stopped.set()
+        with self.assertRaises(pipeline.PipelineError):
+            await self.run_with(mock.AsyncMock(return_value=None), slow_speak, request_timeout=0.2)
+        await asyncio.sleep(0)
+        self.assertTrue(stopped.is_set(), "the speech task kept running after the request ended")
+        self.assert_session_untouched()
+
+    async def test_a_draw_failure_stops_the_speech(self):
+        stopped = asyncio.Event()
+
+        async def slow_speak(*args, **kwargs):
+            try:
+                await asyncio.sleep(5)
+            finally:
+                stopped.set()
+
+        async def failing_draw(*args, **kwargs):
+            await asyncio.sleep(0)
+            raise pipeline.PipelineError("internal", "Something went wrong. Try again.", True)
+        with self.assertRaises(pipeline.PipelineError):
+            await self.run_with(failing_draw, slow_speak)
+        await asyncio.sleep(0)
+        self.assertTrue(stopped.is_set(), "the speech task kept running after the draw failed")
+        self.assert_session_untouched()
+
+    async def test_a_failure_after_speech_discards_the_clip(self):
+        clip = "https://example.modal.run/audio/clip-1.wav"
+        with mock.patch.object(pipeline, "discard_clip") as discard, \
+             mock.patch.object(pipeline, "contract_card", side_effect=ValueError("bad card")):
+            with self.assertRaises(ValueError):
+                await self.run_with(mock.AsyncMock(return_value=None), mock.AsyncMock(return_value=clip))
+        discard.assert_called_once_with(clip)
+        self.assert_session_untouched()
+
+    async def test_a_failed_request_does_not_advance_the_reading_horizon(self):
+        # #197 adds max_position and seen_passages; a failed request must not move them.
+        self.session.max_position = (1, 2, 30)
+        self.session.seen_passages = ["an earlier page"]
+
+        async def think_that_reads_ahead(command, page_text, session_id, *, model=None, passage_match=None):
+            session = default_session_store.get_or_create(session_id)
+            session.max_position = (5, 1, 1)
+            session.seen_passages.append("a later page")
+            return dict(_STUB_ANSWER)
+
+        async def failing_draw(*args, **kwargs):
+            raise pipeline.PipelineError("internal", "Something went wrong. Try again.", True)
+        p = self.patches(failing_draw)
+        with p[0], mock.patch.object(pipeline, "_ai_think", think_that_reads_ahead), p[2], p[3]:
+            with self.assertRaises(pipeline.PipelineError):
+                await pipeline.run(self.invoke(), mock.AsyncMock())
+        self.assertEqual(self.session.max_position, (1, 2, 30))
+        self.assertEqual(self.session.seen_passages, ["an earlier page"])
+
+    async def test_a_card_keeps_the_new_exchange(self):
+        card = await self.run_with(mock.AsyncMock(return_value=None))
+        self.assertEqual(card.type, "card")
+        self.assertEqual(len(self.session.history), len(self.history) + 1)
+        self.assertEqual(self.session.book.title, "Moby-Dick")
+
+
 if __name__ == "__main__":
     unittest.main()
