@@ -1016,6 +1016,26 @@ class PipelineTerminalReplyTest(unittest.IsolatedAsyncioTestCase):
         discard.assert_called_once_with(clip)
         self.assert_session_untouched()
 
+    async def test_a_failed_request_does_not_advance_the_reading_horizon(self):
+        # #197 adds max_position and seen_passages; a failed request must not move them.
+        self.session.max_position = (1, 2, 30)
+        self.session.seen_passages = ["an earlier page"]
+
+        async def think_that_reads_ahead(command, page_text, session_id, *, model=None, passage_match=None):
+            session = default_session_store.get_or_create(session_id)
+            session.max_position = (5, 1, 1)
+            session.seen_passages.append("a later page")
+            return dict(_STUB_ANSWER)
+
+        async def failing_draw(*args, **kwargs):
+            raise pipeline.PipelineError("internal", "Something went wrong. Try again.", True)
+        p = self.patches(failing_draw)
+        with p[0], mock.patch.object(pipeline, "_ai_think", think_that_reads_ahead), p[2], p[3]:
+            with self.assertRaises(pipeline.PipelineError):
+                await pipeline.run(self.invoke(), mock.AsyncMock())
+        self.assertEqual(self.session.max_position, (1, 2, 30))
+        self.assertEqual(self.session.seen_passages, ["an earlier page"])
+
     async def test_a_card_keeps_the_new_exchange(self):
         card = await self.run_with(mock.AsyncMock(return_value=None))
         self.assertEqual(card.type, "card")

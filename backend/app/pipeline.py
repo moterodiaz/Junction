@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import inspect
 import logging
 import os
@@ -241,24 +242,31 @@ def _is_dynamic_routing_active() -> bool:
 _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
+# The anti-spoiler reading horizon (#197): a failed request must not advance it either.
+_HORIZON_FIELDS = ("max_position", "seen_passages")
+
+
 def _session_state(session) -> tuple:
     """What a request may change in its book session: the history, which book is active, the
-    candidate list, each book's fields (set_active_book and update_location edit them in place)
-    and the pending book question."""
+    candidate list, each book's fields (set_active_book and update_location edit them in place),
+    the pending book question and, where the session tracks it, the reading horizon."""
     books = {id(b): b for b in (session.book, *session.candidate_books)}
+    horizon = {name: copy.copy(getattr(session, name)) for name in _HORIZON_FIELDS if hasattr(session, name)}
     return (list(session.history), session.book, list(session.candidate_books),
             [(b, b.title, b.author, b.location) for b in books.values()],
-            getattr(session, "awaiting_book_clarification", False))
+            getattr(session, "awaiting_book_clarification", False), horizon)
 
 
 def _restore_session_state(session, state: tuple) -> None:
-    history, book, candidates, fields, clarifying = state
+    history, book, candidates, fields, clarifying, horizon = state
     session.history[:] = history
     for b, title, author, location in fields:
         b.title, b.author, b.location = title, author, location
     session.book = book
     session.candidate_books[:] = candidates
     session.awaiting_book_clarification = clarifying
+    for name, value in horizon.items():
+        setattr(session, name, value)
 
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
