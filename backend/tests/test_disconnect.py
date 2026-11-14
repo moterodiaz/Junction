@@ -162,6 +162,56 @@ class DisconnectTest(unittest.TestCase):
             time.sleep(0.3)
         self.assertEqual(history(session), [])
 
+    def test_flooding_the_queue_closes_the_socket(self):
+        from app import main
+
+        async def go(url):
+            async with websockets.connect(url) as ws:
+                await ws.send(json.dumps(invoke("r0")))
+                await replies_until(ws, 1, until_stage="thinking")
+                for i in range(main.MAX_QUEUED_FRAMES + 1):
+                    await ws.send(json.dumps(invoke(f"q{i}")))
+                with self.assertRaises(websockets.ConnectionClosed) as ctx:
+                    while True:
+                        await asyncio.wait_for(ws.recv(), 5)
+                return ctx.exception.rcvd.code
+
+        with real_server() as url:
+            self.assertEqual(asyncio.run(go(url)), 1008)
+            self.assertTrue(self.model.cancelled.wait(2))
+
+    def test_cancelling_one_socket_keeps_another_sockets_answer(self):
+        session = f"shared-{time.monotonic_ns()}"
+        permits = threading.Semaphore(0)  # each permit lets exactly one model call finish
+        model = self.model
+
+        async def gated(**kwargs):
+            model.started.set()
+            try:
+                while not permits.acquire(blocking=False):
+                    await asyncio.sleep(0.01)
+            except asyncio.CancelledError:
+                model.cancelled.set()
+                raise
+            return dict(ANSWER)
+
+        model.generate_reasoning = gated
+
+        async def go(url):
+            async with websockets.connect(url) as first, websockets.connect(url) as second:
+                await first.send(json.dumps(invoke("r1", session)))
+                await replies_until(first, 1, until_stage="thinking")
+                await second.send(json.dumps(invoke("r2", session)))  # waits for the session
+                permits.release()  # only r1 may finish
+                self.assertEqual(await replies_until(first, 1), [("card", "r1")])
+                await replies_until(second, 1, until_stage="thinking")
+                await second.close()  # r2 is cancelled after r1 was saved
+
+        with real_server() as url:
+            asyncio.run(go(url))
+            self.assertTrue(model.cancelled.wait(2))
+        self.assertEqual(len(history(session)), 1)  # r1's answer survives r2's cancellation
+
     def test_reconnecting_works_and_other_sessions_are_untouched(self):
         kept, dropped = f"kept-{time.monotonic_ns()}", f"dropped-{time.monotonic_ns()}"
 
