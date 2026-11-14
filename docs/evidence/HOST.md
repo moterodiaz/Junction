@@ -4,7 +4,7 @@ Requirement: REQ-HOST-01. PRD §12.12. Owner: Mateo (@moterodiaz, lead).
 
 This file keeps one state per challenge, and records separately what ran live, what is only configured, and what is missing (credentials, forms, sponsor confirmation). **No track is submitted, and none is marked submission-ready.** The drafts in section 3 are not sent anywhere. Sending them needs the lead's separate decision.
 
-Sources: `docs/evidence/base-live.md` (live runs v1 to v7), `backend/ai/DELIVERY_EVIDENCE.md` (configured models), `backend/app/DELIVERY_EVIDENCE.md`, `ios/DELIVERY_EVIDENCE.md`. Revision: `main` at `9d10e28`, 2026-11-15.
+Sources: `docs/evidence/base-live.md` (live runs v1 to v5; v6 is in `TRUST.md`; v7 is not yet recorded), `backend/ai/DELIVERY_EVIDENCE.md` (configured models), `backend/app/DELIVERY_EVIDENCE.md`, `ios/DELIVERY_EVIDENCE.md`. Revision: `main` at `9d10e28`, 2026-11-15.
 
 ## 1. Per-challenge state
 
@@ -25,7 +25,7 @@ Sources: `docs/evidence/base-live.md` (live runs v1 to v7), `backend/ai/DELIVERY
 | Reading fallback | `gemini-4-hydrogen` | not seen live | `backend/ai/page_reader.py` |
 | Reasoning | `gemini-4-argon` (default) | `gemini-4-hydrogen` | Differs from the default; the secret probably overrides `MODEL_REASON`. Not checked |
 | Image | `gemini-nano-banana-2.1` | `gemini-nano-banana-2.1` | `backend/ai/image.py` |
-| Speech out | `gemini-3.8-flash-tts` | none (`audio_url` null) | v7 log: Interactions API 404 "model not found" for this key (#226) |
+| Speech out | `gemini-3.8-flash-tts` | none (`audio_url` null) | Not yet recorded in a cited file: the v7 run (404 "model not found" on the Interactions API, #226) is the lead's report; its date, command and error text are still to be added to `base-live.md`. Recorded: v6 `400 INVALID_ARGUMENT` in `TRUST.md` |
 | Speech in | faster-whisper `small.en` on Modal | used (spoken case reached a card) | `backend/stt/` |
 
 No keys, prompts, page text or responses are recorded here.
@@ -33,9 +33,9 @@ No keys, prompts, page text or responses are recorded here.
 ## 3. Drafts (not sent)
 
 **Nemotron model-use note (draft):**
-> MetaLab reads a photographed book page with NVIDIA Nemotron (`nemotron-3.5-super-vl`, NVIDIA hosted API). Nemotron is the first step of every request: it turns the page image into text, which grounds the explanation in the exact act, scene and line of the public-domain text. Gemini is a fallback reader used only when Nemotron is slow or fails; each card reports which reader ran. In the live cards we inspected on 2026-11-14, the reader was Nemotron.
+> MetaLab reads a photographed book page with NVIDIA Nemotron (`nemotron-3.5-super-vl`; hosting provider unverified until the deployer confirms the host). Nemotron is the first step of every request: it turns the page image into text, which grounds the explanation in the exact act, scene and line of the public-domain text. Gemini is a fallback reader used only when Nemotron is slow or fails; each card reports which reader ran. In the live cards we inspected on 2026-11-14, the reader was Nemotron.
 
-**Verda summary (draft, blocked):** not writable truthfully yet. Today no request has gone through a Verda endpoint. A summary needs the three items in section 1 first.
+**Verda summary (draft, blocked):** not writable truthfully yet. Whether any request has gone through a Verda endpoint is unverified, because the deployed host is unknown. A summary needs the three items in section 1 first.
 
 ## 4. Limits
 
