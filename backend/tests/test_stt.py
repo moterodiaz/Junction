@@ -120,9 +120,10 @@ class SpokenInvokeTest(unittest.TestCase):
         self.assertEqual(replies[1]["code"], "stt_failed")
         self.assertNotIn("gpu", replies[1]["message"])
 
-    def test_bad_base64_is_stt_failed(self):
-        replies = self.exchange(spoken(audio={"mime": "audio/wav", "b64": "!!not base64!!"}), 2)
-        self.assertEqual(replies[1]["code"], "stt_failed")
+    def test_bad_base64_is_rejected_before_transcribing(self):
+        # The contract makes bad base64 an invalid invoke, so it never reaches the engine.
+        [reply] = self.exchange(spoken(audio={"mime": "audio/wav", "b64": "!!not base64!!"}), 1)
+        self.assertEqual((reply["type"], reply["code"], reply["retryable"]), ("error", "internal", False))
         self.assertEqual(self.heard, [])
 
     def test_unknown_typed_command_is_stt_failed(self):
