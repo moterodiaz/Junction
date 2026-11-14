@@ -382,5 +382,164 @@ class PipelineDynamicRoutingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._stub_reason.calls[0]["command"], natural_utterance)
 
 
+class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        default_session_store.clear()
+        self._stub_reason = StubGeminiClient()
+        set_reasoning_client(self._stub_reason)
+        self._env_patch = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy"})
+        self._env_patch.start()
+
+    def tearDown(self):
+        self._env_patch.stop()
+        set_reasoning_client(None)
+        set_decision_client(None)
+        default_session_store.clear()
+
+    async def test_hamlet_grounding_wired_through_pipeline_run(self):
+        """REQ-SRC-01: Hamlet grounding via ground_passage wired through pipeline.run."""
+        invoke = Invoke(
+            type="invoke", request_id="r-hamlet-gr", session_id="s-hamlet-gr",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        hamlet_passage = "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer"
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=hamlet_passage):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertEqual(card.book.title, "Hamlet")
+        self.assertEqual(card.book.author, "William Shakespeare")
+        self.assertIn("Act 3, Scene 1", card.book.location)
+        self.assertIn("64", card.book.location)
+        self.assertTrue(len(card.sources) > 0)
+        self.assertEqual(card.sources[0].url, "https://www.gutenberg.org/ebooks/1524")
+        self.assertEqual(len(self._stub_reason.calls), 1)
+        self.assertIsNotNone(self._stub_reason.calls[0]["passage_match"])
+        self.assertEqual(self._stub_reason.calls[0]["passage_match"]["play"], "Hamlet")
+
+        session = default_session_store.get("s-hamlet-gr")
+        self.assertIsNotNone(session)
+        self.assertEqual(session.book.title, "Hamlet")
+        self.assertIn("Act 3, Scene 1", session.book.location)
+
+    async def test_unknown_book_explicit_no_source_path(self):
+        """REQ-SRC-01: Unknown-book passage (passage_match is None): explicit no-source path (no invented Hamlet citations)."""
+        invoke = Invoke(
+            type="invoke", request_id="r-gatsby", session_id="s-gatsby",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        session = default_session_store.get_or_create("s-gatsby")
+        session.set_active_book("The Great Gatsby", "F. Scott Fitzgerald", "Chapter 1")
+
+        unknown_passage = "In my younger and more vulnerable years my father gave me some advice"
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=unknown_passage):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertIsNone(self._stub_reason.calls[0]["passage_match"])
+        self.assertEqual(card.book.title, "The Great Gatsby")
+        self.assertEqual(card.sources, [])
+
+    async def test_mid_session_book_switch_classification(self):
+        """REQ-INTENT-01: Mid-session book switch classification updates session.book without triggering clarify."""
+        invoke = Invoke(
+            type="invoke", request_id="r-switch-1", session_id="s-switch-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what does Macbeth say about dagger?",
+        )
+        session = default_session_store.get_or_create("s-switch-1")
+        self.assertEqual(session.book.title, "Hamlet")
+
+        dec_result = DecisionResult(
+            action="explain",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.92,
+            fallback_used=False,
+            raw_utterance="what does Macbeth say about dagger?",
+            book_match="Macbeth",
+            book_match_confidence=0.88,
+            book_changed=True,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Is this a dagger which I see before me"):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertEqual(session.book.title, "Macbeth")
+        self.assertEqual(card.book.title, "Macbeth")
+        self.assertNotEqual(card.title, "Which book are you reading?")
+
+    async def test_rare_clarify_path_when_low_grounding_and_low_confidence(self):
+        """REQ-INTENT-01: Rare clarify path (passage_score < 0.65 and book_match_confidence < 0.70) returns clarifying Card."""
+        invoke = Invoke(
+            type="invoke", request_id="r-clarify-1", session_id="s-clarify-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this?",
+        )
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance="what is this?",
+            book_match="unknown",
+            book_match_confidence=0.35,
+            book_changed=False,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        draw_mock = mock.AsyncMock(return_value="https://example.com/not-used.png")
+        speak_mock = mock.AsyncMock(return_value="https://example.com/clarify-audio.wav")
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="xyzzy qwerty foobar blorp zzz"), \
+             mock.patch.object(pipeline, "draw", draw_mock), \
+             mock.patch.object(pipeline, "speak", speak_mock):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertEqual(card.title, "Which book are you reading?")
+        self.assertIn("Which book are you reading", card.speech_text)
+        self.assertIn("Which book are you reading", card.caption)
+        draw_mock.assert_not_called()
+        speak_mock.assert_called_once()
+        self.assertIsNone(card.image_url)
+        self.assertEqual(card.models["image"], "stub")
+        self.assertEqual(card.models["reason"], "gemini-3.5-flash-lite")
+        self.assertEqual(len(self._stub_reason.calls), 0)
+        self.assertEqual(card.audio_url, "https://example.com/clarify-audio.wav")
+
+    async def test_clarify_gate_not_triggered_when_passage_score_high(self):
+        """REQ-INTENT-01: Clarify gate is NOT triggered when passage grounding succeeds (>= 0.65) even if action is clarify."""
+        invoke = Invoke(
+            type="invoke", request_id="r-clarify-high", session_id="s-clarify-high",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this?",
+        )
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.50,
+            fallback_used=False,
+            raw_utterance="what is this?",
+            book_match="unknown",
+            book_match_confidence=0.40,
+            book_changed=False,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        hamlet_passage = "To be, or not to be, that is the question:"
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=hamlet_passage):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertNotEqual(card.title, "Which book are you reading?")
+        self.assertEqual(card.book.title, "Hamlet")
+        self.assertEqual(len(self._stub_reason.calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

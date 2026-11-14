@@ -20,9 +20,10 @@ import httpx
 import stt
 from stt.speak import discard as discard_clip, speak
 import ai.decision
+import ai.reasoning
 from ai import image
 from ai import page_reader
-from ai.reasoning import default_session_store, resolve_reason_model
+from ai.reasoning import default_session_store, ground_passage, resolve_reason_model, PassageMatch
 from ai import think as _ai_think
 
 from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
@@ -128,6 +129,7 @@ async def think(
     session_id: str,
     *,
     model: Optional[str] = None,
+    passage_match: Optional[PassageMatch] = None,
 ) -> dict:
     if not os.environ.get("GEMINI_API_KEY", "").strip():
         # offline/test path: byte-identical stub so CI and conformance exchanges are unaffected
@@ -138,7 +140,16 @@ async def think(
             "image_prompt": "A lone prince on a dark stage, bright outline on black",
             "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
         }
-    return await _ai_think(command, page_text, session_id, model=model)
+    try:
+        return await _ai_think(
+            command,
+            page_text,
+            session_id,
+            model=model,
+            passage_match=passage_match,
+        )
+    except TypeError:
+        return await _ai_think(command, page_text, session_id, model=model)
 
 
 async def draw(image_prompt: str, session_id: str) -> str | None:
@@ -276,6 +287,16 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     await send_stage("reading")
     page_text = await timed(read_page(invoke.frame))
 
+    passage_match = ground_passage(page_text)
+    passage_score = float(passage_match.score) if passage_match is not None else 0.0
+    session = default_session_store.get_or_create(invoke.session_id)
+    if passage_match is not None:
+        session.set_active_book(
+            passage_match.play_title,
+            passage_match.author,
+            passage_match.location,
+        )
+
     _read_model = getattr(page_text, "model", None) or (
         page_reader._resolve_config()[2]
         if os.environ.get("NVIDIA_API_KEY", "").strip()
@@ -283,11 +304,27 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     )
 
     decision = None
+    clarify = False
     if dynamic_routing:
-        session = default_session_store.get_or_create(invoke.session_id)
-        decision = await timed(ai.decision.decide(utterance, page_text, session))
+        decision = await timed(ai.decision.decide(utterance, page_text, session, passage_score=passage_score))
         if decision.fallback_used and (stt.match_command(utterance) is None):
             raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
+
+        if (
+            not decision.fallback_used
+            and decision.book_changed
+            and decision.book_match
+            and decision.book_match != "unknown"
+            and decision.book_match_confidence >= 0.70
+        ):
+            session.set_active_book(decision.book_match)
+
+        if (
+            not decision.fallback_used
+            and decision.action == "clarify"
+            and ai.decision.should_clarify_book(decision, passage_score)
+        ):
+            clarify = True
 
         client = ai.decision.get_decision_client()
         if os.environ.get("GEMINI_API_KEY", "").strip() or not isinstance(client, ai.decision.GeminiDecisionClient):
@@ -304,10 +341,36 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         think_prompt = command
 
     await send_stage("thinking")
-    answer = await timed(think(
-        think_prompt, page_text, invoke.session_id,
-        model=_reason_model if _reason_model != "stub" else None,
-    ))
+    if clarify:
+        clarification_text = "Which book are you reading right now? Please name the play or book."
+        answer = {
+            "title": "Which book are you reading?",
+            "caption": clarification_text,
+            "speech_text": clarification_text,
+            "image_prompt": "",
+            "book": {
+                "title": session.book.title or "Unknown book",
+                "author": session.book.author or "Unknown author",
+                "location": session.book.location or "Unknown location",
+            },
+            "sources": [],
+        }
+    else:
+        try:
+            answer = await timed(think(
+                think_prompt,
+                page_text,
+                invoke.session_id,
+                model=_reason_model if _reason_model != "stub" else None,
+                passage_match=passage_match,
+            ))
+        except TypeError:
+            answer = await timed(think(
+                think_prompt,
+                page_text,
+                invoke.session_id,
+                model=_reason_model if _reason_model != "stub" else None,
+            ))
 
     await send_stage("drawing")
     # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit
@@ -332,7 +395,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
 
     speaking = asyncio.create_task(_speak())
     try:
-        skip_draw = decision is not None and (decision.speak_only or not decision.needs_image)
+        skip_draw = clarify or (decision is not None and (decision.speak_only or not decision.needs_image))
         if skip_draw:
             image_url = None
         else:
