@@ -25,6 +25,25 @@ FRAME = {"mime": "image/jpeg", "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"}
 BASE = "https://metalab.example"
 
 
+
+def interactions_from(models):
+    """Answer aio.interactions.create the way the provider does, from the same fake as
+    models.generate_content, so each test still controls the audio, errors and model list."""
+    import base64
+
+    async def create(model, input, response_format, generation_config):
+        out = await models.generate_content(model=model, contents=input[0]["content"][0]["text"], config=None)
+        part = next(p for p in out.candidates[0].content.parts if p.inline_data)
+        data = part.inline_data.data
+        mime = getattr(part.inline_data, "mime_type", "") or ""
+        rate = int(mime.split("rate=")[1]) if "rate=" in mime else None
+        return SimpleNamespace(output_audio=SimpleNamespace(data=base64.b64encode(data).decode(), sample_rate=rate))
+    return SimpleNamespace(create=create)
+
+
+def fake_aio(models):
+    return SimpleNamespace(models=models, interactions=interactions_from(models))
+
 class StubSpeech:
     def __init__(self, pcm=b"\x01\x00" * 2400, error=None):
         self.pcm, self.error, self.texts = pcm, error, []
@@ -175,7 +194,7 @@ class SpeakTest(SpeakBase):
         async def list_models():
             return listing()
 
-        client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+        client = SimpleNamespace(aio=fake_aio(SimpleNamespace(
             generate_content=generate_content, list=list_models)))
         return client, calls
 
@@ -241,7 +260,7 @@ class SpeakTest(SpeakBase):
         async def list_models():
             return listing()
 
-        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+        fake = SimpleNamespace(aio=fake_aio(SimpleNamespace(
             generate_content=gen, list=list_models)))
 
         patched_env = {"GEMINI_API_KEY": "KEY", "MODEL_TTS": "gemini-broken", "IMAGE_BASE_URL": BASE}
@@ -286,7 +305,7 @@ class SpeakTest(SpeakBase):
         async def list_models():
             raise ConnectionError("network down")
 
-        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+        fake = SimpleNamespace(aio=fake_aio(SimpleNamespace(
             generate_content=gen, list=list_models)))
 
         client = speak.GeminiSpeechClient("KEY", "gemini-broken")
@@ -317,7 +336,7 @@ class SpeakTest(SpeakBase):
         async def list_models():
             return listing()
 
-        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+        fake = SimpleNamespace(aio=fake_aio(SimpleNamespace(
             generate_content=gen, list=list_models)))
 
         speak._listed_models = False
@@ -352,7 +371,7 @@ class SpeakTest(SpeakBase):
         async def list_models():
             return listing()
 
-        fake = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+        fake = SimpleNamespace(aio=fake_aio(SimpleNamespace(
             generate_content=gen, list=list_models)))
 
         patched_env = {"GEMINI_API_KEY": "KEY", "MODEL_TTS": "gemini-broken", "IMAGE_BASE_URL": BASE}
@@ -488,7 +507,7 @@ class GeminiResponseTest(unittest.TestCase):
 
         def fake_client(api_key):
             made.append(api_key)
-            return SimpleNamespace(aio=SimpleNamespace(models=FakeModels()))
+            return SimpleNamespace(aio=fake_aio(FakeModels()))
 
         client = speak.GeminiSpeechClient("key", "tts-model")
         with mock.patch("google.genai.Client", fake_client):
@@ -498,6 +517,25 @@ class GeminiResponseTest(unittest.TestCase):
         self.assertEqual(made, ["key"])
         with wave.open(io.BytesIO(speak.to_wav(pcm, rate))) as wav:
             self.assertEqual(wav.getframerate(), 16000)
+
+
+class InteractionsRequestTest(unittest.TestCase):
+    def test_speech_is_requested_through_the_interactions_api_with_l16_and_the_voice(self):
+        sent = {}
+
+        async def create(**kwargs):
+            sent.update(kwargs)
+            return SimpleNamespace(output_audio=SimpleNamespace(data="AQA=", sample_rate=None))
+
+        client = speak.GeminiSpeechClient("key", "gemini-3.8-flash-tts")
+        client._genai = SimpleNamespace(aio=SimpleNamespace(interactions=SimpleNamespace(create=create)))
+        pcm, rate = asyncio.run(client.synthesize("Hello there"))
+        self.assertEqual(pcm, b"\x01\x00")  # base64 "AQA=" decodes to two PCM bytes
+        self.assertEqual(sent["model"], "gemini-3.8-flash-tts")
+        self.assertEqual(sent["input"], [{"type": "user_input", "content": [{"type": "text", "text": "Hello there"}]}])
+        self.assertEqual(sent["response_format"]["mime_type"], "audio/l16")
+        self.assertEqual(sent["generation_config"], {"speech_config": [{"voice": speak.VOICE}]})
+        self.assertNotIn("speechConfig", str(sent))
 
 
 if __name__ == "__main__":

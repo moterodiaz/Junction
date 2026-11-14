@@ -7,6 +7,7 @@ session that asked, and are deleted with it or after CLIP_TTL_S (section 6).
 
 from __future__ import annotations
 
+import base64
 import asyncio
 import io
 import logging
@@ -61,16 +62,13 @@ class GeminiSpeechClient:
         return sorted(names)
 
     async def _generate(self, text: str) -> Any:
-        from google.genai import types
-
-        return await self._genai.aio.models.generate_content(
+        """Gemini 3.8 TTS takes speech through the Interactions API; generateContent with
+        SpeechConfig is rejected (400 'Unknown name speechConfig'), per the Gemini TTS docs."""
+        return await self._genai.aio.interactions.create(
             model=self.model,
-            contents=text,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"],
-                speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE))),
-            ),
+            input=[{"type": "user_input", "content": [{"type": "text", "text": text}]}],
+            response_format={"type": "audio", "mime_type": "audio/l16", "sample_rate": SAMPLE_RATE},
+            generation_config={"speech_config": [{"voice": VOICE}]},
         )
 
     async def synthesize(self, text: str) -> tuple[bytes, int]:
@@ -103,14 +101,13 @@ class GeminiSpeechClient:
                 log.warning("TTS model %s not found; using %s from now on", failed_model, best)
                 self.model = best
             response = await self._generate(text)
-        if not response.candidates or not response.candidates[0].content:
-            raise RuntimeError("no content candidates in speech response")
-        parts = response.candidates[0].content.parts or []
-        part = next((p for p in parts if p.inline_data), None)
-        if part is None or not part.inline_data:
-            raise RuntimeError("no inline audio data in speech response")
-        rate = re.search(r"rate=(\d+)", part.inline_data.mime_type or "")
-        return part.inline_data.data, int(rate.group(1)) if rate else SAMPLE_RATE
+        audio = getattr(response, "output_audio", None)
+        data = getattr(audio, "data", None) if audio is not None else None
+        if not data:
+            raise RuntimeError("no audio in speech response")
+        if isinstance(data, str):  # the API returns base64 text
+            data = base64.b64decode(data)
+        return data, getattr(audio, "sample_rate", None) or SAMPLE_RATE
 
 
 def set_speech_client(client: Any) -> None:
