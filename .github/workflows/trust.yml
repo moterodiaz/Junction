@@ -20,6 +20,12 @@ on:
         description: PR number to evaluate (empty = every open PR)
         required: false
 
+# One writer at a time, and every run re-evaluates every open PR, so the last run always posts the newest
+# decision; a queued run GitHub replaces with a newer one loses nothing.
+concurrency:
+  group: trust-status
+  cancel-in-progress: false
+
 jobs:
   evaluate:
     # Fork PRs get a read-only token and cannot post a status; issue events matter only for escapes.
@@ -47,11 +53,9 @@ jobs:
       - name: Post trust status
         run: |
           set -euo pipefail
-          if [ -n "$EVENT_PR" ]; then
-            prs="$EVENT_PR"
-          else
-            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number --jq '.[].number')"
-          fi
+          # Paginated: a capped list would leave older PRs with a stale passing status.
+          prs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '.[].number')"
+          if [ -n "${EVENT_PR:-}" ]; then prs="$(printf '%s\n%s\n' "$prs" "$EVENT_PR" | sed '/^$/d' | sort -un)"; fi
           for pr in $prs; do
             [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $pr"; exit 1; }
             sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)"
