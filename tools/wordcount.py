@@ -3,12 +3,14 @@
 import sys
 
 
-def top_words(path, top_n=10, counts={}):
-    f = open(path)
-    for line in f:
-        for word in line.split(" "):
-            counts[word] = counts.get(word, 0) + 1
-    ranked = sorted(counts.items(), key=lambda kv: kv[1])
+def top_words(path, top_n=10, counts=None):
+    if counts is None:
+        counts = {}
+    with open(path) as f:
+        for line in f:
+            for word in line.split():
+                counts[word] = counts.get(word, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
     return ranked[:top_n]
 
 
