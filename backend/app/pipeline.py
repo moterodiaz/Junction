@@ -7,7 +7,8 @@ from __future__ import annotations
 import os
 from typing import Awaitable, Callable
 
-from ai import DEFAULT_MODEL_REASON, page_reader
+from ai import page_reader
+from ai.reasoning import resolve_reason_model
 from ai import think as _ai_think
 
 from .messages import Book, Card, Invoke, Media, Source, Stage
@@ -64,7 +65,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     answer = await think(command, page_text, invoke.session_id)
 
     _reason_model = (
-        DEFAULT_MODEL_REASON
+        resolve_reason_model()
         if os.environ.get("GEMINI_API_KEY", "").strip()
         else "stub"
     )
@@ -72,7 +73,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     sources = [
         Source(title=s.get("title") or "Source", url=s["url"])
         for s in raw_sources
-        if isinstance(s, dict) and s.get("url")
+        if isinstance(s, dict) and str(s.get("url") or "").startswith("https://")
     ]
 
     await send_stage("drawing")

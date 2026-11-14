@@ -288,6 +288,11 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
     }
 
 
+def resolve_reason_model() -> str:
+    """Reasoning model from MODEL_REASON, falling back to the default."""
+    return os.environ.get("MODEL_REASON", "").strip() or DEFAULT_MODEL_REASON
+
+
 _global_client: Optional[GeminiReasoningClient] = None
 
 
@@ -314,13 +319,14 @@ async def think(
     session_id: str,
     client: Optional[GeminiReasoningClient] = None,
     session_store: Optional[SessionStore] = None,
-    model: str = DEFAULT_MODEL_REASON,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute book reasoning stage (PRD section 4, step 3).
 
     Takes command, passage, and session_id. Maintains in-memory session history,
     calls Gemini with passage + prior Q&A context, and returns answer card payload.
     """
+    model = model or resolve_reason_model()
     store = session_store if session_store is not None else default_session_store
     session = store.get_or_create(session_id)
 
@@ -338,7 +344,7 @@ async def think(
 
     session.add_exchange(
         question=command,
-        answer=answer.get("caption", ""),
+        answer=answer.get("speech_text") or answer.get("caption", ""),
         passage=page_text,
     )
 
