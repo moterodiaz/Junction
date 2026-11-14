@@ -77,7 +77,8 @@ jobs:
               echo "::warning::trust header skipped: GitHub API rate limit (not a header failure); the next run refreshes it" >&2
               exit 0
             fi
-            [ "$_rc" -ne 0 ] && { cat "$_errf" >&2; exit "$_rc"; }
+            if [ "$_rc" -ne 0 ]; then cat "$_errf" >&2; exit "$_rc"; fi
+            return 0
           }
           if [ ! -x tools/metrics ]; then echo "tools/metrics not on the default branch yet; skipping"; exit 0; fi
           if [ -n "$EVENT_PR" ]; then
