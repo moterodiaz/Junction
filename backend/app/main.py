@@ -42,13 +42,21 @@ async def ws(websocket: WebSocket) -> None:
 async def handle(websocket: WebSocket, raw: str | bytes) -> None:
     request_id = None
     try:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")  # contract is UTF-8 JSON; don't let json.loads sniff UTF-16/32
         data = json.loads(raw)
-        if isinstance(data, dict) and isinstance(data.get("request_id"), str):
+        if isinstance(data, dict) and isinstance(data.get("request_id"), str) and data["request_id"]:
             request_id = data["request_id"]
         invoke = Invoke.model_validate(data)
-    except (ValueError, ValidationError) as exc:
-        await send(websocket, Error(request_id=request_id, code="internal",
-                                    message=f"invalid invoke: {exc}", retryable=False))
+    except ValidationError as exc:
+        # Field locations and messages only: never the input, which carries user text and base64 media.
+        log.warning("invalid invoke %s: %s", request_id,
+                    exc.errors(include_url=False, include_context=False, include_input=False))
+        await reject(websocket, request_id)
+        return
+    except (ValueError, RecursionError) as exc:
+        log.warning("unparseable message: %s", type(exc).__name__)
+        await reject(websocket, request_id)
         return
 
     async def send_stage(stage: Stage) -> None:
@@ -64,6 +72,11 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
                                     message="Something went wrong. Try again.", retryable=True))
         return
     await send(websocket, card)
+
+
+async def reject(websocket: WebSocket, request_id: str | None) -> None:
+    await send(websocket, Error(request_id=request_id, code="internal",
+                                message="Invalid request.", retryable=False))
 
 
 async def send(websocket: WebSocket, message) -> None:
