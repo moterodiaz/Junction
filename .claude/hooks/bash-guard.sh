@@ -12,7 +12,7 @@ cmd="$(jq -r '.tool_input.command // empty' 2>/dev/null)" || exit 0
 # Rules (b)-(e) always check the original $cmd.
 _a_cmd="$(awk '
 BEGIN {
-  FT = "^(--body-file|-F|--input|--file|-T|-d|--data|--data-binary|<|cat|source|[.]|cp|mv|less|more|head|tail|scp|curl)$"
+  ALLOW = "^(--body|--body=|-b|-b=|--title|--title=|-t|--message|--message=|-m|--notes|--notes=|--description|--description=|post|echo|printf)$"
 }
 {
   line = $0; len = length(line); out = ""; lw = ""; iw = 0; i = 1
@@ -27,8 +27,8 @@ BEGIN {
       full = q con (j <= len ? q : "")
       has_ws   = (con ~ /[ \t]/)
       has_exec = (con ~ /\$\(/ || con ~ /`/ || con ~ /\$\{/ || con ~ /<\(/ || con ~ />\(/)
-      is_ft    = (lw ~ FT)
-      if (has_ws && !has_exec && !is_ft) {
+      is_allow = (lw ~ ALLOW)
+      if (has_ws && !has_exec && is_allow) {
         i = (j <= len ? j + 1 : len + 1)
         iw = 0
       } else {
