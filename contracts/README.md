@@ -92,3 +92,33 @@ A live server runs real models on the recorded media (an empty WAV, a 20-byte JP
 - **reports only** differences from the recordings (`type`, `stage`, `request_id`, `code`, `retryable`, reply count) as drift on stderr. Drift never fails the run.
 
 CI never sets `WS_URL`, so it stays local and needs no network or keys. It still covers the socket path: `LocalServerRemoteModeTests` starts `uvicorn app.main:app` from `../backend` on a free localhost port with the model keys unset, and runs remote mode against it.
+
+### Successful-card checks (#81), separate from schema-only conformance
+
+Schema-valid errors are **not** evidence that reading works. `test_live_success.py`
+adds a separate strict check, enabled only when **both** `WS_URL` and
+`WS_SUCCESS_CASES` are set. Its default tests run locally with synthetic responses.
+Do not run the live mode without permission for endpoint/model usage.
+
+After approval, supply `WS_SUCCESS_CASES` as an absolute path to a cleared JSON
+file outside the repository. It contains 2–10 cases, with at least one typed and
+one audio invocation. Each case has exactly:
+
+- `send`: one existing exchange-format frame (`{"text": <invoke>}` or
+  `{"bytes": <invoke>}`). Use a real cleared JPEG and spoken WAV, not the placeholder
+  recordings. Use fresh request/session IDs per run to avoid stale context.
+- `expect`: `{"book": {"title": "...", "author": "...", "location": "..."},
+  "sources": [{"title": "...", "url": "https://..."}]}`. Grounding expectations
+  must come from independent known passages/citations, **not** the returned card.
+
+The check requires one schema-valid card with matching request ID, ordered stages,
+non-null HTTPS image/audio URLs, the exact expected book/position and all expected
+source entries. An error terminal, missing media, wrong grounding, duplicate
+terminal or trailing status fails. Diagnostics contain no response payloads.
+The input file is limited to 16 MiB; the check does not save inputs or replies.
+
+This proves only response-level assertions. URLs alone do not prove actual image
+generation, retrievability, audio playback, correct speech recognition, hardware
+UX, deployment revision or cleanup. Those remain separate manual/live evidence.
+The original schema-only remote mode is unchanged and may still report drift.
+See [base-live evidence](../docs/evidence/base-live.md) for the remaining checklist.
