@@ -284,10 +284,11 @@ def load_play(
     Caches loaded plays in memory. Case-insensitive lookup.
     """
     key = play_name_or_id.strip().lower()
-    if not force_reload and key in _play_cache:
-        return _play_cache[key]
-
     dir_path = Path(data_dir).resolve() if data_dir else get_plays_directory()
+    cache_key = f"{dir_path}::{key}"
+    if not force_reload and cache_key in _play_cache:
+        return _play_cache[cache_key]
+
     if not dir_path.is_dir():
         raise FileNotFoundError(f"Plays directory not found: {dir_path}")
 
@@ -323,9 +324,9 @@ def load_play(
         data = json.load(f)
 
     play = _parse_play_json(data)
-    _play_cache[key] = play
-    _play_cache[play.id.lower()] = play
-    _play_cache[play.title.lower()] = play
+    _play_cache[cache_key] = play
+    _play_cache[f"{dir_path}::{play.id.lower()}"] = play
+    _play_cache[f"{dir_path}::{play.title.lower()}"] = play
     return play
 
 
@@ -338,6 +339,8 @@ def get_source_citation(play: str = "Hamlet") -> Dict[str, str]:
         loaded = load_play(play)
         return loaded.get_source_citation()
     except Exception:
+        if play.strip().lower() != "hamlet":
+            raise
         # Fallback citation for Hamlet if file not loaded
         return {
             "title": f"{play}, public-domain text",
@@ -398,9 +401,14 @@ def find_passage(
         return None
 
     # 1. Exact normalized single-line match
-    for idx, item in enumerate(lines):
-        if norm_query in item.norm:
-            score = 1.0 if norm_query == item.norm else 0.95
+    # Whole-line equality wins over word-bounded partial matches.
+    padded_query = f" {norm_query} "
+    ordered = [i for i in lines if i.norm == norm_query] + [
+        i for i in lines if i.norm != norm_query and padded_query in f" {i.norm} "
+    ]
+    for item in ordered:
+        score = 1.0 if norm_query == item.norm else 0.95
+        if score >= min_score:
             loc_str = f"Act {item.act}, Scene {item.scene}, line {item.line}"
             return PassageMatch(
                 play_id=loaded_play.id,
@@ -427,7 +435,7 @@ def find_passage(
             if lines[i].act != lines[i + window_size - 1].act or lines[i].scene != lines[i + window_size - 1].scene:
                 continue
             window_norm = " ".join(lines[i + k].norm for k in range(window_size))
-            if norm_query in window_norm:
+            if 0.92 >= min_score and padded_query in f" {window_norm} ":
                 matched_lines = lines[i : i + window_size]
                 first = matched_lines[0]
                 last = matched_lines[-1]

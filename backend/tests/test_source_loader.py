@@ -209,6 +209,43 @@ class SourceLoaderTest(unittest.TestCase):
         self.assertIn("source", d)
         self.assertEqual(d["source"]["url"], "https://www.gutenberg.org/ebooks/1524")
 
+    def test_cache_is_per_directory(self) -> None:
+        """Same play name in different directories must not share a cache entry."""
+        with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
+            for d, title in ((d1, "One"), (d2, "Two")):
+                (Path(d) / "hamlet.json").write_text(
+                    json.dumps({"id": "hamlet", "title": title, "acts": []}), encoding="utf-8"
+                )
+            self.assertEqual(load_play("hamlet", data_dir=d1).title, "One")
+            self.assertEqual(load_play("hamlet", data_dir=d2).title, "Two")
+
+    def test_fallback_citation_only_for_hamlet(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            set_plays_directory(d)
+            self.assertEqual(get_source_citation("Hamlet")["url"], "https://www.gutenberg.org/ebooks/1524")
+            with self.assertRaises(FileNotFoundError):
+                get_source_citation("Macbeth")
+
+    def test_min_score_applies_to_exact_paths(self) -> None:
+        match = find_passage("To be, or not to be", play="Hamlet", min_score=0.99)
+        self.assertTrue(match is None or match.score >= 0.99)
+
+    def test_exact_line_beats_partial_word_match(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            lines = [
+                {"type": "line", "line": 1, "speaker": "A", "text": "Who's there?"},
+                {"type": "line", "line": 2, "speaker": "B", "text": "He."},
+            ]
+            play = {
+                "id": "t", "title": "T",
+                "acts": [{"act": 1, "act_roman": "I", "scenes": [
+                    {"scene": 1, "scene_roman": "I", "lines": lines}]}],
+            }
+            (Path(d) / "t.json").write_text(json.dumps(play), encoding="utf-8")
+            match = find_passage("He.", play="t", data_dir=d)
+            assert match is not None
+            self.assertEqual(match.line_start, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
