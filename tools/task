@@ -7,6 +7,8 @@
 # lowest-order open lane task (assigned or not) before anything else, and nobody claims another
 # owner's lane task. While any open issue carries `integration-paused`, only the lead may take
 # paused work, and a caller whose lane is finished or blocked waits instead of falling back.
+# The lead's `next` serves his own assigned paused tasks (ready ones, lowest number first) before
+# unclaimed work; their blocked labels and dependencies still gate them.
 set -u
 [ "${1:-help}" = help ] && { echo "Usage: tools/task <next|claim N|fill|areas|help>"; exit 0; }
 
@@ -154,6 +156,24 @@ prd_of() {
   printf '%s\n' "${prd:-(missing: ask the author to cite one)}"
 }
 
+# The lead's own paused backlog tasks, lowest number first: number, title64, body64, ready (1 or 0).
+# Ready means not labelled blocked and every `## Depends on` issue is closed; assignment does not lift either gate.
+lead_backlog() {
+  local list number t b labels body
+  list="$(gh issue list -R "$REPO" --label "$PAUSE_LABEL" --state open --limit 200 \
+    --json number,title,body,labels,assignees \
+    --jq "[.[] | select(any(.assignees[]; (.login | ascii_downcase) == \"$(lower "$LEAD")\") and any(.labels[]; .name == \"task\") and (any(.labels[]; .name == \"$LANE_LABEL\") | not))] | sort_by(.number)[] | [.number, (.title | @base64), (.body | @base64), (\",\" + ([.labels[].name] | join(\",\")))] | @tsv")" || return 1
+  while IFS=$'\t' read -r number t b labels; do
+    [ -n "$number" ] || continue
+    body="$(decode "$b")"
+    if has_label "$labels" blocked || dependencies_open "$body"; then
+      printf '%s\t%s\t%s\t0\n' "$number" "$t" "$b"
+    else
+      printf '%s\t%s\t%s\t1\n' "$number" "$t" "$b"
+    fi
+  done <<< "$list"
+}
+
 lane_next() {
   local rows="$1" order number t b assignees labels title body task_slug open_count login
   login="$(me)"
@@ -191,6 +211,22 @@ cmd_next() {
   login="$(me)" || die "could not determine current login"
   rows="$(my_lane "$login")" || die "could not list priority-lane tasks from GitHub; retry later"
   if [ -n "$rows" ]; then lane_next "$rows"; return 0; fi
+  if is_exempt; then
+    local backlog ready parked
+    backlog="$(lead_backlog)" || die "could not list your paused backlog from GitHub; retry later"
+    ready="$(printf '%s\n' "$backlog" | awk -F'\t' '$4 == 1' | head -n 1)"
+    parked="$(printf '%s\n' "$backlog" | awk -F'\t' '$4 == 0' | grep -c .)"
+    if [ -n "$ready" ]; then
+      IFS=$'\t' read -r number encoded_title encoded_body _ <<< "$ready"
+      title="$(decode "$encoded_title")"; body="$(decode "$encoded_body")"; task_slug="$(slug "$title")"
+      printf '#%s  %s\nPRD: %s\nAssigned to you (paused backlog). Continue: tools/wt %s-%s (reuse your worktree if it exists)\n' \
+        "$number" "$title" "$(prd_of "$body")" "$number" "$task_slug"
+      [ "$parked" -eq 0 ] || printf 'Parked: %s more assigned backlog task(s) are blocked or have open dependencies.\n' "$parked"
+      echo "Before editing another owner's folders, agree a handoff on the board (AGENTS.md §1); park behind overlapping priority-lane work."
+      return 0
+    fi
+    [ "$parked" -eq 0 ] || printf 'Parked: %s assigned backlog task(s) are blocked or have open dependencies.\n' "$parked"
+  fi
   if ! is_exempt && pause_active; then
     echo "No open priority-lane task for @$login, and the integration backlog is paused by @$LEAD. Wait: do not claim, fill or file other work (tools/board wait). Only the lead releases the pause."
     return 0
@@ -270,7 +306,7 @@ cmd_claim() {
   ! has_label "$labels" blocked || die "#$n is labelled blocked"
   ! dependencies_open "$body" || die "#$n has open (or unreadable) dependencies"
   ! is_exempt && has_label "$labels" "$PAUSE_LABEL" && die "#$n carries the $PAUSE_LABEL label; only @$LEAD works it until released (AGENTS.md §3 rule 10)"
-  if [ -n "$lane_owner" ] && [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
+  if { [ -n "$lane_owner" ] || { is_exempt && has_label "$labels" "$PAUSE_LABEL"; }; } && [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
     printf '#%s is already yours. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
     return 0
   fi

@@ -142,6 +142,24 @@ expect "mateo claims paused #81" ok 'Claimed #81' moterodiaz claim 81
 expect "mateo fill counts the queue" ok 'Queue (ok|low)' moterodiaz fill
 expect "lead is case-insensitive" ok '^#200 |^#81 ' MoteroDiaz next
 
+# The lead's assigned paused backlog comes before unclaimed work; gates still hold.
+reset_db
+db '(.issues[] | select(.number == 81 or .number == 129 or .number == 150) | .assignees) = [{login: "moterodiaz"}]'
+expect "mateo next continues his assigned ready #81" ok '^#81 ' moterodiaz next
+expect "mateo next says assigned backlog" ok 'Assigned to you \(paused backlog\)' moterodiaz next
+expect "mateo next counts parked tasks" ok 'Parked: 2 more' moterodiaz next
+expect "mateo claim own assigned paused #81 is a no-op" ok 'already yours' moterodiaz claim 81
+expect "mateo claim own assigned blocked #129 rejected" fail 'labelled blocked' moterodiaz claim 129
+expect "mateo claim own assigned #150 with open dependency rejected" fail 'open \(or unreadable\) dependencies' moterodiaz claim 150
+close 81
+refute "mateo next never serves blocked or dependent assigned tasks" '^#(129|150) ' moterodiaz next
+expect "mateo next reports parked backlog then falls back" ok 'Parked: 2 assigned' moterodiaz next
+expect "mateo next falls back to unclaimed work" ok '^#200 ' moterodiaz next
+db '(.issues[] | select(.number == 129) | .labels) |= map(select(.name != "blocked"))'
+expect "unblocked #129 becomes ready for mateo" ok '^#129 ' moterodiaz next
+refute "ahmed never sees mateo's backlog" '#129|#150' Ahm3d-KA next
+FAKE_GH_FAIL='--label integration-paused --state open --limit 200' expect "mateo backlog read error fails" fail 'could not list your paused backlog' moterodiaz next
+
 # A gh error reading the pause counts as paused (fail closed).
 reset_db; close 182; close 190
 FAKE_GH_FAIL='--label integration-paused' expect "pause read error waits" ok 'Wait: do not claim' Ahm3d-KA next
