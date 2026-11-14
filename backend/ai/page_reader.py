@@ -2,6 +2,7 @@
 
 PRD reference: section 4 Architecture, Models; section 9 Risks (C1).
 Issue #28: backend: page reading with Nemotron 3.5 Super VL.
+Issue #83: Gemini reads the frame when Nemotron is slow or fails (read_page_with_fallback).
 """
 
 from __future__ import annotations
@@ -357,3 +358,169 @@ async def read_page(
         )
 
     return await client.complete(b64, mime=mime, prompt=prompt)
+
+
+# --- Gemini fallback (issue #83) -------------------------------------------------------------
+# The hosted Nemotron can sit in a shared queue for minutes, so the demo gives it a short budget
+# and then lets Gemini read the same frame within what is left of the stage timeout.
+
+DEFAULT_MODEL_READ_FALLBACK = "gemini-4-hydrogen"
+DEFAULT_READ_FALLBACK_AFTER_S = 8.0
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+class PageText(str):
+    """Page text that also records which model read it. Behaves as a plain str everywhere else."""
+
+    model: str | None
+
+    def __new__(cls, text: str, model: str | None = None) -> "PageText":
+        obj = super().__new__(cls, text)
+        obj.model = model
+        return obj
+
+
+class GeminiPageReader:
+    """Reads a page frame with Gemini generateContent (inline image), same prompt as Nemotron."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str = GEMINI_BASE_URL,
+        # Runs after Nemotron's ~8 s budget, so both must fit inside the 25 s STAGE_TIMEOUT_S.
+        timeout: float = 15.0,
+    ) -> None:
+        self.api_key = (api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+        self.model = (model or os.environ.get("MODEL_READ_FALLBACK", "")).strip() or DEFAULT_MODEL_READ_FALLBACK
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is required for the Gemini page reader.")
+
+    def build_request(self, frame_b64: str, mime: str, prompt: str | None) -> tuple[str, dict[str, str], dict[str, Any]]:
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        # Header, not ?key=, so the key never shows up in URLs or httpx error messages.
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {"inline_data": {"mime_type": mime, "data": frame_b64}},
+                    {"text": prompt or DEFAULT_PROMPT},
+                ],
+            }],
+            "generationConfig": {"temperature": 0},
+        }
+        return url, headers, payload
+
+    async def complete(self, frame_b64: str, mime: str = "image/jpeg", prompt: str | None = None) -> str:
+        import httpx
+
+        url, headers, payload = self.build_request(frame_b64, mime, prompt)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.TimeoutException as exc:
+            raise PageReadTimeoutError(f"Gemini page reader timed out: {type(exc).__name__}") from exc
+        except (httpx.RequestError, ConnectionError) as exc:
+            raise PageReadError(f"Gemini page reader network error: {type(exc).__name__}") from exc
+        if resp.is_error:
+            raise PageReadError(f"Gemini page reader returned HTTP {resp.status_code}: {resp.text[:300]}")
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise PageReadError("Gemini page reader returned invalid JSON.") from exc
+        return self.parse_response(data)
+
+    @staticmethod
+    def parse_response(data: dict[str, Any]) -> str:
+        candidates = data.get("candidates") or []
+        if not candidates:
+            raise PageReadError("Gemini page reader returned no candidates.")
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        text = "".join(
+            p.get("text", "") for p in parts
+            if isinstance(p, dict) and not p.get("thought") and isinstance(p.get("text"), str)
+        )
+        if _is_no_text_response(text):
+            raise NoTextFoundError()
+        return text.strip()
+
+
+class StubGeminiPageReader:
+    """Stub Gemini reader for tests: returns (or raises) a fixed response and records calls."""
+
+    def __init__(
+        self,
+        response: str | Exception = "To be, or not to be, that is the question.",
+        model: str = DEFAULT_MODEL_READ_FALLBACK,
+        delay_s: float = 0.0,
+    ) -> None:
+        self.response = response
+        self.model = model
+        self.delay_s = delay_s
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(self, frame_b64: str, mime: str = "image/jpeg", prompt: str | None = None) -> str:
+        self.calls.append({"frame_b64": frame_b64, "mime": mime, "prompt": prompt})
+        if self.delay_s:
+            await asyncio.sleep(self.delay_s)
+        if isinstance(self.response, Exception):
+            raise self.response
+        if _is_no_text_response(self.response):
+            raise NoTextFoundError()
+        return self.response.strip()
+
+
+def _fallback_budget_s() -> float:
+    raw = os.environ.get("READ_FALLBACK_AFTER_S", "").strip()
+    try:
+        return float(raw) if raw else DEFAULT_READ_FALLBACK_AFTER_S
+    except ValueError:
+        return DEFAULT_READ_FALLBACK_AFTER_S
+
+
+def _default_fallback() -> Any | None:
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return None
+    return GeminiPageReader()
+
+
+async def read_page_with_fallback(
+    frame: Any,
+    *,
+    primary: Any | None = None,
+    fallback: Any | None = None,
+    budget_s: float | None = None,
+) -> PageText:
+    """Read the page with Nemotron; if it misses the budget or fails, let Gemini read it.
+
+    NoTextFoundError from Nemotron is an answer, not a failure, so it is raised as is. Without a
+    fallback reader (no GEMINI_API_KEY) Nemotron gets no budget and its errors propagate unchanged.
+    """
+    mime, b64 = extract_frame_data(frame)
+    if primary is None:
+        primary = NemotronClient()
+    primary_model = getattr(primary, "model", None) or _resolve_config()[2]
+    if fallback is None:
+        fallback = _default_fallback()
+
+    if fallback is None:
+        return PageText(await primary.complete(b64, mime=mime), primary_model)
+
+    budget = _fallback_budget_s() if budget_s is None else budget_s
+    try:
+        text = await asyncio.wait_for(primary.complete(b64, mime=mime), budget)
+        log.info("page read by %s", primary_model)
+        return PageText(text, primary_model)
+    except NoTextFoundError:
+        raise
+    except TimeoutError:
+        reason = f"over {budget:g} s budget"
+    except PageReadError as exc:
+        reason = f"{type(exc).__name__}"
+
+    fallback_model = getattr(fallback, "model", None) or DEFAULT_MODEL_READ_FALLBACK
+    log.info("page read by %s (fallback: %s %s)", fallback_model, primary_model, reason)
+    return PageText(await fallback.complete(b64, mime=mime), fallback_model)
