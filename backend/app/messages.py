@@ -1,6 +1,5 @@
-"""WebSocket messages, following the draft schema in PRD section 7.
-
-Switch to the schema in contracts/ once issue #24 lands.
+"""WebSocket messages (PRD section 7). The authoritative schema is
+contracts/ws-messages.schema.json; these models are looser than it for now (see #32).
 """
 
 from __future__ import annotations

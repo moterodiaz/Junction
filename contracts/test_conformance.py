@@ -30,6 +30,28 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import main, pipeline  # noqa: E402
 from app.main import app  # noqa: E402
+import stt  # noqa: E402
+
+@contextmanager
+def speech_stub():
+    # The harness checks the wire contract, not Whisper (real-engine tests live in backend/tests):
+    # every recorded audio clip transcribes to "explain".
+    previous = stt.set_engine(lambda audio: "explain")
+    try:
+        yield
+    finally:
+        stt.set_engine(previous)
+
+
+_stub = speech_stub()
+
+
+def setUpModule() -> None:
+    _stub.__enter__()
+
+
+def tearDownModule() -> None:
+    _stub.__exit__(None, None, None)
 
 STAGES = ["transcribing", "reading", "thinking", "drawing"]
 COMPARED = ("type", "stage", "request_id", "code", "retryable")
