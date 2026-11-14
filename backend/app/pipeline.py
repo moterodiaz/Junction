@@ -134,6 +134,21 @@ def _accepts_param(fn: Any, param_name: str) -> bool:
         return False
 
 
+NO_SOURCE_TEXT = "No source text"
+
+
+def _mark_ungrounded(answer: dict) -> dict:
+    """A card without a verified source passage says so (PRD §2) instead of carrying the
+    model's act/scene/line guess. The reasoning stage empties `sources` exactly when no
+    passage was verified."""
+    if answer.get("sources"):
+        return answer
+    book = dict(answer.get("book")) if isinstance(answer.get("book"), dict) else {}
+    book["location"] = NO_SOURCE_TEXT
+    title = _text(book.get("title")) or "Your page"
+    return {**answer, "title": title, "book": book, "sources": []}
+
+
 async def think(
     command: str,
     page_text: str,
@@ -176,7 +191,8 @@ async def think(
         ai_kwargs["passage_match"] = passage_match
     if _accepts_param(_ai_think, "spoiler_guard"):
         ai_kwargs["spoiler_guard"] = spoiler_guard
-    return await _ai_think(command, page_text, session_id, **ai_kwargs)
+    answer = await _ai_think(command, page_text, session_id, **ai_kwargs)
+    return _mark_ungrounded(answer)
 
 
 def _draw_accepts_style_preset(fn: Any) -> bool:
