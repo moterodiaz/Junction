@@ -56,12 +56,14 @@ def all_prs():
         cursor = page["pageInfo"]["endCursor"]
 
 def classify(thread):
-    replies = " ".join(c["body"] for c in thread["comments"]["nodes"][1:]).lower()
-    if "needs human" in replies:
+    # Read the disposition at the start of each reply (`Fixed in <sha>`, `Not changing: ...`, `needs human: ...`),
+    # never words inside the explanation.
+    replies = [c["body"].strip().lower() for c in thread["comments"]["nodes"][1:]]
+    if any(r.startswith("needs human") for r in replies):
         return "escalated"
-    if re.search(r"not changing|not valid|invalid|false positive|by design|intentional|won'?t fix", replies):
+    if any(re.match(r"(not changing|not valid|invalid|false positive|by design|intentional|won'?t fix)\b", r) for r in replies):
         return "rejected"
-    if re.search(r"fixed in|fixed|addressed|done in", replies):
+    if any(re.match(r"(fixed in|fixed\b|addressed|done in)", r) for r in replies):
         return "fixed"
     return "silent" if thread["isResolved"] else "open"
 
@@ -89,7 +91,7 @@ def repo_metrics(since):
     count = {k: kinds.count(k) for k in ("fixed", "rejected", "escalated", "silent", "open")}
     disposed = count["fixed"] + count["rejected"] + count["escalated"]
     routed = [p for p in prs if needs_human(p)]
-    reverts = [p for p in prs if re.match(r"revert", p["title"], re.I)]
+    reverts = [p for p in merged if re.match(r"revert", p["title"], re.I)]
     with_req = [p for p in prs if REQ.search(p["title"] + " " + (p["body"] or ""))]
     fixer = sum(fixer_commits(p) for p in prs)
     runs = json.loads(gh("run", "list", "-R", REPO, "--workflow", "ci.yml", "--limit", "100", "--json", "conclusion"))
@@ -176,7 +178,7 @@ def check_lines(pr):
 
 def header(number):
     q = f"""query($o:String!,$n:String!,$p:Int!){{repository(owner:$o,name:$n){{pullRequest(number:$p){{
-      number title body labels(first:20){{nodes{{name}}}} files(first:100){{nodes{{path}}}}
+      number title body labels(first:20){{nodes{{name}}}} files(first:100){{pageInfo{{hasNextPage}} nodes{{path}}}}
       allCommits: commits(first:100){{nodes{{commit{{message}}}}}}
       commits(last:1){{nodes{{commit{{statusCheckRollup{{contexts(first:30){{nodes{{
         ... on CheckRun{{name conclusion status detailsUrl}} ... on StatusContext{{context state targetUrl}}}}}}}}}}}}}}
@@ -187,7 +189,8 @@ def header(number):
     labels = [l["name"] for l in pr["labels"]["nodes"]]
     reqs = sorted(set(REQ.findall(pr["title"] + " " + (pr["body"] or ""))))
     protected = [f for f in files if PROTECTED.match(f)]
-    tier = "human-merge" if protected or "no-auto-merge" in labels else "auto-merge allowed"
+    truncated = pr["files"]["pageInfo"]["hasNextPage"]  # more than 100 files: protected paths may be unseen
+    tier = "human-merge" if protected or truncated or "no-auto-merge" in labels else "auto-merge allowed"
     owners = sorted({owner_of(f) for f in files}) or [LEAD]
     threads = ai_threads(pr)
     kinds = [classify(t) for t in threads]
@@ -198,7 +201,7 @@ def header(number):
         out += [f"**Requirement:** `{r}`: {requirement_text(r) or 'not found in docs/REQUIREMENTS.md'}" for r in reqs]
     else:
         out.append("**Requirement:** missing. Add an id from `docs/REQUIREMENTS.md` to the title or body (AGENTS.md §3 rule 7).")
-    why = f"protected paths: {', '.join(f'`{p}`' for p in protected)}" if protected else ("labelled `no-auto-merge`" if tier == "human-merge" else "no protected path changed")
+    why = f"protected paths: {', '.join(f'`{p}`' for p in protected)}" if protected else ("more than 100 changed files, protected paths unknown" if truncated else "labelled `no-auto-merge`" if tier == "human-merge" else "no protected path changed")
     out += [f"**Risk tier:** {tier} ({why}; AGENTS.md §3 rule 9)", f"**Named owner(s):** {' '.join(owners)}", "", "### Verified by AI"]
     for name in ("ci", "Greptile Review"):
         state, url = checks.get(name, ("not run yet", None))
