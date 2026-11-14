@@ -1,6 +1,6 @@
 # Tieto concept card: bounded autonomy, tiered by risk
 
-How a four-person team let AI agents write, review, fix and merge most of the code for MetaLab in one weekend, what a named human still signs off on, and how we measure whether that trust was earned. Every number below comes from this repository's GitHub data (measured 2026-11-14 14:38 UTC); `tools/metrics` regenerates them.
+How a four-person team let AI agents write, review, fix and merge most of the code for MetaLab in one weekend, what a named human still signs off on, and how we measure whether that trust was earned. Every number below comes from this repository's GitHub data (measured 2026-11-14 22:54 UTC); `tools/metrics` regenerates them.
 
 ## 1. Recommendation
 
@@ -32,13 +32,13 @@ Each PR's trust header (the PR template, filled in by the pr-header workflow) li
 - Live model calls are never made in CI. Every model client (Nemotron, Gemini reasoning, image and speech) is stubbed, so keys and spend stay out of CI. The live path is checked by hand with `WS_URL=… contracts/test.sh` (REQ-INT-01).
 - No load test, and the glasses hardware path has only manual checks.
 
-**Residual risk accepted:** a stubbed client can hide a wrong SDK call until the first live run (this happened with image generation, fixed in #105); the owner accepts that risk for product paths and catches it with the live contract run before the demo.
+**Residual risk accepted:** a stubbed client can hide a wrong SDK call until the first live run (this happened with image generation, fixed in #105, and with speech output, still open in #226; lessons log entry 14); the owner accepts that risk for product paths and catches it with the live contract run before the demo.
 
 ## 4. Trade-offs
 
-- **Speed against silent acceptance.** The median PR merges 5.7 minutes after it opens. The price: 44 of 74 Greptile threads (59%) were resolved with no written reply, so for those we cannot say whether the finding was real. Rule 8 drives that number to 0 for new PRs.
+- **Speed against silent acceptance.** The median PR merges 8.7 minutes after it opens. The price: 44 of 180 Greptile threads (24%) were resolved with no written reply, so for those we cannot say whether the finding was real. Most predate rule 8, which asks for 0 on new PRs.
 - **A bot resolves a bot's threads.** We accept this for product paths only. The protected paths go to a human.
-- **Zero human approvals on product paths.** 0 of 60 merged PRs carry an approving review, and 30 were merged by `github-actions` through auto-merge. We accept this because the gates are machine-checked and the paths that define the gates are human-merged. A four-person team building for 48 hours cannot staff a reviewer for every PR.
+- **Zero human approvals on product paths.** 0 of 77 merged PRs carry an approving review, and 25 were merged by `github-actions` through auto-merge. We accept this because the gates are machine-checked and the paths that define the gates are human-merged. A four-person team building for 48 hours cannot staff a reviewer for every PR.
 - **One shared contract.** Making `contracts/` human-merged slows schema changes, but every consumer adapts to it, so a wrong change there costs the most.
 
 ## 5. How trust is measured
@@ -48,37 +48,39 @@ Definitions (computed by `tools/metrics` from the GitHub API):
 - **Disposition coverage:** review threads with a written reply ÷ all review threads.
 - **AI finding acceptance rate:** threads fixed ÷ (threads fixed + threads rejected with a reason), over threads that have a disposition.
 - **Share routed to humans:** PRs with any `needs human` comment ÷ PRs.
-- **Escape rate:** revert PRs ÷ merged PRs.
+- **Escape rate:** merged PRs that were reverted or named by an `escape` issue (a defect that reached `main` past review, `Introduced-by: #N`) ÷ merged PRs.
 - **Fixer effort:** `claude-fix` commits ÷ PRs.
 
 Output of `tools/metrics` (all PRs from #67, the first product PR; denominators are the counts in the same table):
 
 | Metric | Value |
 |---|---|
-| PRs opened | 35 |
-| PRs merged | 33 |
-| Time to merge, median (min) | 5.1 |
-| Time to merge, mean (min) | 13.7 |
-| AI review threads | 82 |
-| Threads fixed | 36 |
-| Threads rejected with a reason | 0 |
+| PRs opened | 78 |
+| PRs merged | 77 |
+| Time to merge, median (min) | 8.7 |
+| Time to merge, mean (min) | 16.0 |
+| AI review threads | 180 |
+| Threads fixed | 135 |
+| Threads rejected with a reason | 1 |
 | Threads escalated to a human | 0 |
-| Threads resolved in silence | 46 |
+| Threads resolved in silence | 44 |
 | Threads still open | 0 |
-| Disposition coverage (%) | 43.9 |
-| AI finding acceptance (%) | 100.0 |
-| claude-fix commits | 28 |
-| PRs routed to a human | 15 |
-| Share routed to a human (%) | 42.9 |
+| Disposition coverage (%) | 75.6 |
+| AI finding acceptance (%) | 99.3 |
+| claude-fix commits | 54 |
+| PRs routed to a human | 32 |
+| Share routed to a human (%) | 41.0 |
 | Reverts | 0 |
-| Escape rate (%) | 0.0 |
-| PRs with a REQ id | 6 |
-| REQ id coverage (%) | 17.1 |
-| ci runs succeeded, last 100 (%) | 97.0 |
+| Escapes recorded (label `escape`) / still open | 9 / 0 |
+| Merged PRs with an escape | 7 |
+| Escape rate (%) | 9.1 |
+| PRs with a REQ id | 65 |
+| REQ id coverage (%) | 83.3 |
+| ci runs succeeded, last 100 (%) | 99.0 |
 
-PRs #67 onwards, measured 2026-11-14T14:38:28Z by `tools/metrics`.
+PRs #67 onwards, measured 2026-11-14T22:54:06Z by `tools/metrics` on `main` at `418a1eb`.
 
-Human approvals on merged PRs: 0 (no PR was approved; owners merge instead, rule 9). REQ id coverage is low because ids were introduced at PR #122; `tools/task claim` and the `pr-header` check now require one.
+Human approvals on merged PRs: 0 of 77 (owners merge instead, rule 9). REQ id coverage is below 100% because ids were introduced at PR #122; `tools/task claim` and the `pr-header` check now require one. Per-area numbers and how to read them: `docs/evidence/TRUST.md` §3.
 
 The two numbers we commit to watching: disposition coverage must reach 100% for new PRs (rule 8), and the escape rate must not rise while time to merge stays low.
 
@@ -86,12 +88,12 @@ The two numbers we commit to watching: disposition coverage must reach 100% for 
 
 - Greptile's recall is unknown: we can count what it found, not what it missed.
 - 0 reverts in one day of building proves little.
-- The acceptance rate (36 of 36) looks perfect only because no finding was ever rejected in writing; with 46 silent threads it is not yet a real measure.
-- The safety net was broken for most of the day: the sweeper's retry step failed 170 of its last 200 runs and nobody was alerted (lessons log entry 2).
+- The acceptance rate (135 of 136) looks near perfect because only one finding was ever rejected in writing; with 44 silent threads it is not yet a real measure.
+- The safety net was broken for most of the day: the sweeper's retry step failed 170 of 200 runs and nobody was alerted until #119 fixed it (lessons log entry 2).
 - The workflow guard (#120) stops `claude-fix` from pushing to protected paths or auto-merging protected-path PRs, but GitHub itself requires 0 approvals, so an agent or a teammate can still enable auto-merge on such a PR by hand, against rule 9. CODEOWNERS names the owners; it does not block a merge while approvals stay at 0.
 - The iOS tests are proxies, and the app target is never compiled in CI.
 - The pipeline has run on one repository, for one weekend, with four people.
 
 ## 7. Walkthrough
 
-The live walkthrough uses one agent-written PR with its self-explaining header (Verified by AI / Refused or escalated to a named human / Human sign-off, plus metrics). The `pr-header` workflow posts it as a sticky comment on every PR. The candidate is PR #86 (REQ-ERR-01, REQ-PRIV-01): every stage failure maps to a contract error code and a request writes nothing to disk. It had 3 Greptile threads, 1 fixer commit, and contract and privacy tests.
+The walkthrough is PR #218 (REQ-SRC-01, REQ-BASE-01), in `docs/evidence/TRUST.md` §2: a card without a verified passage says "No source text" instead of a guessed act and scene. It shows two Greptile findings fixed by `claude-fix`, an escalation answered by the lead in writing, follow-ups routed to another owner instead of edited, an independent reference test with a mutation check, and the live citation after redeploy. Every PR's header comes from the `pr-header` workflow; `tools/metrics --pr 218` renders this one.
