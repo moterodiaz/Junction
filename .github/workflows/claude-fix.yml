@@ -226,8 +226,8 @@ jobs:
           run_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID"
           # Each destination is checked on its own: other notices carry the same run URL.
           pr_seen="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '.comments[].body' || true)"
-          since="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)"
-          board_seen="$(gh api --paginate "repos/$REPO/issues/1/comments?since=$since" --jq '.[].body' || true)"
+          # No time window: a rerun keeps the same run id and URL, so match it however old.
+          board_seen="$(gh api --paginate "repos/$REPO/issues/1/comments" --jq '.[].body' || true)"
           grep -qF -- "needs human: claude-fix failed: $run_url" <<<"$pr_seen" || \
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
               --body "@$author needs human: claude-fix failed: $run_url" || true
