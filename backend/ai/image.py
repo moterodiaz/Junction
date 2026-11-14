@@ -274,21 +274,31 @@ class GeminiImageClient:
             return True
 
     async def generate_image(self, model: str, prompt: str) -> bytes:
-        """Generate an image using Gemini image models."""
+        """Generate an image using Gemini image models via generate_content."""
         try:
+            import base64
             from google import genai
+            from google.genai import types
+
             client = genai.Client(api_key=self.api_key)
-            # Use client.aio for async generation
-            response = await client.aio.models.generate_images(
+            response = await client.aio.models.generate_content(
                 model=model or self.model,
-                prompt=prompt,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                ),
             )
-            if response.images and len(response.images) > 0:
-                first_img = response.images[0]
-                if hasattr(first_img, "image") and hasattr(first_img.image, "image_bytes"):
-                    return first_img.image.image_bytes
-                if hasattr(first_img, "image_bytes"):
-                    return first_img.image_bytes
+            candidates = getattr(response, "candidates", None) or []
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                parts = getattr(content, "parts", None) or []
+                for part in parts:
+                    inline = getattr(part, "inline_data", None)
+                    data = getattr(inline, "data", None) if inline is not None else None
+                    if isinstance(data, (bytes, bytearray)) and len(data) > 0:
+                        return bytes(data)
+                    if isinstance(data, str) and data:
+                        return base64.b64decode(data)
             raise RuntimeError("Gemini image response contained no image data")
         except Exception as exc:
             msg = str(exc).lower()
