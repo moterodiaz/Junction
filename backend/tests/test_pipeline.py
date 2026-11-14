@@ -810,5 +810,150 @@ class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCas
         self.assertNotEqual(session.book.title, "explain")
 
 
+class PipelineSpoilerGuardWiringTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        default_session_store.clear()
+        self._stub_reason = StubGeminiClient(default_answer=_STUB_ANSWER_WITH_SOURCES)
+        set_reasoning_client(self._stub_reason)
+        self._invoke = Invoke(
+            type="invoke",
+            request_id="r-spoil-1",
+            session_id="s-spoil-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"),
+            text="How does Hamlet die at the end of the play?",
+        )
+
+    def tearDown(self):
+        set_reasoning_client(None)
+        set_decision_client(None)
+        default_session_store.clear()
+
+    async def test_spoiler_risk_in_decision_forwards_spoiler_guard_true(self):
+        """#197: When decision indicates spoiler_risk=True, spoiler_guard=True is forwarded to reasoning."""
+        dec_result = DecisionResult(
+            action="question",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.95,
+            fallback_used=False,
+            raw_utterance="How does Hamlet die at the end of the play?",
+            spoiler_risk=True,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy", "DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        self.assertEqual(len(self._stub_reason.calls), 1)
+        self.assertTrue(self._stub_reason.calls[0]["spoiler_guard"])
+
+    async def test_env_spoiler_check_enabled_triggers_spoiler_guard_true(self):
+        """#197: DECISION_ENABLE_SPOILER_CHECK=true forwards spoiler_guard=True to reasoning."""
+        dec_result = DecisionResult(
+            action="question",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.95,
+            fallback_used=False,
+            raw_utterance="How does Hamlet die at the end of the play?",
+            spoiler_risk=False,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+            "DECISION_ENABLE_SPOILER_CHECK": "true",
+        }), mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        self.assertEqual(len(self._stub_reason.calls), 1)
+        self.assertTrue(self._stub_reason.calls[0]["spoiler_guard"])
+
+    async def test_spoiler_guard_false_when_check_disabled_and_no_risk(self):
+        """#197: spoiler_guard=False when DECISION_ENABLE_SPOILER_CHECK is false and decision has spoiler_risk=False."""
+        dec_result = DecisionResult(
+            action="question",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance="What is this word?",
+            spoiler_risk=False,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+            "DECISION_ENABLE_SPOILER_CHECK": "false",
+        }), mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        self.assertEqual(len(self._stub_reason.calls), 1)
+        self.assertFalse(self._stub_reason.calls[0]["spoiler_guard"])
+
+    async def test_legacy_3arg_think_monkeypatch_does_not_fail_with_type_error(self):
+        """#197: Monkeypatched 3-arg think stubs (command, page_text, session_id) pass without TypeError."""
+        dec_result = DecisionResult(
+            action="question",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.95,
+            fallback_used=False,
+            raw_utterance="How does Hamlet die at the end of the play?",
+            spoiler_risk=True,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        async def legacy_3arg_think(command, page_text, session_id):
+            return {
+                "title": "Hamlet, Act 3, Scene 1",
+                "caption": "Legacy 3-arg caption.",
+                "speech_text": "Legacy 3-arg speech.",
+                "image_prompt": "Legacy prompt.",
+                "book": {"title": "Hamlet", "author": "Shakespeare", "location": "Act 3, Scene 1"},
+                "sources": [],
+            }
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+            "DECISION_ENABLE_SPOILER_CHECK": "true",
+        }), mock.patch.object(pipeline, "think", legacy_3arg_think), \
+           mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        self.assertEqual(card.caption, "Legacy 3-arg caption.")
+
+    async def test_offline_stub_mode_advances_reading_horizon_when_passage_seen(self):
+        """#197: In offline stub mode, session.record_seen_passage runs cleanly when page_text is seen."""
+        session_id = "s-offline-horizon-test"
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop("GEMINI_API_KEY", None)
+            answer = await pipeline.think(
+                "explain",
+                "To be, or not to be, that is the question:",
+                session_id,
+            )
+
+        self.assertEqual(answer["title"], "Hamlet, Act 3, Scene 1")
+        session = default_session_store.get_or_create(session_id)
+        self.assertGreaterEqual(len(session.seen_passages), 1)
+        self.assertIn("To be, or not to be", session.seen_passages[0])
+        self.assertIsNotNone(session.max_position)
+        self.assertEqual(session.max_position[0], 3)  # Act 3
+        self.assertEqual(session.max_position[1], 1)  # Scene 1
+
+
 if __name__ == "__main__":
     unittest.main()
