@@ -44,7 +44,7 @@ _gemini: Optional["GeminiSpeechClient"] = None
 
 class GeminiSpeechClient:
     def __init__(self, api_key: str, model: str):
-        self.api_key, self.model = api_key, model
+        self.api_key, self.model, self._configured_model = api_key, model, model
         self._genai: Any = None
 
     async def list_tts_models(self) -> list[str]:
@@ -88,9 +88,15 @@ class GeminiSpeechClient:
         except Exception as exc:
             if getattr(exc, "code", None) != 404 and getattr(exc, "status", None) != "NOT_FOUND":
                 raise
-            names = await self.list_tts_models()
+            _orig_exc = exc
+            try:
+                names = await self.list_tts_models()
+            except Exception as lookup_exc:
+                log.warning("TTS model list failed during fallback: %s", type(lookup_exc).__name__)
+                raise _orig_exc from None
             best = min(names, key=lambda n: ("flash" not in n.lower(), "preview" in n.lower(), n), default=None)
             if best is None or best == self.model:
+                exc.tts_models = names
                 raise
             log.warning("TTS model %s not found; using %s from now on", self.model, best)
             self.model = best
@@ -205,10 +211,11 @@ def describe_failure(exc: BaseException, text: str = "", key: str = "") -> str:
         parts.append(f"code={code}")
     if isinstance(status, str) and status:
         parts.append(f"status={status}")
-    reason = " ".join(str(getattr(exc, "message", "") or "").split())[:200]
-    for secret in (key, text.strip()):
-        if secret and secret in reason:
-            reason = reason.replace(secret, "[redacted]")
+    raw = " ".join(str(getattr(exc, "message", "") or "").split())
+    for secret in (" ".join(key.split()), " ".join(text.split())):
+        if secret and secret in raw:
+            raw = raw.replace(secret, "[redacted]")
+    reason = raw[:200]
     if reason:
         parts.append(f"reason={reason}")
     return " ".join(parts)
@@ -217,13 +224,18 @@ def describe_failure(exc: BaseException, text: str = "", key: str = "") -> str:
 _listed_models = False
 
 
-async def log_tts_models(client: Any) -> None:
+async def log_tts_models(client: Any, exc: Any = None) -> None:
     """After a model-not-found error, log which TTS models this key can use (names only, once per
-    process), so a wrong MODEL_TTS can be fixed from the log."""
+    process), so a wrong MODEL_TTS can be fixed from the log. Reuses names already fetched by
+    synthesize() (attached as exc.tts_models) to avoid a second network round-trip."""
     global _listed_models
     if _listed_models or not hasattr(client, "list_tts_models"):
         return
     _listed_models = True
+    cached = getattr(exc, "tts_models", None) if exc is not None else None
+    if cached is not None:
+        log.warning("TTS models available to this key: %s", ", ".join(cached[:12]) or "none")
+        return
     try:
         names = await asyncio.wait_for(client.list_tts_models(), 10)
         log.warning("TTS models available to this key: %s", ", ".join(names[:12]) or "none")
@@ -252,7 +264,7 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
         log.warning("speech synthesis failed, the phone will use its own voice: %s",
                     describe_failure(exc, text, getattr(client, "api_key", "")))
         if getattr(exc, "code", None) == 404 or getattr(exc, "status", None) == "NOT_FOUND":
-            await log_tts_models(client)
+            await log_tts_models(client, exc)
         return None
     if session_id is not None and _epochs.get(session_id, 0) != epoch:
         log.info("speech synthesis dropped: session ended during synthesis")
@@ -271,9 +283,14 @@ def _gemini_client() -> Optional[GeminiSpeechClient]:
     model = os.environ.get("MODEL_TTS", "").strip() or DEFAULT_MODEL_TTS
     if not key:
         return None
-    if _gemini is None or (_gemini.api_key, _gemini.model) != (key, model):
+    if _gemini is None or (_gemini.api_key, _gemini._configured_model) != (key, model):
         _gemini = GeminiSpeechClient(key, model)
     return _gemini
+
+
+def active_speech_client() -> Optional[Any]:
+    """Return the current TTS client without creating one; None if no client or key."""
+    return _client or _gemini
 
 
 audio_router = APIRouter()
