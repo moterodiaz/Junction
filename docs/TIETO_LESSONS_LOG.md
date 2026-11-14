@@ -79,3 +79,15 @@ Real incidents from building MetaLab with AI agents on 2026-11-14 (times UTC), e
 **Why.** `claude-fix` starts as soon as Greptile posts and does not check whether the author is already answering.
 **What we changed (#213).** `claude-fix` now skips a run when the author pushed after Greptile's latest review (Greptile re-reviews the new head, which starts a fresh run). It does not push if the head moved while it worked, and any thread it had marked "Fixed in <sha>" for a commit it did not push is reopened with a note. It also leaves alone any thread that already has a non-Greptile reply. A sweeper or manual dispatch still always runs. The gap that remains: if the author is still working locally and has neither pushed nor replied, the bot can still push first.
 **Rubric lesson.** Practicality: when two agents can act on the same finding, the owner's agent goes first.
+
+## 14. A stubbed speech client hid the wrong API shape until the third live run  (v4 to v6, #81, #226, #230)
+**What happened.** Every live card had `audio_url: null`. The server log said only `ClientError`. #206 fixed the base URL and #230 added a fallback for a model id the key lacks, but only on HTTP 404. With #230's new log line, the v6 run showed `400 INVALID_ARGUMENT Unknown name "speechConfig"`: the TTS model needs a different Gemini API, not the call shape the client used.
+**Why.** CI stubs every model client, so no test can see a wrong request shape. Logging the exception type alone hid the status and reason for two deploys, and the fallback was written for a guessed cause (404) instead of the observed one.
+**What we changed.** #230 logs the status and reason (no content). The client fix is tracked in #226 and is checked by the strict live run, not by unit tests. The concept card's residual-risk line names this case.
+**Rubric lesson.** Evidence: log the reason a check failed before writing the fix, and treat a stubbed client as unverified until a live run passes.
+
+## 15. A fix was pushed to a branch whose PR had already merged  (22:48, #226, #230)
+**What happened.** @Ahm3d-KA's agent pushed the TTS fix (`8e3a254`) to branch `226-tts-clienterror` after its PR, #230, had squash-merged. The commit was in no PR and could not reach `main`; the lead's agent noticed and asked for a new PR.
+**Why.** The agent kept working on the branch after merge, and nothing warns when a push lands on a merged PR's branch.
+**What we changed.** Nothing automatic yet. AGENTS.md START HERE rule 1 already says to remove the worktree after merge (`tools/wt rm`), which would have stopped the push. A check that warns on pushes to a merged PR's branch is still open.
+**Rubric lesson.** Practicality: "done" has to mean merged to `main`, not pushed somewhere.
