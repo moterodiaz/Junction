@@ -55,6 +55,7 @@ REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "85"))
 _STT_WORKERS = 2
 _STT_THREADS = ThreadPoolExecutor(max_workers=_STT_WORKERS, thread_name_prefix="stt")
 _STT_SLOTS = threading.BoundedSemaphore(_STT_WORKERS)
+STT_SLOT_POLL_S = 0.05  # how often a waiting request checks for a free slot
 
 
 def _transcribe_in_slot(clip: bytes) -> str:
@@ -69,9 +70,11 @@ UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this
 async def transcribe(audio: Media) -> str:
     clip = base64.b64decode(audio.b64)  # Invoke validation (#85) guarantees valid base64
     # Take a slot before queueing so a stuck engine cannot pile up decoded clips; the slot is
-    # released only when the worker really finishes, not when the request times out.
-    if not _STT_SLOTS.acquire(blocking=False):
-        raise PipelineError("model_timeout", "That took too long. Try again.", True)
+    # released only when the worker really finishes, not when the request times out. With both
+    # slots busy, wait for one: timed() bounds the wait, and polling (rather than blocking a
+    # thread on the semaphore) means a cancelled waiter never takes a slot (#110).
+    while not _STT_SLOTS.acquire(blocking=False):
+        await asyncio.sleep(STT_SLOT_POLL_S)
     try:
         future = _STT_THREADS.submit(_transcribe_in_slot, clip)
     except BaseException:

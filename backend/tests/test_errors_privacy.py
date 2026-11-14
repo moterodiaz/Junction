@@ -230,8 +230,10 @@ class SttSlotTest(unittest.TestCase):
         async def go():
             tasks = [asyncio.ensure_future(pipeline.transcribe(media)) for _ in range(2)]
             await asyncio.sleep(0.1)
-            with self.assertRaises(pipeline.PipelineError) as ctx:
-                await pipeline.transcribe(media)
+            # A third request waits for a slot (#110), bounded by the stage budget.
+            with mock.patch.object(pipeline, "STAGE_TIMEOUT_S", 0.1), \
+                    self.assertRaises(pipeline.PipelineError) as ctx:
+                await pipeline.timed(pipeline.transcribe(media))
             release.set()
             await asyncio.gather(*tasks)
             return ctx.exception.code
