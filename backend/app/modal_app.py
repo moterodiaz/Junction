@@ -53,10 +53,15 @@ app = modal.App("metalab", image=image)
 @modal.asgi_app()
 def web():
     sys.path.insert(0, REMOTE_BACKEND)
+    from app.config import get_settings
+
+    # A missing key or an invalid setting stops the container at start (not `modal deploy` itself).
+    # Checked before importing app.main, whose pipeline parses the timeouts at import time, so
+    # every problem is named at once instead of a bare ValueError.
+    get_settings()
     import stt
     from app.main import create_app
 
-    # A missing key in the secret stops the container at start (not `modal deploy` itself).
     fastapi_app = create_app(require_keys=True)
     try:
         stt.warm()  # load Whisper now, so the first spoken request does not wait for it

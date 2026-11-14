@@ -241,9 +241,6 @@ class WsTest(unittest.TestCase):
             self.assertIsNone(asyncio.run(pipeline.draw("prompt", "session")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 TOKEN = "t0k3n-for-tests-only"  # not a real credential
 
@@ -256,7 +253,7 @@ class WsAuthTest(unittest.TestCase):
 
     def setUp(self):
         patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "",
-                                               "WS_AUTH": "", "WS_AUTH_TOKEN": ""})
+                                               "WS_AUTH": "", "WS_AUTH_TOKEN": "", "WS_TRUST_FORWARDED_PROTO": ""})
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -288,10 +285,15 @@ class WsAuthTest(unittest.TestCase):
         card = self.card_over({"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN}, {"Authorization": f"Bearer {TOKEN}"})
         self.assertEqual(card["type"], "card")
 
-    def test_on_accepts_tls_ended_by_a_proxy(self):
-        card = self.card_over({"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+    def test_on_accepts_tls_ended_by_a_trusted_proxy(self):
+        card = self.card_over({"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN, "WS_TRUST_FORWARDED_PROTO": "on"},
                               {"Authorization": f"Bearer {TOKEN}", "X-Forwarded-Proto": "https"}, url=WS)
         self.assertEqual(card["type"], "card")
+
+    def test_on_ignores_a_forwarded_proto_header_unless_trusted(self):
+        # A client talking to the app directly can send the header itself over plain ws://.
+        self.refused("auth on but the handshake is not over WSS", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+                     {"Authorization": f"Bearer {TOKEN}", "X-Forwarded-Proto": "https"}, url=WS)
 
     def test_on_refuses_missing_credential(self):
         self.refused("missing or malformed credential", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN})
@@ -376,3 +378,7 @@ class WsBoundsTest(unittest.TestCase):
         terminals = [(r["type"], r["request_id"]) for r in replies if r["type"] != "status"]
         self.assertEqual(terminals, [("card", "a"), ("card", "b"), ("error", None)])
         self.assertEqual([r["request_id"] for r in replies if r["type"] == "status"], ["a"] * 3 + ["b"] * 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

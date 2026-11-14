@@ -8,6 +8,7 @@ Secrets never live in the repo.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -66,6 +67,13 @@ def auth_config(env: Mapping[str, str] | None = None) -> AuthConfig:
     return AuthConfig(enabled=True, ready=mode in ON and bool(token), token=token)
 
 
+def trust_forwarded_proto(env: Mapping[str, str] | None = None) -> bool:
+    """Whether X-Forwarded-Proto may prove TLS. Turn on only where every request reaches the app
+    through a proxy that sets it (Modal); off, only the server's own connection scheme counts."""
+    env = os.environ if env is None else env
+    return env.get("WS_TRUST_FORWARDED_PROTO", "").strip().lower() in ON
+
+
 def max_connections(env: Mapping[str, str] | None = None) -> int:
     env = os.environ if env is None else env
     try:
@@ -87,8 +95,8 @@ def config_problems(env: Mapping[str, str]) -> list[str]:
         except ValueError:
             problems.append(f"{name} must be a number of seconds")
             return None
-        if value <= 0:
-            problems.append(f"{name} must be above 0")
+        if not math.isfinite(value) or value <= 0:
+            problems.append(f"{name} must be a finite number above 0")
             return None
         return value
 
@@ -106,6 +114,9 @@ def config_problems(env: Mapping[str, str]) -> list[str]:
         problems.append("WS_AUTH must be on or off")
     elif mode in ON and not env.get("WS_AUTH_TOKEN", "").strip():
         problems.append("WS_AUTH is on but WS_AUTH_TOKEN is empty")
+
+    if env.get("WS_TRUST_FORWARDED_PROTO", "").strip().lower() not in ON + OFF:
+        problems.append("WS_TRUST_FORWARDED_PROTO must be on or off")
 
     raw = env.get("WS_MAX_CONNECTIONS", "").strip()
     if raw and (not raw.isdigit() or int(raw) < 1):

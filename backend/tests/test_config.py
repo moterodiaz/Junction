@@ -88,7 +88,11 @@ class DeployValidationTest(unittest.TestCase):
 
     def test_timeouts_must_be_positive_numbers(self):
         self.assertIn("STAGE_TIMEOUT_S must be a number of seconds", self.problems(STAGE_TIMEOUT_S="soon"))
-        self.assertIn("REQUEST_TIMEOUT_S must be above 0", self.problems(REQUEST_TIMEOUT_S="0"))
+        self.assertIn("REQUEST_TIMEOUT_S must be a finite number above 0", self.problems(REQUEST_TIMEOUT_S="0"))
+        for name in ("STAGE_TIMEOUT_S", "REQUEST_TIMEOUT_S"):
+            for value in ("nan", "inf", "-inf"):
+                with self.subTest(name=name, value=value):
+                    self.assertIn(f"{name} must be a finite number above 0", self.problems(**{name: value}))
 
     def test_every_problem_is_named_at_once(self):
         msg = self.problems(STAGE_TIMEOUT_S="40", WS_AUTH="on", WS_MAX_CONNECTIONS="0")
@@ -97,6 +101,10 @@ class DeployValidationTest(unittest.TestCase):
 
     def test_auth_mode_must_be_on_or_off(self):
         self.assertIn("WS_AUTH must be on or off", self.problems(WS_AUTH="maybe", WS_AUTH_TOKEN="s3cret"))
+
+    def test_forwarded_proto_trust_must_be_on_or_off(self):
+        self.assertIn("WS_TRUST_FORWARDED_PROTO must be on or off", self.problems(WS_TRUST_FORWARDED_PROTO="yes please"))
+        load_settings({**KEYS, "WS_TRUST_FORWARDED_PROTO": "on"})
 
     def test_messages_never_contain_secret_values(self):
         msg = self.problems(WS_AUTH="maybe", WS_AUTH_TOKEN="s3cret", STAGE_TIMEOUT_S="99")
