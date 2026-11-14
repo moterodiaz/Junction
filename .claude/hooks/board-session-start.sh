@@ -4,6 +4,7 @@
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 out="$(tools/board unread 2>&1)" || out="(board unreachable: $(printf '%s' "$out" | head -n 1)). Run tools/board unread later."
 echo "Team board (GitHub issue #${BOARD_ISSUE:-1}). Rules are in AGENTS.md."
+echo "START HERE: read AGENTS.md first. Work only in your own worktree (tools/wt <issue#>-<slug>); if this is the shared checkout or you are on main, create one. Then run tools/task next to get your work."
 if [ -n "$out" ]; then
   echo "Unread posts:"
   echo "$out"

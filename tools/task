@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Agent task queue on GitHub issues. Needs only `gh` (authenticated).
+# Usage: tools/task <next|claim|fill|help>
+set -u
+[ "${1:-help}" = help ] && { echo "Usage: tools/task <next|claim N|fill|help>"; exit 0; }
+
+die() { echo "task: $*" >&2; exit 1; }
+command -v gh >/dev/null 2>&1 || die "gh not found (https://cli.github.com), then run: gh auth login"
+gh auth status >/dev/null 2>&1 || die "gh not authenticated; run: gh auth login"
+REPO="${BOARD_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}" || die "cannot determine repo; set BOARD_REPO=owner/name"
+
+issues() {
+  gh issue list -R "$REPO" --label task --state open --search 'no:assignee -label:blocked -label:in-progress' --limit 100 \
+    --json number,title,body,createdAt --jq 'sort_by(.createdAt)[] | [.number, (.title | @base64), (.body | @base64)] | @tsv'
+}
+
+slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//' | cut -c1-30 | sed 's/-$//'; }
+
+dependencies_open() {
+  local n
+  while read -r n; do
+    [ -n "$n" ] || continue
+    [ "$(gh issue view "$n" -R "$REPO" --json state --jq .state)" = "OPEN" ] && return 0
+  done < <(printf '%s\n' "$1" | awk '/^## Depends on[[:space:]]*$/{f=1;next} f&&/^## /{exit} f{while(match($0, /#[0-9]+/)){print substr($0,RSTART+1,RLENGTH-1);$0=substr($0,RSTART+RLENGTH)}}')
+  return 1
+}
+
+cmd_next() {
+  local number encoded_title encoded_body title body prd task_slug
+  while IFS=$'\t' read -r number encoded_title encoded_body; do
+    [ -n "$number" ] || continue
+    title="$(printf '%s' "$encoded_title" | base64 --decode 2>/dev/null || printf '%s' "$encoded_title" | base64 -D)"
+    body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
+    dependencies_open "$body" && continue
+    prd="$(printf '%s\n' "$body" | awk '/^## PRD section[[:space:]]*$/{f=1;next} f&&/^## /{exit} f&&NF{print;exit}')"
+    [ -n "$prd" ] || prd="(missing: ask the author to cite one)"
+    task_slug="$(slug "$title")"
+    printf '#%s  %s\nPRD: %s\nNext: tools/task claim %s   then   tools/wt %s-%s\n' "$number" "$title" "$prd" "$number" "$number" "$task_slug"
+    return 0
+  done < <(issues)
+  echo "No unclaimed tasks. Run: tools/task fill"
+}
+
+cmd_claim() {
+  local n="${1:-}" data state labelled assignees title login after task_slug
+  [[ "$n" =~ ^[0-9]+$ ]] || die "claim needs an issue number"
+  data="$(gh issue view "$n" -R "$REPO" --json state,labels,assignees,title --jq '[.state, any(.labels[]; .name == "task"), (.assignees | length), (.title | @base64)] | @tsv')" || die "could not read issue #$n"
+  IFS=$'\t' read -r state labelled assignees title <<< "$data"
+  title="$(printf '%s' "$title" | base64 --decode 2>/dev/null || printf '%s' "$title" | base64 -D)"
+  [ "$state" = OPEN ] || die "#$n is not open"
+  [ "$labelled" = true ] || die "#$n is not labelled task"
+  [ "$assignees" = 0 ] || die "#$n already has an assignee"
+  gh issue edit "$n" -R "$REPO" --add-assignee @me --add-label in-progress >/dev/null
+  login="$(gh api user --jq .login)" || die "could not determine current login"
+  after="$(gh issue view "$n" -R "$REPO" --json assignees --jq '[(.assignees|length), (.assignees[0].login // "")] | @tsv')" || after=""
+  if [ "$after" != $'1\t'"$login" ]; then gh issue edit "$n" -R "$REPO" --remove-assignee @me --remove-label in-progress >/dev/null; die "could not confirm claim of #$n (lost a race or gh error); run tools/task next"; fi
+  "$(dirname "$0")/board" post "[$login's agent] claimed #$n: $title" >/dev/null
+  task_slug="$(slug "$title")"
+  printf 'Claimed #%s. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
+}
+
+cmd_fill() {
+  local count
+  count="$(issues | awk 'NF{n++} END{print n+0}')"
+  if [ "$count" -ge 3 ]; then echo "Queue ok: $count unclaimed tasks."; return 0; fi
+  echo "Queue low ($count < 3). Read Junction-Prep/metalab_prd.md. Pick PRD sections no open or closed task covers (lowest layer first: L0 before L1). File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
+}
+
+case "${1:-help}" in
+  next) cmd_next ;; claim) shift; cmd_claim "$@" ;; fill) cmd_fill ;;
+  help) echo "Usage: tools/task <next|claim N|fill|help>" ;; *) die "unknown command: $1" ;;
+esac
