@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Read-only onboard readiness check. Run once before starting work.
-# Usage: tools/onboard
-# Env:   ONBOARD_REPO=owner/repo  (override auto-detection; use for testing)
+# Onboard readiness check (read-only) and user-settings applier.
+# Usage: tools/onboard [--apply]
+# Env:   ONBOARD_REPO=owner/repo           (override auto-detection; use for testing)
+#        ONBOARD_USER_SETTINGS=path         (override settings file; use for testing)
 set -u
 
 FAIL_COUNT=0
@@ -93,13 +94,13 @@ check_branch() {
 }
 
 check_user_settings() {
-  local usf="$HOME/.claude/settings.json" missing_allow missing_auto
+  local usf="${ONBOARD_USER_SETTINGS:-$HOME/.claude/settings.json}" missing_allow missing_auto
   if [ ! -f "$usf" ]; then
-    warn "$usf not found — fix: create it with the user settings block from KICKOFF.md"
+    warn "$usf not found — fix: run tools/onboard --apply"
     return
   fi
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$usf" 2>/dev/null; then
-    warn "$usf invalid JSON — fix: replace with the user settings block from KICKOFF.md"
+    warn "$usf invalid JSON — fix: repair $usf"
     return
   fi
   missing_allow="$(python3 - "$usf" 2>/dev/null <<'PY'
@@ -118,10 +119,10 @@ if 'autoMode' not in d:
 PY
 )"
   if [ -n "$missing_allow" ]; then
-    warn "$usf: $missing_allow — fix: merge the user settings block from KICKOFF.md"
+    warn "$usf: $missing_allow — fix: run tools/onboard --apply"
   fi
   if [ -n "$missing_auto" ]; then
-    warn "$usf: $missing_auto — fix: merge the user settings block from KICKOFF.md"
+    warn "$usf: $missing_auto — fix: run tools/onboard --apply"
   fi
   if [ -z "$missing_allow" ] && [ -z "$missing_auto" ]; then
     ok "$usf: permissions.allow and autoMode present"
@@ -137,6 +138,109 @@ check_task() {
     fail "tools/task next returned an error — fix: run tools/task next and resolve the reported error"
   fi
 }
+
+# --- Apply user settings ---
+if [ "${1:-}" = "--apply" ]; then
+  _script_dir="$(cd "$(dirname "$0")" && pwd)"
+  _usf="${ONBOARD_USER_SETTINGS:-$HOME/.claude/settings.json}"
+  python3 - "$_script_dir" "$_usf" <<'PY'
+import json, sys, os, datetime, shutil, re, tempfile
+
+script_dir, target = sys.argv[1], sys.argv[2]
+kickoff = os.path.join(script_dir, '..', 'KICKOFF.md')
+
+with open(kickoff) as f:
+    text = f.read()
+
+m = re.search(r'```json\n(\{.*?\})\n```', text, re.DOTALL)
+if not m:
+    print('ERROR: could not find json block in KICKOFF.md', file=sys.stderr)
+    sys.exit(1)
+
+block = json.loads(m.group(1))
+
+if not os.path.exists(target):
+    existing = {}
+    orig_content = None
+else:
+    try:
+        with open(target) as f:
+            orig_text = f.read()
+        existing = json.loads(orig_text)
+        orig_content = orig_text
+    except json.JSONDecodeError as e:
+        print(f'REFUSE: {target} is not valid JSON — {e}', file=sys.stderr)
+        sys.exit(1)
+
+for entry in existing.get('permissions', {}).get('allow', []):
+    if '--force' in entry or 'force-with-lease' in entry:
+        print(f'WARN {entry}: this contradicts the team rule (no force pushes); remove it by hand')
+
+def merge_list(ex, nw, defaults_first=False):
+    seen = set(ex)
+    result = list(ex)
+    for item in nw:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    if defaults_first and '$defaults' in result:
+        result.remove('$defaults')
+        result.insert(0, '$defaults')
+    return result
+
+specs = [
+    ('permissions', 'allow', False),
+    ('permissions', 'deny', False),
+    ('autoMode', 'environment', True),
+    ('autoMode', 'allow', True),
+    ('autoMode', 'hard_deny', True),
+]
+
+summaries = []
+for sect, key, dfl in specs:
+    ex_list = existing.get(sect, {}).get(key, [])
+    nw_list = block.get(sect, {}).get(key, [])
+    merged = merge_list(ex_list, nw_list, dfl)
+    added = len(merged) - len(ex_list)
+    summaries.append((f'{sect}.{key}', added, len(ex_list)))
+    if sect not in existing:
+        existing[sect] = {}
+    existing[sect][key] = merged
+
+all_zero = all(a == 0 for _, a, _ in summaries)
+
+if all_zero and orig_content is not None:
+    for name, added, already in summaries:
+        print(f'{name}: +{added} added ({already} already present)')
+    sys.exit(0)
+
+if orig_content is not None:
+    ts = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    bak = f'{target}.bak-{ts}'
+    shutil.copy2(target, bak)
+
+dirpath = os.path.dirname(os.path.abspath(target))
+os.makedirs(dirpath, exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=dirpath)
+try:
+    with os.fdopen(fd, 'w') as f:
+        f.write(json.dumps(existing, indent=2) + '\n')
+    with open(tmp) as f:
+        json.load(f)
+    os.replace(tmp, target)
+except Exception as e:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    print(f'ERROR writing {target}: {e}', file=sys.stderr)
+    sys.exit(1)
+
+for name, added, already in summaries:
+    print(f'{name}: +{added} added ({already} already present)')
+PY
+  exit $?
+fi
 
 # --- Main ---
 gh_ok=1
