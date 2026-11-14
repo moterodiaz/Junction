@@ -1,5 +1,15 @@
 """Backend AI module: page reading, source text, book session and reasoning, image generation."""
 
+from .image import draw, cleanup_session, get_image, format_display_prompt, StubImageClient
+from .page_reader import (
+    NemotronClient,
+    NoTextFoundError,
+    PageReadError,
+    PageReadTimeoutError,
+    StubNemotronClient,
+    extract_frame_data,
+    read_page,
+)
 from .session import (
     BookInfo,
     BookSession,
@@ -18,17 +28,20 @@ from .reasoning import (
     set_reasoning_client,
     think,
 )
-from .page_reader import (
-    NemotronClient,
-    NoTextFoundError,
-    PageReadError,
-    PageReadTimeoutError,
-    StubNemotronClient,
-    extract_frame_data,
-    read_page,
-)
 
 __all__ = [
+    "draw",
+    "cleanup_session",
+    "get_image",
+    "format_display_prompt",
+    "StubImageClient",
+    "NemotronClient",
+    "NoTextFoundError",
+    "PageReadError",
+    "PageReadTimeoutError",
+    "StubNemotronClient",
+    "extract_frame_data",
+    "read_page",
     "BookInfo",
     "BookSession",
     "QAExchange",
@@ -43,11 +56,4 @@ __all__ = [
     "parse_reasoning_json",
     "set_reasoning_client",
     "think",
-    "NemotronClient",
-    "NoTextFoundError",
-    "PageReadError",
-    "PageReadTimeoutError",
-    "StubNemotronClient",
-    "extract_frame_data",
-    "read_page",
 ]

@@ -106,6 +106,7 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
         set_reasoning_client(self._stub)
         self._env_patch = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy"})
         self._env_patch.start()
+        os.environ.pop("MODEL_REASON", None)  # restored when the patch stops; keeps default-model asserts hermetic
 
     def tearDown(self):
         self._env_patch.stop()
@@ -139,6 +140,32 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(card.sources[0].url, "https://example.com/good")
         self.assertEqual(card.sources[1].url, "https://example.com/no-title")
         self.assertEqual(card.sources[1].title, "Source")
+
+    async def test_model_reason_env_var_is_used_in_live_path(self):
+        """Thread 1: MODEL_REASON env var is passed to ai.think and reflected in models.reason."""
+        custom_model = "gemini-custom-7b"
+        with mock.patch.dict(os.environ, {"MODEL_REASON": custom_model}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page"):
+            card = await pipeline.run(_INVOKE, _noop_send_stage)
+        self.assertEqual(card.models["reason"], custom_model)
+        self.assertEqual(self._stub.calls[0]["model"], custom_model)
+
+    async def test_non_https_sources_are_dropped(self):
+        """Thread 3: http:// and www. sources are dropped; only https:// passes through."""
+        stub = StubGeminiClient(default_answer={
+            **_STUB_ANSWER_WITH_SOURCES,
+            "sources": [
+                {"title": "HTTPS ok", "url": "https://example.com/ok"},
+                {"title": "HTTP dropped", "url": "http://www.gutenberg.org/ebooks/1524"},
+                {"title": "www dropped", "url": "www.gutenberg.org/ebooks/1524"},
+                {"title": "No scheme dropped", "url": "example.com/page"},
+            ],
+        })
+        set_reasoning_client(stub)
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+            card = await pipeline.run(_INVOKE, _noop_send_stage)
+        self.assertEqual(len(card.sources), 1)
+        self.assertEqual(card.sources[0].url, "https://example.com/ok")
 
 
 class PipelineRunOfflinePathTest(unittest.IsolatedAsyncioTestCase):

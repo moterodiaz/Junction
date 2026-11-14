@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import unittest
@@ -38,13 +39,9 @@ def exchange_bytes(payload, expect):
 
 class WsTest(unittest.TestCase):
     def setUp(self):
-        self._env_patch = mock.patch.dict(os.environ)
-        self._env_patch.start()
-        os.environ.pop("GEMINI_API_KEY", None)
-        os.environ.pop("NVIDIA_API_KEY", None)
-
-    def tearDown(self):
-        self._env_patch.stop()
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_text_command_streams_stages_then_card(self):
         replies = exchange(invoke(), 4)
@@ -156,7 +153,7 @@ class WsTest(unittest.TestCase):
     def test_real_page_reader_text_reaches_card(self):
         reader = StubNemotronClient(default_response="Text read by Nemotron")
 
-        async def think_with_page_text(command, page_text, session_id):
+        async def think_with_page_text(command, page_text, session_id, **kwargs):
             return {
                 "title": "Read page",
                 "caption": page_text,
@@ -207,6 +204,36 @@ class WsTest(unittest.TestCase):
 
     def test_health(self):
         self.assertEqual(TestClient(app).get("/health").json(), {"ok": True})
+
+    def test_image_route_is_mounted(self):
+        from ai.image import store_image
+
+        store_image("mounted", b"image-data", session_id="s1")
+        response = TestClient(app).get("/img/mounted.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"image-data")
+
+    def test_pipeline_draw_uses_generator_and_session_when_configured(self):
+        generator = mock.AsyncMock(return_value="https://x/img/1.png")
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "configured"}), mock.patch.object(
+            pipeline.image, "draw", new=generator
+        ) as generate:
+            result = asyncio.run(pipeline.draw("prompt", "session-7"))
+        self.assertEqual(result, "https://x/img/1.png")
+        generate.assert_awaited_once_with("prompt", session_id="session-7")
+
+    def test_pipeline_draw_returns_none_without_key_or_on_failure(self):
+        generate = mock.AsyncMock(side_effect=RuntimeError("unavailable"))
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            pipeline.image, "draw", new=generate
+        ):
+            self.assertIsNone(asyncio.run(pipeline.draw("prompt", "session")))
+        generate.assert_not_awaited()
+
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "configured"}), mock.patch.object(
+            pipeline.image, "draw", new=generate
+        ):
+            self.assertIsNone(asyncio.run(pipeline.draw("prompt", "session")))
 
 
 if __name__ == "__main__":

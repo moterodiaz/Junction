@@ -4,9 +4,11 @@ transcribe -> #27 (backend/stt/), read_page -> #28, think -> #30, draw -> #31.
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 
+from ai import image
 from ai import page_reader
 from ai.reasoning import resolve_reason_model
 from ai import think as _ai_think
@@ -14,6 +16,7 @@ from ai import think as _ai_think
 from .messages import Book, Card, Invoke, Media, Source, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
+log = logging.getLogger("metalab.pipeline")
 
 
 async def transcribe(audio: Media) -> str:
@@ -28,7 +31,13 @@ async def read_page(frame: Media) -> str:
     return await page_reader.read_page(frame)
 
 
-async def think(command: str, page_text: str, session_id: str) -> dict:
+async def think(
+    command: str,
+    page_text: str,
+    session_id: str,
+    *,
+    model: Optional[str] = None,
+) -> dict:
     if not os.environ.get("GEMINI_API_KEY", "").strip():
         # offline/test path: byte-identical stub so CI and conformance exchanges are unaffected
         return {
@@ -38,11 +47,29 @@ async def think(command: str, page_text: str, session_id: str) -> dict:
             "image_prompt": "A lone prince on a dark stage, bright outline on black",
             "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
         }
-    return await _ai_think(command, page_text, session_id)
+    return await _ai_think(command, page_text, session_id, model=model)
 
 
-async def draw(image_prompt: str) -> str | None:
-    return None
+async def draw(image_prompt: str, session_id: str) -> str | None:
+    # Offline/test path: preserve deterministic contract fixtures without an API key.
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return None
+    try:
+        return await image.draw(image_prompt, session_id=session_id)
+    except Exception as exc:
+        log.warning("Image generation unavailable: %s", exc)
+        return None
+
+
+def _image_model() -> str:
+    """Resolve the image model name the same way image.draw does, never blank."""
+    try:
+        from .config import get_settings
+
+        name = get_settings().model_image
+    except Exception:
+        name = os.environ.get("MODEL_IMAGE", "")
+    return name.strip() or image.DEFAULT_MODEL_IMAGE
 
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
@@ -61,14 +88,18 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         else "stub"
     )
 
-    await send_stage("thinking")
-    answer = await think(command, page_text, invoke.session_id)
-
     _reason_model = (
         resolve_reason_model()
         if os.environ.get("GEMINI_API_KEY", "").strip()
         else "stub"
     )
+
+    await send_stage("thinking")
+    answer = await think(
+        command, page_text, invoke.session_id,
+        model=_reason_model if _reason_model != "stub" else None,
+    )
+
     raw_sources = answer.get("sources") or []
     sources = [
         Source(title=s.get("title") or "Source", url=s["url"])
@@ -77,7 +108,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     ]
 
     await send_stage("drawing")
-    image_url = await draw(answer["image_prompt"])
+    image_url = await draw(answer["image_prompt"], invoke.session_id)
 
     return Card(
         request_id=invoke.request_id,
@@ -87,5 +118,9 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
         sources=sources,
-        models={"read": _read_model, "reason": _reason_model, "image": "stub"},
+        models={
+            "read": _read_model,
+            "reason": _reason_model,
+            "image": _image_model() if image_url else "stub",
+        },
     )

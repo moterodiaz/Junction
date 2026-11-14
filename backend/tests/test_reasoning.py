@@ -185,6 +185,24 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ReasoningError):
             await think("explain", "passage", "s-fail", client=stub)
 
+    async def test_speech_text_saved_in_session_history(self):
+        """Thread 2: speech_text (not caption) is recorded so follow-ups have full spoken context."""
+        stub = StubGeminiClient(default_answer={
+            "title": "Hamlet, Act 3, Scene 1",
+            "caption": "A short caption.",
+            "speech_text": "A richer spoken explanation with extra detail.",
+            "image_prompt": "prompt, pure black background (#000000)",
+            "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+            "sources": [],
+        })
+        await think("explain", "passage text", "s-speech-history", client=stub)
+        session = default_session_store.get("s-speech-history")
+        self.assertIsNotNone(session)
+        self.assertEqual(len(session.history), 1)
+        self.assertEqual(session.history[0].answer,
+                         "A richer spoken explanation with extra detail.")
+        self.assertNotEqual(session.history[0].answer, "A short caption.")
+
 
 if __name__ == "__main__":
     unittest.main()
