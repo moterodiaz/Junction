@@ -310,6 +310,17 @@
         {"op":"complete","request":"r1","out":["card:r1"]},
         {"op":"invoke","session":"s2","request":"r1","out":["duplicate_request:r1"]}
       ]
+    },
+    {
+      "name": "stale-completion-from-abandoned-connection-is-ignored",
+      "events": [
+        {"op":"invoke","session":"s1","request":"r1"},
+        {"op":"disconnect"},
+        {"op":"connect","context":"owner-b"},
+        {"op":"invoke","session":"s2","request":"r1"},
+        {"op":"complete","request":"r1","conn":0,"state":{"s2":{"pending":["r1"]}}},
+        {"op":"complete","request":"r1","out":["card:r1"],"state":{"s2":{"history":["r1"],"cache":["r1"],"media":["r1"],"pending":[]}}}
+      ]
     }
   ]
 }

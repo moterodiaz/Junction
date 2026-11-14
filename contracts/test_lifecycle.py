@@ -72,6 +72,7 @@ class ProposedLifecycleModel:
         self.requests: dict[str, dict] = {}
         self.end_ids: dict[str, str] = {}
         self.conn_ids: set[str] = set()
+        self.conn_no = 0
 
     def session(self, sid: str) -> dict:
         return self.sessions.setdefault(sid, {
@@ -123,7 +124,7 @@ class ProposedLifecycleModel:
             else:
                 session["last"] = now
                 session["staged"].append(rid)
-                self.requests[rid] = {"session": sid, "result": "pending"}
+                self.requests[rid] = {"session": sid, "result": "pending", "conn": self.conn_no}
                 self.conn_ids.add(rid)
         elif op == "cancel":
             assert self.connected, "cancel on closed socket"
@@ -140,8 +141,8 @@ class ProposedLifecycleModel:
                 out.append(f"cancelled:{rid}")
         elif op == "complete":
             request = self.requests[rid]
-            session = self.sessions[request["session"]]
-            if request["result"] == "pending":
+            if event.get("conn", self.conn_no) == request["conn"] and request["result"] == "pending":
+                session = self.sessions[request["session"]]
                 assert self.connected and not session["deleted"]
                 result = event.get("result", "card")
                 assert result in {"card", "error"}
@@ -190,6 +191,7 @@ class ProposedLifecycleModel:
             self.connected = True
             self.context = event.get("context", self.context)
             self.conn_ids = set()
+            self.conn_no += 1
         elif op == "resume":
             assert self.connected
             allowed = session is not None and not session["deleted"] and session["owner"] == self.context
