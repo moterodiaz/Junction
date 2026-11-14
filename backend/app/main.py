@@ -12,6 +12,7 @@ from ai.image import image_router
 from ai.page_reader import PageReadError
 
 from . import pipeline
+from .config import get_settings
 from .latency import StageTimer
 from .messages import Error, Invoke, Stage, Status
 
@@ -26,6 +27,14 @@ if not log.handlers:
 app = FastAPI(title="MetaLab backend")
 if image_router is not None:
     app.include_router(image_router)
+
+
+def create_app(require_keys: bool = False) -> FastAPI:
+    """The app to serve. A deploy passes require_keys=True so a missing secret fails at
+    startup, naming every missing key; local runs and tests stay keyless (offline stubs)."""
+    if require_keys:
+        get_settings()
+    return app
 
 
 @app.get("/health")
