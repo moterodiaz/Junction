@@ -15,7 +15,11 @@ args, db = sys.argv[1:], json.load(open(os.environ["FAKE_DB"]))
 if db.get("fail"):
     sys.exit("fake gh: HTTP 502")
 if args[:2] == ["issue", "list"]:
-    print(json.dumps([{"number": n, "state": e["state"], "body": e["body"]} for n, e in db["escapes"].items()]))
+    state, limit = args[args.index("--state") + 1].upper(), int(args[args.index("--limit") + 1])
+    # Newest first, as gh lists them: a long closed history comes before an old open escape.
+    issues = [{"number": 1000 + i, "state": "CLOSED", "body": ""} for i in range(db.get("closed_history", 0))]
+    issues += [{"number": int(n), "state": e["state"], "body": e["body"]} for n, e in db["escapes"].items()]
+    print(json.dumps([i for i in issues if state in ("ALL", i["state"])][:limit]))  # gh truncates at --limit
     sys.exit()
 path = next(a for a in args if a.startswith("repos/"))
 m = re.fullmatch(r"repos/o/r/pulls/(\d+)(/files|/reviews)?(\?per_page=100)?", path)
@@ -68,6 +72,14 @@ expect 3 "held:" 50                        # a later change request withdraws th
 
 echo "re-earned: escape #140 closed with its fix"
 state CLOSED '[]';  expect 0 "trust earned in @Ahm3d-KA" 50
+
+echo "a long closed history cannot hide an open escape"
+state OPEN '[]'
+python3 - "$FAKE_DB" <<'PY'
+import json, sys
+db = json.load(open(sys.argv[1])); db["closed_history"] = 1200; json.dump(db, open(sys.argv[1], "w"))
+PY
+expect 3 "held: @Ahm3d-KA trust withdrawn (#140)" 50
 
 echo "gh failure fails closed (exit other than 0 or 3)"
 db '{"fail": true}'

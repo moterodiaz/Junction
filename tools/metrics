@@ -113,11 +113,14 @@ def introduced_by(body):
     """PR numbers named on `Introduced-by:` lines of an escape issue."""
     return sorted({int(n) for line in INTRODUCED_BY.findall(body or "") for n in re.findall(r"#(\d+)", line)})
 
-def escape_issues():
-    out = gh("issue", "list", "-R", REPO, "--label", "escape", "--state", "all", "--limit", "500",
-             "--json", "number,state,body")
-    return [{"number": i["number"], "open": i["state"] == "OPEN", "prs": introduced_by(i["body"])}
-            for i in json.loads(out)]
+ESCAPE_LIMIT = 1000
+
+def escape_issues(state="all"):
+    issues = json.loads(gh("issue", "list", "-R", REPO, "--label", "escape", "--state", state,
+                           "--limit", str(ESCAPE_LIMIT), "--json", "number,state,body"))
+    if len(issues) >= ESCAPE_LIMIT:  # gh stops at --limit; a missing open escape would pass the gate
+        sys.exit(f"metrics: {ESCAPE_LIMIT}+ {state} escape issues; the list may be incomplete")
+    return [{"number": i["number"], "open": i["state"] == "OPEN", "prs": introduced_by(i["body"])} for i in issues]
 
 def withdrawn_areas(areas, open_escapes_by_area):
     """Areas of this PR whose trust is withdrawn, with the open escapes that withdrew it."""
@@ -126,9 +129,7 @@ def withdrawn_areas(areas, open_escapes_by_area):
 def open_escapes_by_area():
     """area -> open escape issues, from the files of each open escape's introducing PRs."""
     out = {}
-    for e in escape_issues():
-        if not e["open"]:
-            continue
+    for e in escape_issues("open"):
         for n in e["prs"]:
             files = gh("api", "--paginate", f"repos/{REPO}/pulls/{n}/files?per_page=100", "--jq", ".[] | .filename, (.previous_filename // empty)").split()
             for area in pr_areas(files):
