@@ -10,7 +10,7 @@ gh auth status >/dev/null 2>&1 || die "gh not authenticated; run: gh auth login"
 REPO="${BOARD_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}" || die "cannot determine repo; set BOARD_REPO=owner/name"
 
 issues() {
-  gh issue list -R "$REPO" --label task --state open --search 'no:assignee -label:blocked -label:in-progress' --limit 100 \
+  gh issue list -R "$REPO" --label task --state open --search 'no:assignee -label:blocked -label:in-progress' --limit 1000 \
     --json number,title,body,createdAt --jq 'sort_by(.createdAt)[] | [.number, (.title | @base64), (.body | @base64)] | @tsv'
 }
 
@@ -20,13 +20,15 @@ dependencies_open() {
   local n
   while read -r n; do
     [ -n "$n" ] || continue
-    [ "$(gh issue view "$n" -R "$REPO" --json state --jq .state)" = "OPEN" ] && return 0
+    # Only a successful read that says CLOSED counts as finished; errors count as still open.
+    [ "$(gh issue view "$n" -R "$REPO" --json state --jq .state 2>/dev/null)" = "CLOSED" ] || return 0
   done < <(printf '%s\n' "$1" | awk '/^## Depends on[[:space:]]*$/{f=1;next} f&&/^## /{exit} f{while(match($0, /#[0-9]+/)){print substr($0,RSTART+1,RLENGTH-1);$0=substr($0,RSTART+RLENGTH)}}')
   return 1
 }
 
 cmd_next() {
-  local number encoded_title encoded_body title body prd task_slug
+  local number encoded_title encoded_body title body prd task_slug list
+  list="$(issues)" || die "could not list tasks from GitHub; retry later"
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
     title="$(printf '%s' "$encoded_title" | base64 --decode 2>/dev/null || printf '%s' "$encoded_title" | base64 -D)"
@@ -37,31 +39,42 @@ cmd_next() {
     task_slug="$(slug "$title")"
     printf '#%s  %s\nPRD: %s\nNext: tools/task claim %s   then   tools/wt %s-%s\n' "$number" "$title" "$prd" "$number" "$number" "$task_slug"
     return 0
-  done < <(issues)
+  done <<< "$list"
   echo "No unclaimed tasks. Run: tools/task fill"
 }
 
 cmd_claim() {
-  local n="${1:-}" data state labelled assignees title login after task_slug
+  local n="${1:-}" data state labelled assignees title login after task_slug blocked body
   [[ "$n" =~ ^[0-9]+$ ]] || die "claim needs an issue number"
-  data="$(gh issue view "$n" -R "$REPO" --json state,labels,assignees,title --jq '[.state, any(.labels[]; .name == "task"), (.assignees | length), (.title | @base64)] | @tsv')" || die "could not read issue #$n"
-  IFS=$'\t' read -r state labelled assignees title <<< "$data"
+  data="$(gh issue view "$n" -R "$REPO" --json state,labels,assignees,title,body --jq '[.state, any(.labels[]; .name == "task"), (.assignees | length), (.title | @base64), any(.labels[]; .name == "blocked"), (.body | @base64)] | @tsv')" || die "could not read issue #$n"
+  IFS=$'\t' read -r state labelled assignees title blocked body <<< "$data"
   title="$(printf '%s' "$title" | base64 --decode 2>/dev/null || printf '%s' "$title" | base64 -D)"
+  body="$(printf '%s' "$body" | base64 --decode 2>/dev/null || printf '%s' "$body" | base64 -D)"
   [ "$state" = OPEN ] || die "#$n is not open"
   [ "$labelled" = true ] || die "#$n is not labelled task"
   [ "$assignees" = 0 ] || die "#$n already has an assignee"
+  [ "$blocked" = false ] || die "#$n is labelled blocked"
+  ! dependencies_open "$body" || die "#$n has open (or unreadable) dependencies"
   gh issue edit "$n" -R "$REPO" --add-assignee @me --add-label in-progress >/dev/null
   login="$(gh api user --jq .login)" || die "could not determine current login"
   after="$(gh issue view "$n" -R "$REPO" --json assignees --jq '[(.assignees|length), (.assignees[0].login // "")] | @tsv')" || after=""
   if [ "$after" != $'1\t'"$login" ]; then gh issue edit "$n" -R "$REPO" --remove-assignee @me --remove-label in-progress >/dev/null; die "could not confirm claim of #$n (lost a race or gh error); run tools/task next"; fi
-  "$(dirname "$0")/board" post "[$login's agent] claimed #$n: $title" >/dev/null
   task_slug="$(slug "$title")"
   printf 'Claimed #%s. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
+  if ! "$(dirname "$0")/board" post "[$login's agent] claimed #$n: $title" >/dev/null; then
+    echo "task: claim kept, but the board announcement failed. Retry: tools/board post \"[$login's agent] claimed #$n: $title\"" >&2
+    exit 1
+  fi
 }
 
 cmd_fill() {
-  local count
-  count="$(issues | awk 'NF{n++} END{print n+0}')"
+  local count=0 number encoded_title encoded_body body list
+  list="$(issues)" || die "could not list tasks from GitHub; retry later"
+  while IFS=$'\t' read -r number encoded_title encoded_body; do
+    [ -n "$number" ] || continue
+    body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
+    dependencies_open "$body" || count=$((count + 1))
+  done <<< "$list"
   if [ "$count" -ge 3 ]; then echo "Queue ok: $count unclaimed tasks."; return 0; fi
   echo "Queue low ($count < 3). Read Junction-Prep/metalab_prd.md. Pick PRD sections no open or closed task covers (lowest layer first: L0 before L1). File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
 }
