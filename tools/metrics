@@ -2,7 +2,7 @@
 # Trust metrics for the agent PR pipeline, computed from GitHub. Needs `gh` (authenticated) and python3.
 # Usage: tools/metrics [--since <pr-number>] [--json]   repo-wide table (default --since 67, the first product PR)
 #        tools/metrics --pr <N>                         the trust header for one PR (markdown, used by pr-header.yml)
-# Env: METRICS_REPO (default: the current gh repo). Definitions: docs/TIETO_CONCEPT_CARD.md section 5.
+# Env: METRICS_REPO (default: the current gh repo); METRICS_TABLE, a file holding a pre-rendered repo-wide table for --pr. Definitions: docs/TIETO_CONCEPT_CARD.md section 5.
 set -euo pipefail
 command -v gh >/dev/null 2>&1 || { echo "metrics: gh not found (https://cli.github.com)" >&2; exit 1; }
 REPO="${METRICS_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
@@ -183,6 +183,13 @@ def check_lines(pr):
         out[name] = (state, n.get("detailsUrl") or n.get("targetUrl"))
     return out
 
+def shared_table():
+    # A sweep over many PRs renders the repo-wide table once and passes it in (pr-header.yml).
+    path = os.environ.get("METRICS_TABLE")
+    if path and os.path.exists(path):
+        return open(path).read().strip()
+    return table(repo_metrics(67))
+
 def header(number):
     q = f"""query($o:String!,$n:String!,$p:Int!){{repository(owner:$o,name:$n){{pullRequest(number:$p){{
       number title body labels(first:20){{nodes{{name}}}}
@@ -235,7 +242,7 @@ def header(number):
     # pr-header.yml keeps whatever the owner wrote between these markers when it refreshes the comment.
     out += ["", f"### Human sign-off ({' '.join(owners)})", SIGNOFF_START,
             "- [ ] Checked:", "- [ ] Not checked, and why:", "- [ ] Residual risk accepted:", SIGNOFF_END, "",
-            "<details><summary>Pipeline metrics (repo-wide)</summary>", "", table(repo_metrics(67)), "", "</details>"]
+            "<details><summary>Pipeline metrics (repo-wide)</summary>", "", shared_table(), "", "</details>"]
     return "\n".join(out)
 
 args = sys.argv[1:]
