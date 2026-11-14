@@ -150,6 +150,7 @@ cmd_claim() {
   [ "$assignees" = 0 ] || die "#$n already has an assignee"
   [ "$blocked" = false ] || die "#$n is labelled blocked"
   ! dependencies_open "$body" || die "#$n has open (or unreadable) dependencies"
+  printf '%s\n' "$body" | grep -qE 'REQ-[A-Z]+-[0-9]+' || die "#$n names no requirement id (REQ-...). Add one from docs/REQUIREMENTS.md under '## Requirement', then claim (AGENTS.md section 3 rule 7)"
   gh issue edit "$n" -R "$REPO" --add-assignee @me --add-label in-progress >/dev/null
   login="$(gh api user --jq .login)" || die "could not determine current login"
   after="$(gh issue view "$n" -R "$REPO" --json assignees --jq '[(.assignees|length), (.assignees[0].login // "")] | @tsv')" || after=""

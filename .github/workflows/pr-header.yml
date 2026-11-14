@@ -1,0 +1,121 @@
+name: pr-header
+
+# One sticky trust comment per PR (requirement, risk tier, what AI verified, what it refused or escalated,
+# human sign-off), plus a check that the PR names a REQ id (AGENTS.md section 3 rules 7 to 9).
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted]
+  # Bot comments (claude-fix "needs human", the fix-loop cap) use GITHUB_TOKEN and trigger no events,
+  # so refresh when those workflows finish, and sweep every open PR on a schedule as a backstop.
+  workflow_run:
+    workflows: [ci, claude-fix]
+    types: [completed]
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to refresh (empty = every open PR)
+        required: false
+
+# No concurrency group: GitHub reports a cancelled run as a failed check on the PR. Each run regenerates the
+# whole header, and the duplicate cleanup below handles two runs that both create one.
+
+jobs:
+  req-id:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
+      BODY: ${{ github.event.pull_request.body }}
+    steps:
+      - name: PR names a requirement id
+        run: |
+          if ! printf '%s\n%s\n' "$TITLE" "$BODY" | grep -qE 'REQ-[A-Z]+-[0-9]+'; then
+            echo "::error::No REQ id in the PR title or body. Add one from docs/REQUIREMENTS.md (AGENTS.md section 3 rule 7)."
+            exit 1
+          fi
+
+  header:
+    # Fork pull_request runs get a read-only token and cannot post; skip them instead of failing.
+    if: >-
+      (github.event_name != 'pull_request' && github.event_name != 'pull_request_review') ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: read
+      statuses: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      METRICS_REPO: ${{ github.repository }}
+      EVENT_PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+      RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+    steps:
+      # The default branch, not the PR head: the script runs with a write token.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Upsert trust header
+        run: |
+          set -euo pipefail
+          if [ ! -x tools/metrics ]; then echo "tools/metrics not on the default branch yet; skipping"; exit 0; fi
+          if [ -n "$EVENT_PR" ]; then
+            prs="$EVENT_PR"
+          elif [ -n "$RUN_PR" ]; then
+            prs="$RUN_PR"
+          elif [ -n "$RUN_BRANCH" ] && [ "$RUN_BRANCH" != main ]; then
+            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$RUN_BRANCH" --state open --json number --jq '.[].number')"
+          else
+            # Schedule, a run on main, or a claude-fix run started by a PR comment (which reports main as its branch).
+            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number --jq '.[].number')"
+          fi
+          marker='<!-- metalab-pr-header -->'
+          tools/metrics > "$RUNNER_TEMP/table.md"
+          export METRICS_TABLE="$RUNNER_TEMP/table.md"
+          for pr in $prs; do
+            [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $pr"; exit 1; }
+            tools/metrics --pr "$pr" > "$RUNNER_TEMP/header.md"
+            list_headers() {
+              gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr/comments?per_page=100" \
+                --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id"
+            }
+            id="$(list_headers | head -n1)"
+            if [ -n "$id" ]; then
+              # Keep what the owner wrote in the sign-off block; regenerate everything else.
+              gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" --jq .body > "$RUNNER_TEMP/old.md"
+              python3 - "$RUNNER_TEMP/old.md" "$RUNNER_TEMP/header.md" <<'PY'
+          import re, sys
+          old, new = (open(p).read() for p in sys.argv[1:])
+          block = re.compile(r"<!-- signoff:start -->.*?<!-- signoff:end -->", re.S)
+          kept = block.search(old)
+          if kept and block.search(new):
+              new = block.sub(lambda _: kept.group(0), new, count=1)
+          open(sys.argv[2], "w").write(new)
+          PY
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$RUNNER_TEMP/header.md" >/dev/null
+              echo "#$pr: updated comment $id"
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -F body=@"$RUNNER_TEMP/header.md" >/dev/null
+              echo "#$pr: created header comment"
+            fi
+            # Runs from different triggers can race and both create a header; keep the oldest, drop the rest.
+            list_headers | tail -n +2 | while read -r extra; do
+              if out="$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$extra" 2>&1)"; then
+                echo "#$pr: deleted duplicate header $extra"
+              elif grep -q 'HTTP 404' <<<"$out"; then
+                echo "#$pr: duplicate header $extra was already deleted by another run"
+              else
+                echo "::error::could not delete duplicate header $extra: $out"; exit 1
+              fi
+            done
+          done
