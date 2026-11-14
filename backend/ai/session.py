@@ -48,15 +48,56 @@ class QAExchange:
 class BookSession:
     """A reading session for a single book held strictly in memory."""
 
+    candidate_books: List[BookInfo] = field(default_factory=lambda: [BookInfo()])
+
     def __init__(
         self,
         session_id: str,
         book: Optional[BookInfo] = None,
+        candidate_books: Optional[List[BookInfo]] = None,
     ) -> None:
         self.session_id = str(session_id)
         self.book = book or BookInfo()
+        if candidate_books is not None:
+            self.candidate_books = list(candidate_books)
+        elif book is not None:
+            self.candidate_books = [self.book]
+        else:
+            self.candidate_books = [self.book]
         self.history: List[QAExchange] = []
         self.created_at = time.time()
+
+    def add_candidate_book(self, book: BookInfo) -> None:
+        """Add or update candidate book in the session, deduping by normalized title."""
+        if not isinstance(book, BookInfo):
+            raise TypeError("book must be a BookInfo instance")
+        norm = book.title.strip().lower()
+        for idx, existing in enumerate(self.candidate_books):
+            if existing.title.strip().lower() == norm:
+                self.candidate_books[idx] = book
+                if self.book.title.strip().lower() == norm:
+                    self.book = book
+                return
+        self.candidate_books.append(book)
+
+    def set_active_book(self, title: str, author: str = "", location: str = "") -> None:
+        """Update self.book and ensure it is in candidate_books."""
+        norm = title.strip().lower()
+        matched: Optional[BookInfo] = None
+        for b in self.candidate_books:
+            if b.title.strip().lower() == norm:
+                matched = b
+                break
+        if matched is not None:
+            if author:
+                matched.author = author
+            if location:
+                matched.location = location
+            self.book = matched
+        else:
+            new_book = BookInfo(title=title, author=author, location=location)
+            self.book = new_book
+            self.candidate_books.append(new_book)
 
     def add_exchange(
         self,

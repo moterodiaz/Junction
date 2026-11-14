@@ -39,6 +39,7 @@ from ai.decision import (
     reset_question_specs,
     resolve_model_for_tier,
     set_decision_client,
+    should_clarify_book,
 )
 from ai.session import BookInfo, BookSession
 
@@ -383,6 +384,213 @@ class PrivacyReqTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(secret_utterance, logs, "User utterance must never appear in logs (REQ-PRIV-02)")
         self.assertNotIn(secret_page_text, logs, "Page text must never appear in logs (REQ-PRIV-02)")
 
+
+
+class CandidateBooksAndClarifyTest(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        set_decision_client(None)
+
+    def test_decision_result_book_fields_and_to_dict(self) -> None:
+        """REQ-INTENT-01: DecisionResult carries book_match, book_match_confidence, and book_changed."""
+        res_default = DecisionResult(
+            action="explain",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.9,
+            fallback_used=False,
+            raw_utterance="test",
+        )
+        self.assertIsNone(res_default.book_match)
+        self.assertEqual(res_default.book_match_confidence, 1.0)
+        self.assertFalse(res_default.book_changed)
+        d = res_default.to_dict()
+        self.assertIn("book_match", d)
+        self.assertIn("book_match_confidence", d)
+        self.assertIn("book_changed", d)
+
+        res_custom = DecisionResult(
+            action="explain",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.9,
+            fallback_used=False,
+            raw_utterance="test",
+            book_match="Macbeth",
+            book_match_confidence=0.88,
+            book_changed=True,
+        )
+        self.assertEqual(res_custom.book_match, "Macbeth")
+        self.assertEqual(res_custom.book_match_confidence, 0.88)
+        self.assertTrue(res_custom.book_changed)
+        d2 = res_custom.to_dict()
+        self.assertEqual(d2["book_match"], "Macbeth")
+        self.assertEqual(d2["book_match_confidence"], 0.88)
+        self.assertTrue(d2["book_changed"])
+
+    def test_should_clarify_book_matrix(self) -> None:
+        """REQ-INTENT-01: should_clarify_book returns True ONLY when passage_score < 0.65 AND book_match_confidence < 0.70."""
+        def _make_res(conf: float) -> DecisionResult:
+            return DecisionResult(
+                action="explain",
+                task_tier="balanced",
+                recommended_model="gemini-4-argon",
+                needs_image=False,
+                speak_only=False,
+                confidence=0.9,
+                fallback_used=False,
+                raw_utterance="test",
+                book_match_confidence=conf,
+            )
+
+        # 1. Both low: passage_score < 0.65 AND conf < 0.70 -> True
+        self.assertTrue(should_clarify_book(_make_res(0.60), passage_score=0.50))
+        self.assertTrue(should_clarify_book(_make_res(0.30), passage_score=0.10))
+        self.assertTrue(should_clarify_book(_make_res(0.69), passage_score=0.64))
+
+        # 2. Local passage grounding succeeded (>= 0.65) -> False regardless of model book confidence
+        self.assertFalse(should_clarify_book(_make_res(0.40), passage_score=0.65))
+        self.assertFalse(should_clarify_book(_make_res(0.10), passage_score=0.85))
+
+        # 3. Model book confidence high (>= 0.70) -> False even if passage grounding low
+        self.assertFalse(should_clarify_book(_make_res(0.70), passage_score=0.40))
+        self.assertFalse(should_clarify_book(_make_res(0.95), passage_score=0.20))
+
+        # 4. Both high -> False
+        self.assertFalse(should_clarify_book(_make_res(0.90), passage_score=0.90))
+
+    async def test_decide_clarify_gate_rare_trigger(self) -> None:
+        """REQ-INTENT-01: Clarification gate triggers only on low passage score AND low book confidence."""
+        # Low confidence stub (conf = 0.55 < 0.70)
+        stub_low = StubDecisionClient(book_match="unknown", book_match_confidence=0.55)
+        set_decision_client(stub_low)
+
+        # Low passage score (0.40 < 0.65) -> triggers clarify
+        res1 = await decide("what is happening here?", passage_score=0.40)
+        self.assertEqual(res1.action, "clarify")
+
+        # Sufficient passage score (0.75 >= 0.65) -> does NOT trigger clarify
+        res2 = await decide("what is happening here?", passage_score=0.75)
+        self.assertNotEqual(res2.action, "clarify")
+        self.assertEqual(res2.action, "question")
+
+        # High book confidence stub (conf = 0.85 >= 0.70)
+        stub_high = StubDecisionClient(book_match="Hamlet", book_match_confidence=0.85)
+        set_decision_client(stub_high)
+
+        # Low passage score does NOT trigger clarify because model is confident in book
+        res3 = await decide("what is happening here?", passage_score=0.30)
+        self.assertEqual(res3.action, "question")
+
+        # Empty utterance always triggers clarify
+        res_empty = await decide("", passage_score=0.90)
+        self.assertEqual(res_empty.action, "clarify")
+
+    async def test_candidate_books_dynamic_classification(self) -> None:
+        """REQ-INTENT-01: Mid-book session candidate books classification detects switch."""
+        stub = StubDecisionClient()
+        set_decision_client(stub)
+
+        session = BookSession(
+            session_id="mid-book-1",
+            book=BookInfo(title="Hamlet", author="William Shakespeare"),
+        )
+        session.add_candidate_book(BookInfo(title="Macbeth", author="William Shakespeare"))
+        session.add_candidate_book(BookInfo(title="Othello", author="William Shakespeare"))
+
+        # Utterance stays on Hamlet
+        res_hamlet = await decide("explain Hamlet's soliloquy", session=session)
+        self.assertEqual(res_hamlet.book_match, "Hamlet")
+        self.assertFalse(res_hamlet.book_changed)
+        self.assertGreaterEqual(res_hamlet.book_match_confidence, 0.70)
+
+        # Utterance switches to Macbeth
+        res_macbeth = await decide(
+            "what does Lady Macbeth say about hands?",
+            page_text="Out, damned spot! out, I say!",
+            session=session,
+        )
+        self.assertEqual(res_macbeth.book_match, "Macbeth")
+        self.assertTrue(res_macbeth.book_changed)
+        self.assertGreaterEqual(res_macbeth.book_match_confidence, 0.70)
+
+    async def test_gemini_decision_client_builds_dynamic_book_questions(self) -> None:
+        """REQ-INTENT-01: GeminiDecisionClient builds per-call book_match and book_changed questions."""
+        client = GeminiDecisionClient(api_key="test-api-key")
+
+        mock_ans_action = mock.Mock()
+        mock_ans_action.choice = "explain"
+        mock_ans_action.confidence = 0.95
+
+        mock_ans_tier = mock.Mock()
+        mock_ans_tier.choice = "balanced"
+        mock_ans_tier.confidence = 0.95
+
+        mock_ans_img = mock.Mock()
+        mock_ans_img.noul = 0.0
+        mock_ans_img.confidence = 0.95
+
+        mock_ans_spk = mock.Mock()
+        mock_ans_spk.noul = 0.0
+        mock_ans_spk.confidence = 0.95
+
+        mock_ans_book = mock.Mock()
+        mock_ans_book.choice = "Macbeth"
+        mock_ans_book.confidence = 0.88
+
+        mock_ans_changed = mock.Mock()
+        mock_ans_changed.noul = 1.0
+        mock_ans_changed.confidence = 0.92
+
+        mock_response = mock.Mock()
+        mock_response.answers = {
+            "action": mock_ans_action,
+            "task_tier": mock_ans_tier,
+            "needs_image": mock_ans_img,
+            "speak_only": mock_ans_spk,
+            "book_match": mock_ans_book,
+            "book_changed": mock_ans_changed,
+        }
+
+        mock_create = mock.AsyncMock(return_value=mock_response)
+        mock_aio = mock.Mock()
+        mock_aio.create = mock_create
+        mock_genai_client = mock.Mock()
+        mock_genai_client.aio.decisions = mock_aio
+
+        session = BookSession(
+            session_id="dyn-q-1",
+            book=BookInfo(title="Hamlet", author="William Shakespeare"),
+        )
+        session.add_candidate_book(BookInfo(title="Macbeth", author="William Shakespeare"))
+
+        with mock.patch("google.genai.Client", return_value=mock_genai_client):
+            res = await client.decide(
+                utterance="what does Macbeth fear?",
+                page_text="Tomorrow, and tomorrow, and tomorrow",
+                session=session,
+            )
+
+            mock_create.assert_awaited_once()
+            _, kwargs = mock_create.call_args
+            questions = kwargs["questions"]
+
+            self.assertIn("book_match", questions)
+            self.assertEqual(questions["book_match"]["type"], "choice")
+            self.assertIn("Hamlet", questions["book_match"]["criteria"])
+            self.assertIn("Macbeth", questions["book_match"]["criteria"])
+            self.assertIn("unknown", questions["book_match"]["criteria"])
+
+            self.assertIn("book_changed", questions)
+            self.assertEqual(questions["book_changed"]["type"], "noul")
+            self.assertIn("Hamlet", questions["book_changed"]["instructions"])
+
+            self.assertEqual(res.book_match, "Macbeth")
+            self.assertEqual(res.book_match_confidence, 0.88)
+            self.assertTrue(res.book_changed)
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,11 +26,31 @@ import urllib.error
 import urllib.request
 
 from .session import BookInfo, BookSession, SessionStore, default_session_store
+from .source_loader import PassageMatch, find_passage
 
 log = logging.getLogger("metalab.reasoning")
 
 DEFAULT_MODEL_REASON = "gemini-4-argon"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def ground_passage(
+    page_text: str,
+    min_score: float = 0.6,
+    play: Optional[str] = "Hamlet",
+) -> Optional[PassageMatch]:
+    """Locate recognized page text in structured play texts using find_passage.
+
+    Returns PassageMatch if score >= min_score, else None.
+    Millisecond local lookup.
+    """
+    if not page_text or not page_text.strip():
+        return None
+    try:
+        return find_passage(query=page_text, play=play, min_score=min_score)
+    except Exception as exc:
+        log.warning("ground_passage lookup failed: %s", type(exc).__name__)
+        return None
 
 SYSTEM_INSTRUCTION = (
     "You are MetaLab's literature reading companion for high school students reading assigned texts like Shakespeare. "
@@ -65,6 +85,7 @@ class GeminiReasoningClient(Protocol):
         page_text: str,
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
+        passage_match: Optional[PassageMatch] = None,
     ) -> Dict[str, Any]:
         """Generate structured reasoning given command, passage, and session context."""
         ...
@@ -89,6 +110,7 @@ class HttpGeminiClient:
         page_text: str,
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
+        passage_match: Optional[PassageMatch] = None,
     ) -> Dict[str, Any]:
         if not self.api_key:
             raise ReasoningError("GEMINI_API_KEY is not set")
@@ -98,9 +120,27 @@ class HttpGeminiClient:
         # Build contents incorporating session history
         contents: List[Dict[str, Any]] = session.get_gemini_turns()
 
+        grounding_info = ""
+        if passage_match:
+            grounding_info = (
+                f"\nCanonical Grounding (Act/Scene/Line coordinates verified from source text):\n"
+                f"- Play: {passage_match.play_title}\n"
+                f"- Location: {passage_match.location}\n"
+                f"- Speaker: {passage_match.speaker or 'Unknown'}\n"
+                f"- Matched Text: \"\"\"{passage_match.text}\"\"\"\n"
+                f"You MUST use this exact title, location ('{passage_match.location}'), and source citation.\n"
+            )
+        else:
+            grounding_info = (
+                "\nNo verified local source passage matched this page text. "
+                "Do NOT fabricate or invent Act, Scene, or Line coordinates. "
+                "Do NOT fabricate source URLs or citations; return an empty 'sources' array if ungrounded.\n"
+            )
+
         current_prompt = (
             f"Book: {session.book.title} ({session.book.author})\n"
-            f"Current Position: {session.book.location}\n\n"
+            f"Current Position: {session.book.location}\n"
+            f"{grounding_info}\n"
             f"Page Passage:\n\"\"\"{page_text}\"\"\"\n\n"
             f"Student Question / Command:\n{command}"
         )
@@ -143,9 +183,14 @@ class HttpGeminiClient:
                 ) from exc
 
         raw_response = await asyncio.to_thread(_execute_http)
-        return self._parse_gemini_response(raw_response, session)
+        return self._parse_gemini_response(raw_response, session, passage_match=passage_match)
 
-    def _parse_gemini_response(self, raw_json: str, session: BookSession) -> Dict[str, Any]:
+    def _parse_gemini_response(
+        self,
+        raw_json: str,
+        session: BookSession,
+        passage_match: Optional[PassageMatch] = None,
+    ) -> Dict[str, Any]:
         try:
             data = json.loads(raw_json)
         except json.JSONDecodeError as exc:
@@ -158,7 +203,7 @@ class HttpGeminiClient:
         if not parts:
             raise ReasoningError("Gemini candidate has no parts")
         text = parts[0].get("text", "")
-        return parse_reasoning_json(text, session)
+        return parse_reasoning_json(text, session, passage_match=passage_match)
 
 
 class StubGeminiClient:
@@ -179,6 +224,7 @@ class StubGeminiClient:
         page_text: str,
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
+        passage_match: Optional[PassageMatch] = None,
     ) -> Dict[str, Any]:
         self.calls.append({
             "command": command,
@@ -187,6 +233,7 @@ class StubGeminiClient:
             "history_count": len(session.history),
             "history_snapshot": [ex.to_dict() for ex in session.history],
             "model": model,
+            "passage_match": passage_match.to_dict() if passage_match else None,
         })
 
         if self.fail:
@@ -195,48 +242,75 @@ class StubGeminiClient:
         if self.default_answer:
             return dict(self.default_answer)
 
-        # Contextual response: if earlier history exists, reference it
-        q_count = len(session.history) + 1
-        location = session.book.location or "Act 3, Scene 1"
-        if "act" in command.lower() or "scene" in command.lower():
-            # Extract possible scene update from command if mentioned
-            m = re.search(r"(Act\s+\d+,\s*Scene\s+\d+)", command, re.IGNORECASE)
-            if m:
-                location = m.group(1).title()
-
-        if q_count > 1:
-            caption = (
-                f"Question {q_count} builds on {q_count - 1} prior questions: "
-                f"Hamlet continues struggling with grief and duty."
-            )
-            speech_text = (
-                f"Building on our earlier discussion, Hamlet is alone again at {location}. "
-                f"He is weighing whether to endure his uncle's cruelty or take action."
-            )
-        else:
-            caption = "Hamlet asks whether enduring pain is nobler than ending it."
-            speech_text = "Hamlet is alone, weighing whether to keep living through suffering or end it."
-
-        image_prompt = (
-            f"A solitary prince in dark Elizabethan doublet, holding a Yorick skull in dim castle chamber, "
-            f"pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
+        is_hamlet = session.book.title.strip().lower() == "hamlet" or (
+            passage_match is not None and passage_match.play_title.strip().lower() == "hamlet"
         )
 
+        if passage_match is not None:
+            location = passage_match.location
+            book_title = passage_match.play_title
+            book_author = passage_match.author
+            sources = [dict(passage_match.source)] if passage_match.source else []
+        else:
+            book_title = session.book.title
+            book_author = session.book.author
+            location = session.book.location or ("Act 3, Scene 1" if is_hamlet else "")
+            sources = list(DEFAULT_HAMLET_SOURCES) if is_hamlet else []
+
+        if is_hamlet and ("act" in command.lower() or "scene" in command.lower()):
+            # Extract possible scene update from command if mentioned
+            m = re.search(r"(Act\s+\d+,\s*Scene\s+\d+)", command, re.IGNORECASE)
+            if m and passage_match is None:
+                location = m.group(1).title()
+
+        q_count = len(session.history) + 1
+        if is_hamlet:
+            if q_count > 1:
+                caption = (
+                    f"Question {q_count} builds on {q_count - 1} prior questions: "
+                    f"Hamlet continues struggling with grief and duty."
+                )
+                speech_text = (
+                    f"Building on our earlier discussion, Hamlet is alone again at {location}. "
+                    f"He is weighing whether to endure his uncle's cruelty or take action."
+                )
+            else:
+                caption = "Hamlet asks whether enduring pain is nobler than ending it."
+                speech_text = "Hamlet is alone, weighing whether to keep living through suffering or end it."
+
+            image_prompt = (
+                f"A solitary prince in dark Elizabethan doublet, holding a Yorick skull in dim castle chamber, "
+                f"pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
+            )
+        else:
+            caption = f"Discussion of {book_title}."
+            speech_text = f"Discussion of {book_title} at {location}." if location else f"Discussion of {book_title}."
+            image_prompt = (
+                f"Illustration for {book_title}, pure black background (#000000), "
+                f"glowing dramatic rim lighting, luminous high contrast."
+            )
+
+        title = f"{book_title}, {location}" if location else book_title
+
         return {
-            "title": f"{session.book.title}, {location}",
+            "title": title,
             "caption": caption,
             "speech_text": speech_text,
             "image_prompt": image_prompt,
             "book": {
-                "title": session.book.title,
-                "author": session.book.author,
+                "title": book_title,
+                "author": book_author,
                 "location": location,
             },
-            "sources": list(DEFAULT_HAMLET_SOURCES),
+            "sources": sources,
         }
 
 
-def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
+def parse_reasoning_json(
+    text: str,
+    session: BookSession,
+    passage_match: Optional[PassageMatch] = None,
+) -> Dict[str, Any]:
     """Parse and clean JSON output from Gemini, handling markdown code fences."""
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -260,7 +334,30 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ReasoningError("Model output JSON is not an object")
 
-    title = str(data.get("title") or f"{session.book.title}, {session.book.location}").strip()
+    raw_book = data.get("book") or {}
+    if not isinstance(raw_book, dict):
+        raise ReasoningError("Model output 'book' is not an object")
+
+    if passage_match is not None:
+        book_title = passage_match.play_title
+        book_author = passage_match.author
+        book_location = passage_match.location
+    else:
+        book_title = str(raw_book.get("title") or session.book.title).strip()
+        book_author = str(raw_book.get("author") or session.book.author).strip()
+        book_location = str(raw_book.get("location") or session.book.location).strip()
+
+    book = {
+        "title": book_title,
+        "author": book_author,
+        "location": book_location,
+    }
+
+    if passage_match is not None:
+        title = f"{passage_match.play_title}, {passage_match.location}"
+    else:
+        title = str(data.get("title") or (f"{book_title}, {book_location}" if book_location else book_title)).strip()
+
     caption = str(data.get("caption") or "").strip()
     speech_text = str(data.get("speech_text") or "").strip()
     if not caption and not speech_text:
@@ -275,23 +372,25 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
     if "black background" not in image_prompt.lower():
         image_prompt = f"{image_prompt}, pure black background (#000000), high contrast luminous subject"
 
-    raw_book = data.get("book") or {}
-    if not isinstance(raw_book, dict):
-        raise ReasoningError("Model output 'book' is not an object")
-    book = {
-        "title": str(raw_book.get("title") or session.book.title).strip(),
-        "author": str(raw_book.get("author") or session.book.author).strip(),
-        "location": str(raw_book.get("location") or session.book.location).strip(),
-    }
-
     raw_sources = data.get("sources")
+    sources: List[Dict[str, str]] = []
     if isinstance(raw_sources, list) and raw_sources:
-        sources = [
-            {"title": str(s.get("title", "Source")), "url": str(s.get("url", ""))}
-            for s in raw_sources if isinstance(s, dict) and s.get("url")
-        ]
-    else:
+        for s in raw_sources:
+            if isinstance(s, dict) and s.get("url"):
+                sources.append({
+                    "title": str(s.get("title", "Source")),
+                    "url": str(s.get("url", "")),
+                })
+
+    is_hamlet = book_title.strip().lower() == "hamlet"
+    if passage_match is not None:
+        if passage_match.source and not any(s.get("url") == passage_match.source.get("url") for s in sources):
+            sources.insert(0, dict(passage_match.source))
+    elif not sources and is_hamlet:
         sources = list(DEFAULT_HAMLET_SOURCES)
+    elif not is_hamlet:
+        # Explicit no-source-text path: do not silently fall back to DEFAULT_HAMLET_SOURCES
+        sources = [s for s in sources if "gutenberg.org/ebooks/1524" not in s.get("url", "")]
 
     return {
         "title": title,
@@ -335,6 +434,7 @@ async def think(
     client: Optional[GeminiReasoningClient] = None,
     session_store: Optional[SessionStore] = None,
     model: Optional[str] = None,
+    passage_match: Optional[PassageMatch] = None,
 ) -> Dict[str, Any]:
     """Execute book reasoning stage (PRD section 4, step 3).
 
@@ -345,25 +445,75 @@ async def think(
     store = session_store if session_store is not None else default_session_store
     session = store.get_or_create(session_id)
 
+    # Local grounding via source_loader.find_passage if omitted and page_text present
+    if passage_match is None and page_text and page_text.strip():
+        book_title = session.book.title if session.book and session.book.title else "Hamlet"
+        passage_match = ground_passage(page_text, min_score=0.6, play=book_title)
+
+    # When passage_match is found, update session.book before reasoning
+    if passage_match is not None:
+        session.set_active_book(
+            title=passage_match.play_title,
+            author=passage_match.author,
+            location=passage_match.location,
+        )
+
     active_client = client or get_reasoning_client()
-    answer = await active_client.generate_reasoning(
-        command=command,
-        page_text=page_text,
-        session=session,
-        model=model,
-    )
+    try:
+        answer = await active_client.generate_reasoning(
+            command=command,
+            page_text=page_text,
+            session=session,
+            model=model,
+            passage_match=passage_match,
+        )
+    except TypeError:
+        answer = await active_client.generate_reasoning(
+            command=command,
+            page_text=page_text,
+            session=session,
+            model=model,
+        )
+
+    # Ensure answer reflects passage_match coordinates and sources
+    if passage_match is not None:
+        if "book" not in answer or not isinstance(answer["book"], dict):
+            answer["book"] = {}
+        answer["book"]["title"] = passage_match.play_title
+        answer["book"]["author"] = passage_match.author
+        answer["book"]["location"] = passage_match.location
+        if "sources" not in answer or not isinstance(answer["sources"], list):
+            answer["sources"] = []
+        has_custom_default = getattr(active_client, "default_answer", None) is not None
+        if not has_custom_default:
+            if passage_match.source and not any(
+                isinstance(s, dict) and s.get("url") == passage_match.source.get("url")
+                for s in answer["sources"]
+            ):
+                answer["sources"].insert(0, dict(passage_match.source))
+    else:
+        # Explicit no-source-text path: do not silently fall back to DEFAULT_HAMLET_SOURCES if not Hamlet
+        is_hamlet = session.book.title.strip().lower() == "hamlet"
+        if not is_hamlet and "sources" in answer and isinstance(answer["sources"], list):
+            answer["sources"] = [
+                s for s in answer["sources"]
+                if not (isinstance(s, dict) and "gutenberg.org/ebooks/1524" in s.get("url", ""))
+            ]
 
     # Update session location and record Q&A exchange
     book = answer.get("book")
     if isinstance(book, dict):
         title = book.get("title")
+        author = book.get("author") or ""
+        location = book.get("location") or ""
         if isinstance(title, str) and title.strip():
-            session.book.title = title.strip()
-        author = book.get("author")
-        if isinstance(author, str) and author.strip():
-            session.book.author = author.strip()
-        if book.get("location"):
-            session.update_location(book["location"])
+            session.set_active_book(
+                title=title.strip(),
+                author=author.strip() if isinstance(author, str) else "",
+                location=location.strip() if isinstance(location, str) else "",
+            )
+        elif isinstance(location, str) and location.strip():
+            session.update_location(location.strip())
 
     session.add_exchange(
         question=command,
