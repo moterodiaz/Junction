@@ -897,10 +897,6 @@ class PipelineCitationReferenceTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotRegex(card.title, r"Act \d|Scene \d|line \d")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class PipelineTerminalReplyTest(unittest.IsolatedAsyncioTestCase):
     """#133 part 2: a request that does not end in a card leaves the book session exactly as it
     found it (history, active book, candidates, location), and no spoken clip outlives it."""
@@ -1025,3 +1021,7 @@ class PipelineTerminalReplyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(card.type, "card")
         self.assertEqual(len(self.session.history), len(self.history) + 1)
         self.assertEqual(self.session.book.title, "Moby-Dick")
+
+
+if __name__ == "__main__":
+    unittest.main()
