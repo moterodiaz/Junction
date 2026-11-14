@@ -4,6 +4,9 @@ name: trust
 # area with an open `escape` issue and neither that area's owner nor the lead has approved the head commit
 # (tools/metrics --gate). Required in the main-protect ruleset, it holds auto-merge, claude-fix's included.
 # The job is not named `trust`: a job's own check run would carry that name and pass even when the status fails.
+# Single serial group: at most one run writes `trust` at a time, preventing a stale success from overwriting a
+# failure. pull_request events also cover open PRs with no trust status yet so a dropped queued run cannot
+# leave a new commit blocked up to an hour (fail-closed: a head with no status is blocked until evaluated).
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -27,12 +30,10 @@ jobs:
       (github.event_name != 'pull_request' && github.event_name != 'pull_request_review' && github.event_name != 'issues') ||
       (github.event_name == 'issues' && (contains(github.event.issue.labels.*.name, 'escape') || github.event.label.name == 'escape')) ||
       github.event.pull_request.head.repo.full_name == github.repository
-    # Job-level, so runs skipped by the condition above never take a queue slot. Per-PR runs queue per PR;
-    # a replaced run is superseded by a newer evaluation of the same PR (pull_request_review carries
-    # github.event.pull_request.number too). Sweeps (schedule/issues/dispatch without pr_number) share
-    # the 'sweep' group so they never displace a per-PR run.
+    # Job-level concurrency so skipped runs never occupy a queue slot. Single group: at most one run
+    # writes `trust` at a time; a newer event queues behind the running one, never concurrently.
     concurrency:
-      group: trust-status-${{ github.event.pull_request.number || inputs.pr_number || 'sweep' }}
+      group: trust-status
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -45,6 +46,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       METRICS_REPO: ${{ github.repository }}
       EVENT_PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+      EVENT_NAME: ${{ github.event_name }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       # The default branch, not the PR head: the script runs with a write token.
@@ -54,12 +56,24 @@ jobs:
       - name: Post trust status
         run: |
           set -euo pipefail
-          # pull_request and pull_request_review always set EVENT_PR; evaluate only that PR.
-          # schedule / issues / workflow_dispatch without pr_number: sweep every open PR.
-          if [ -n "${EVENT_PR:-}" ]; then
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            # Always evaluate the event PR. Also include any open PR whose head sha has no trust status yet:
+            # if this run was queued and GitHub dropped an earlier queued run for that PR, the new head stays
+            # blocked/fail-closed until the next hourly cron unless we pick it up here.
+            prs="${EVENT_PR}"
+            while IFS=$'\t' read -r other sha_other; do
+              [ "$other" = "${EVENT_PR}" ] && continue
+              trust_count="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha_other/status" \
+                --jq '[.statuses[] | select(.context=="trust")] | length')"
+              [ "$trust_count" = "0" ] && prs="$prs $other"
+            done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq '.[] | [.number,.head.sha] | @tsv')
+          elif [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${EVENT_PR:-}" ]; then
+            # Explicit pr_number: just that PR.
             prs="${EVENT_PR}"
           else
-            # Paginated: a capped list would leave older PRs with a stale passing status.
+            # pull_request_review / issues / schedule / workflow_dispatch without pr_number: sweep all open PRs.
+            # Paginated: a capped list would leave older PRs with a stale status.
             prs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '.[].number')"
           fi
           for pr in $prs; do
