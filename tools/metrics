@@ -8,8 +8,12 @@
 # review (spot-check, live run or incident). An area with an open escape has its trust withdrawn: owner merge.
 # Env: METRICS_REPO (default: the current gh repo); METRICS_TABLE, a file holding a pre-rendered repo-wide table for --pr. Definitions: docs/TIETO_CONCEPT_CARD.md section 5.
 set -euo pipefail
-command -v gh >/dev/null 2>&1 || { echo "metrics: gh not found (https://cli.github.com)" >&2; exit 1; }
-if [ "${1:-}" = "--selftest" ]; then REPO="${METRICS_REPO:-selftest/selftest}"; else REPO="${METRICS_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"; fi
+if [ "${1:-}" = "--selftest" ]; then
+  REPO="${METRICS_REPO:-selftest/selftest}"  # offline: needs neither gh, a network nor credentials
+else
+  command -v gh >/dev/null 2>&1 || { echo "metrics: gh not found (https://cli.github.com)" >&2; exit 1; }
+  REPO="${METRICS_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export REPO ROOT
 exec python3 - "$@" <<'PY'
@@ -129,6 +133,15 @@ def open_escapes_by_area():
                 out.setdefault(area, set()).add(e["number"])
     return out
 
+def affected_prs(escaped, reverts, merged_numbers):
+    """Distinct merged PRs that let a defect reach main. A revert undoes an earlier PR: count that PR
+    once, not the PR and its revert; a revert naming no merged PR counts as itself."""
+    affected = set(escaped)
+    for p in reverts:
+        undone = {int(n) for n in re.findall(r"#(\d+)", p["title"] + " " + (p["body"] or ""))} & merged_numbers
+        affected |= (undone - {p["number"]}) or {p["number"]}
+    return affected
+
 def area_trust(open_escapes):
     """Trust is earned per area and withdrawn after an escape, until the escape is closed with its fix."""
     return "withdrawn" if open_escapes else "earned"
@@ -145,11 +158,7 @@ def repo_metrics(since):
     merged_numbers = {p["number"] for p in merged}
     escapes = [e for e in escape_issues() if set(e["prs"]) & merged_numbers]
     escaped_prs = {n for e in escapes for n in e["prs"]} & merged_numbers
-    # A revert undoes an earlier PR: count the affected PR once, not the PR and its revert.
-    affected = set(escaped_prs)
-    for p in reverts:
-        undone = {int(n) for n in re.findall(r"#(\d+)", p["title"] + " " + (p["body"] or ""))} & merged_numbers
-        affected |= (undone - {p["number"]}) or {p["number"]}
+    affected = affected_prs(escaped_prs, reverts, merged_numbers)
     with_req = [p for p in prs if REQ.search(p["title"] + " " + (p["body"] or ""))]
     fixer = sum(fixer_commits(p) for p in prs)
     runs = json.loads(gh("run", "list", "-R", REPO, "--workflow", "ci.yml", "--limit", "100", "--json", "conclusion"))
@@ -277,6 +286,9 @@ def selftest():
     assert pr_areas(["backend/ai/x.py", "backend/app/pipeline.py"], rules) == {"@ai", "@core"}
     assert pr_areas(["backend/tests/test_ws.py", "AGENTS.md"], rules) == {LEAD}
     assert pct(0, 0) is None and pct(1, 4) == 25.0
+    revert = {"number": 11, "title": 'Revert "feat: x"', "body": "Reverts o/r#10"}
+    assert affected_prs({10}, [revert], {10, 11}) == {10}  # the faulty PR once, not also its revert
+    assert affected_prs(set(), [{"number": 12, "title": "Revert y", "body": "no link"}], {12}) == {12}
     print("metrics selftest: OK")
 
 def requirement_text(req):
