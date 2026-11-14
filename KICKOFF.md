@@ -24,6 +24,8 @@ Suggested default (not a rule): lead = contracts + integration; one person backe
 ## The work cycle
 See AGENTS.md START HERE: `tools/task next`, `tools/task claim N`, `tools/wt N-slug`, PR with `Closes #N`, then `tools/task next` again.
 
+Module work starts at `Junction-Prep/IMPLEMENTATION_PLAN.md` (four-stream entry points), PRD §§12–14 and `docs/REQUIREMENTS.md`. Preserve existing assignments and approved handoffs; new gated issues start blocked. Keep G0 first, accept optional modules separately, and route lead-owned docs/CI/evidence through `contracts`. The proposed runtime freeze is Sunday November 15 at 08:00 Europe/Helsinki, pending lead confirmation; target FINAL preparation for 09:30, ahead of 10:00. This backlog does not authorize installs, spend or submissions.
+
 ## If something looks stuck
 
 1. Read PR comments for `needs human`.

@@ -4,6 +4,8 @@
 
 New here or kickoff day? Read KICKOFF.md, then run tools/onboard.
 
+For the approved module backlog, read `Junction-Prep/IMPLEMENTATION_PLAN.md` and PRD §§12–14, using `docs/REQUIREMENTS.md` as the only requirement registry. Keep the four existing owners/areas; lead-owned docs/CI/evidence work routes through `contracts`, not a fifth area. Search open and closed issues before filing; claim only ready work, keep optional modules disabled until accepted, and never close a release gate without evidence and explicit lead acceptance.
+
 Every agent reads this file first. The flow, in order:
 
 1. **Own worktree.** `tools/wt <issue#>-<slug>` creates your branch from fresh `origin/main` in a sibling folder; work only there. Never edit in the shared checkout or on `main`. After your PR merges, `tools/wt rm <slug>`.
