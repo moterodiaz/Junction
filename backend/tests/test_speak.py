@@ -525,6 +525,46 @@ class ClipLifetimeTest(SpeakBase):
             self.assertIsNotNone(url, "speech must be delivered: epoch entry must not be pruned while speak() is inflight")
 
 
+class InflightCountTest(SpeakBase):
+    """_epochs_inflight entries are removed when speak() finishes, fails, or is cancelled."""
+
+    def test_normal_speak_removes_inflight_entry(self):
+        speak.set_speech_client(StubSpeech())
+        asyncio.run(speak.speak("hello", "s1"))
+        self.assertNotIn("s1", speak._epochs_inflight)
+
+    def test_exception_in_speak_removes_inflight_entry(self):
+        speak.set_speech_client(StubSpeech(error=RuntimeError("boom")))
+        asyncio.run(speak.speak("hello", "s1"))
+        self.assertNotIn("s1", speak._epochs_inflight)
+
+    def test_cancelled_speak_removes_inflight_entry_and_session_is_prunable(self):
+        hangup = asyncio.Event()
+
+        class HangingSpeech:
+            async def synthesize(self, text):
+                await hangup.wait()
+                return b"\x01\x00" * 8
+
+        speak.set_speech_client(HangingSpeech())
+
+        async def go():
+            task = asyncio.create_task(speak.speak("hello", "s1"))
+            await asyncio.sleep(0)  # let speak() increment inflight
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(go())
+        self.assertNotIn("s1", speak._epochs_inflight)
+        # with no inflight count, s1 is now prunable when the LRU cap is exceeded
+        with mock.patch.object(speak, "_MAX_EPOCH_ENTRIES", 1):
+            speak.cleanup_session("other")
+        self.assertNotIn("s1", speak._epochs)
+
+
 class GeminiResponseTest(unittest.TestCase):
     """The real client: audio part found among others, rate read from its mime type, one Client."""
 

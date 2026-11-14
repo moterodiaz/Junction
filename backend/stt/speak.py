@@ -188,7 +188,7 @@ def clear() -> None:
     with _lock:
         _clips.clear()
         _epochs.clear()
-    _epochs_inflight.clear()
+        _epochs_inflight.clear()
 
 
 def to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
@@ -281,11 +281,15 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
                     describe_failure(exc, text, getattr(client, "api_key", "")))
         if getattr(exc, "code", None) == 404 or getattr(exc, "status", None) == "NOT_FOUND":
             await log_tts_models(client, exc)
-        if session_id is not None:
-            _epochs_inflight[session_id] = max(0, _epochs_inflight.get(session_id, 0) - 1)
         return None
+    finally:
+        if session_id is not None:
+            count = _epochs_inflight.get(session_id, 0) - 1
+            if count <= 0:
+                _epochs_inflight.pop(session_id, None)
+            else:
+                _epochs_inflight[session_id] = count
     if session_id is not None:
-        _epochs_inflight[session_id] = max(0, _epochs_inflight.get(session_id, 0) - 1)
         if _epochs.get(session_id, 0) != epoch:
             log.info("speech synthesis dropped: session ended during synthesis")
             return None  # the session ended while this speech was being made
