@@ -36,7 +36,7 @@ The angle: Cluely showed that people want an AI that sees what they see and help
 **On the slide:** four steps, each with the time it took on the live server **[E1]**.
 
 1. **You:** look at the page and say "draw this". The glasses take one photo.
-2. **Read:** the page reader turns the photo into text, in 0.3 s **[E1, E4]**.
+2. **Read:** NVIDIA Nemotron reads the page, in 0.3 s **[E1, E4]**.
 3. **Think:** Gemini works out what the passage means, using what you asked earlier, in 10.1 s **[E1, E6]**.
 4. **Draw:** Gemini paints the scene for the lens, with a two-line explanation, in 13.5 s **[E1, E5]**.
 
@@ -50,10 +50,10 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 
 - **Thinks about this passage, not passages in general.** Gemini reasons over the page and the whole book session, so a follow-up builds on what came before. The tenth answer can use the first nine **[E6]**.
 - **Draws pictures made for glass.** The lens adds light, so black is see-through. We ask Gemini's image model (`gemini-nano-banana-2.1`) for a bright scene on pure black, so it floats over the page **[E5, E1]**.
-- **Takes over reading when needed.** If the page reader misses its 8-second budget, Gemini reads the same photo, and the card names whichever model actually read it **[E4]**.
+- **Reads when Nemotron is slow.** If Nemotron misses its 8-second budget, Gemini reads the same photo, and the card names whichever model actually read it **[E4]**.
 - ***Planned:* speaks the answer.** Gemini TTS is wired in **[E7]**, but the live card had no audio, so the phone's own voice reads it for now **[E1, E7]**. Gemini voice feedback and a decision model that routes requests are Marcus's open lane, *planned* **[E13]**.
 
-**Models, from the live card:** reasoning `gemini-4-hydrogen`, image `gemini-nano-banana-2.1` **[E1]**. The code's reasoning default is `gemini-4-argon`, and the deploy overrides it **[E8]**. Say which one the demo build uses on the day.
+**Models, from the live card:** reasoning `gemini-4-hydrogen`, image `gemini-nano-banana-2.1` **[E1]**. The code's reasoning default is `gemini-4-argon` **[E8]**. Why the live card differs (a deploy setting or an older build) is not confirmed yet. Check which one the demo build uses on the day.
 
 ## 6. The numbers
 
@@ -76,7 +76,7 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 
 ## 8. Built on
 
-**On the slide:** a simple architecture strip: Ray-Ban Display → iPhone app → FastAPI on Modal (public `wss://`) **[E11]** → the page reader **[E4]**, Gemini thinks and draws **[E5, E6]** → card back to the lens.
+**On the slide:** a simple architecture strip: Ray-Ban Display → iPhone app → FastAPI on Modal (public `wss://`) **[E11]** → Nemotron reads **[E4]**, Gemini thinks and draws **[E5, E6]** → card back to the lens.
 
 **Say:** one shared message contract, validated on every reply **[E2]**.
 
