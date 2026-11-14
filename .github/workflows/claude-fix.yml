@@ -211,8 +211,25 @@ jobs:
           else
             echo "push=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Push fixes
+      - name: Recheck integration-paused
+        id: recheck
         if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if labels_out="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '[.labels[].name] | index("integration-paused") != null')"; then
+            if [ "$labels_out" = "true" ]; then
+              echo "integration-paused label detected on recheck; skipping push."
+              echo "paused=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "paused=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "::warning::label recheck failed; treating as paused (fail-closed)."
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Push fixes
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
         env:
           BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
@@ -221,7 +238,7 @@ jobs:
       # Pushes made with GITHUB_TOKEN do not trigger pull_request workflows, so the
       # required `ci` check would stay pending on the new head. Dispatch it explicitly.
       - name: Re-run ci on the fixed head
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
         env:
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
         run: gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
@@ -229,7 +246,7 @@ jobs:
       # Done in the workflow, not by the model (its tool list denies `gh pr merge`). AGENTS.md §3 rule 9:
       # auto-merge only when no protected path changed; GitHub still waits for the required checks.
       - name: Enable auto-merge when review threads are resolved
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
         shell: bash  # pipefail: a failed graphql call must fail the step, not read as 0 open threads
         env:
           BEFORE_SHA: ${{ steps.before.outputs.sha }}

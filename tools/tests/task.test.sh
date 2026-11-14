@@ -112,6 +112,23 @@ db '(.issues[] | select(.number == 182) | .labels) |= map(select(.name != "prior
 expect "lane step with open dependency waits" ok 'Waiting: #190 has open' Ahm3d-KA next
 expect "claim of step with open dependency rejected" fail 'open \(or unreadable\) dependencies' Ahm3d-KA claim 190
 
+# (a) An assigned lane step that is blocked is refused by both next and claim.
+reset_db
+db '(.issues[] | select(.number == 182) | .labels) += [{name: "blocked"}]'
+expect "assigned blocked lane: next shows waiting" ok 'Waiting: #182 is labelled blocked' Ahm3d-KA next
+expect "assigned blocked lane: claim refused" fail 'labelled blocked' Ahm3d-KA claim 182
+
+# (b) An assigned later lane step is refused while an earlier step remains open.
+reset_db
+db '(.issues[] | select(.number == 190) | .assignees) = [{login: "Ahm3d-KA"}]'
+expect "assigned step-2 refused by claim while step-1 open" fail '#182 comes before #190' Ahm3d-KA claim 190
+refute "assigned step-2: next does not continue #190" 'Continue.*190|190.*Continue' Ahm3d-KA next
+
+# (c) An assigned, unblocked, in-order lane step still returns 'already yours'.
+reset_db
+expect "assigned in-order unblocked: claim returns already-yours" ok 'already yours' Ahm3d-KA claim 182
+expect "assigned in-order unblocked: next says assigned" ok 'Assigned to you' Ahm3d-KA next
+
 # Mateo keeps the backlog; dependency gates still hold.
 reset_db
 expect "mateo next gets oldest ready paused task" ok '^#81 ' moterodiaz next

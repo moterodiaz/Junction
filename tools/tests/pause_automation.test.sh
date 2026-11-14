@@ -51,7 +51,12 @@ PY
 run_step() { # file step-name [shell]
   local s; s="$(step "$1" "$2")" || { bad "cannot extract $2"; return 1; }
   : > "$GITHUB_OUTPUT"
-  bash -c "$s" >> "$TMP/stdout" 2>&1
+  local rc
+  bash -c "$s" >> "$TMP/stdout" 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] && [ "${EXPECT_FAIL:-0}" != "1" ]; then
+    bad "step '$2' exited $rc; output: $(cat "$TMP/stdout")"
+  fi
+  return "$rc"
 }
 
 pr() { # number labels(csv) mergeState automerge(true/false)
@@ -111,6 +116,19 @@ reset true; db_resolved
 jq '.api["repos/o/r/pulls/8/files"] = [{filename: "backend/app/x.py"}]' "$FAKE_GH_DB" > "$TMP/d" && mv "$TMP/d" "$FAKE_GH_DB"
 PR_NUMBER=8 BEFORE_SHA=s run_step "$CF" "Enable auto-merge when review threads are resolved"
 check "normal PR: auto-merge still enabled" '^pr merge --auto --squash 8'
+
+# Recheck integration-paused step: re-reads label before push (Thread 2).
+reset true
+PR_NUMBER=7 run_step "$CF" "Recheck integration-paused"
+out_has "paused=true" && ok || bad "recheck: label present should output paused=true"
+
+reset true
+PR_NUMBER=8 run_step "$CF" "Recheck integration-paused"
+out_has "paused=false" && ok || bad "recheck: label absent should output paused=false"
+
+reset true
+FAKE_GH_FAIL="pr view 7" PR_NUMBER=7 run_step "$CF" "Recheck integration-paused"
+out_has "paused=true" && ok || bad "recheck: failed label read should output paused=true (fail-closed)"
 
 # pr-sweeper: no nudges, pings or retries for a paused PR; the control PR still gets them.
 reset true

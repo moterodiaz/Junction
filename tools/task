@@ -163,14 +163,14 @@ lane_next() {
   title="$(decode "$t")"; body="$(decode "$b")"; task_slug="$(slug "$title")"
   printf '#%s  %s\nPRD: %s\nPriority lane: @%s, step %s (%s open lane task(s))\n' \
     "$number" "$title" "$(prd_of "$body")" "$login" "$order" "$open_count"
-  if [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
-    printf 'Assigned to you. Continue: tools/wt %s-%s (reuse your worktree if it exists)\n' "$number" "$task_slug"
-  elif [ -n "$assignees" ]; then
-    printf 'Waiting: #%s is assigned to @%s. Do not take other work; ask @%s on the board.\n' "$number" "$assignees" "$LEAD"
-  elif has_label "$labels" blocked; then
+  if has_label "$labels" blocked; then
     printf 'Waiting: #%s is labelled blocked. Do not take other work; wait for the lead (tools/board wait).\n' "$number"
   elif dependencies_open "$body"; then
     printf 'Waiting: #%s has open (or unreadable) dependencies. Do not take other work; wait (tools/board wait).\n' "$number"
+  elif [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
+    printf 'Assigned to you. Continue: tools/wt %s-%s (reuse your worktree if it exists)\n' "$number" "$task_slug"
+  elif [ -n "$assignees" ]; then
+    printf 'Waiting: #%s is assigned to @%s. Do not take other work; ask @%s on the board.\n' "$number" "$assignees" "$LEAD"
   else
     printf 'Next: tools/task claim %s   then   tools/wt %s-%s\n' "$number" "$number" "$task_slug"
   fi
@@ -255,10 +255,6 @@ cmd_claim() {
   has_label "$labels" "$LANE_LABEL" && lane_owner="$(lane_field "$body" owner)"
   if [ -n "$lane_owner" ]; then
     [ "$lane_owner" = "$(lower "$login")" ] || die "#$n is @$lane_owner's priority-lane task; only that owner takes it (AGENTS.md §3 rule 10)"
-    if [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
-      printf '#%s is already yours. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
-      return 0
-    fi
     rows="$(my_lane "$login")" || die "could not list priority-lane tasks from GitHub; retry later"
     first="$(printf '%s\n' "$rows" | head -n 1 | cut -f2)"
     [ -z "$first" ] || [ "$first" = "$n" ] || die "work your lane in order: #$first comes before #$n (tools/task next)"
@@ -269,9 +265,13 @@ cmd_claim() {
     ! pause_active || die "the integration backlog is paused and your lane is finished: wait for @$LEAD to release it, do not take #$n"
   fi
 
-  [ -z "$assignees" ] || die "#$n already has an assignee"
   ! has_label "$labels" blocked || die "#$n is labelled blocked"
   ! dependencies_open "$body" || die "#$n has open (or unreadable) dependencies"
+  if [ -n "$lane_owner" ] && [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
+    printf '#%s is already yours. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
+    return 0
+  fi
+  [ -z "$assignees" ] || die "#$n already has an assignee"
   printf '%s\n' "$body" | grep -qE 'REQ-[A-Z]+-[0-9]+' || die "#$n names no requirement id (REQ-...). Add one from docs/REQUIREMENTS.md under '## Requirement', then claim (AGENTS.md section 3 rule 7)"
   gh issue edit "$n" -R "$REPO" --add-assignee @me --add-label in-progress >/dev/null
   after="$(gh issue view "$n" -R "$REPO" --json assignees --jq '[(.assignees|length), (.assignees[0].login // "")] | @tsv')" || after=""
