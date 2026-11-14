@@ -491,6 +491,39 @@ class ClipLifetimeTest(SpeakBase):
         self.assertIsNone(asyncio.run(go()))
         self.assertEqual(len(speak._clips), 0)
 
+    def test_resumed_session_speech_delivered_despite_full_epoch_cap(self):
+        """LRU fix: a session that resumes and speaks while >cap other sessions are cleaned
+        up must still deliver audio; with the old FIFO cap its entry would be pruned
+        mid-speak, epoch would read 0 != saved epoch, and valid speech would be dropped."""
+        with mock.patch.object(speak, "_MAX_EPOCH_ENTRIES", 5):
+            # Register the target session first so its entry is the oldest (would be
+            # pruned first under the old FIFO scheme), then fill to the cap with others.
+            speak.cleanup_session("target")
+            for i in range(4):
+                speak.cleanup_session(f"filler-{i}")
+            # _epochs now has 5 entries; "target" is the oldest (front of the OrderedDict).
+
+            release = asyncio.Event()
+
+            class SlowSpeech:
+                async def synthesize(self, text):
+                    await release.wait()
+                    return b"\x01\x00" * 8
+
+            speak.set_speech_client(SlowSpeech())
+
+            async def go():
+                task = asyncio.create_task(speak.speak("hello", "target"))
+                await asyncio.sleep(0)  # speak() reads epoch, moves to end, marks inflight
+                # Push over cap twice; pruning must skip "target" (has an inflight speak).
+                speak.cleanup_session("overflow-1")
+                speak.cleanup_session("overflow-2")
+                release.set()
+                return await task
+
+            url = asyncio.run(go())
+            self.assertIsNotNone(url, "speech must be delivered: epoch entry must not be pruned while speak() is inflight")
+
 
 class GeminiResponseTest(unittest.TestCase):
     """The real client: audio part found among others, rate read from its mime type, one Client."""
