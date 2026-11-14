@@ -20,6 +20,7 @@ from app.config import MODAL_SECRET_NAME  # noqa: E402
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install_from_requirements(str(BACKEND_DIR / "requirements.txt"))
+    .pip_install_from_requirements(str(BACKEND_DIR / "stt" / "requirements.txt"))  # faster-whisper
     # Never upload local secrets or build junk: keys come only from the Modal secret.
     .add_local_dir(BACKEND_DIR, REMOTE_BACKEND,
                    ignore=[".env", "**/.env", ".venv", "**/__pycache__", "tests"])
