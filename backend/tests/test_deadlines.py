@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -13,9 +14,10 @@ from fastapi.testclient import TestClient
 from app import pipeline
 from app.main import app
 
-# ios/MetaLabCore/Sources/MetaLabCore/Deadline.swift
-PHONE_IDLE_S = 30
-PHONE_OVERALL_S = 90
+DEADLINE_SWIFT = Path(__file__).resolve().parents[2] / "ios/MetaLabCore/Sources/MetaLabCore/Deadline.swift"
+_m = re.search(r"overallSeconds:\s*Double\s*=\s*([\d.]+),\s*idleSeconds:\s*Double\s*=\s*([\d.]+)", DEADLINE_SWIFT.read_text())
+assert _m, "could not find the phone's default deadlines in Deadline.swift"
+PHONE_OVERALL_S, PHONE_IDLE_S = float(_m[1]), float(_m[2])
 FRAME = {"mime": "image/jpeg", "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"}
 
 
