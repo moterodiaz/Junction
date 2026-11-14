@@ -80,6 +80,20 @@ DEFAULT_HAMLET_SOURCES = [
     }
 ]
 
+# ponytail: whole-word spoiler keywords; inflections added for die/kill/end only
+_SPOILER_RE = re.compile(
+    r"\b(?:die[sd]?|dying|death|kill(?:s|ed|ing)?|fate|end(?:s|ed|ing)?|"
+    r"spoiler|what\s+happens\s+to|act\s+[45]|act\s+iv|act\s+v)\b",
+    re.IGNORECASE,
+)
+
+
+def is_spoiler_guard_enabled(spoiler_guard: bool = False) -> bool:
+    """Check if spoiler guard is enabled via parameter or environment variable."""
+    if spoiler_guard:
+        return True
+    return os.environ.get("DECISION_ENABLE_SPOILER_CHECK", "").strip().lower() in ("1", "true", "yes", "on")
+
 
 class ReasoningError(RuntimeError):
     """Raised when book reasoning fails."""
@@ -93,6 +107,7 @@ class GeminiReasoningClient(Protocol):
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
         passage_match: Optional[PassageMatch] = None,
+        spoiler_guard: bool = False,
     ) -> Dict[str, Any]:
         """Generate structured reasoning given command, passage, and session context."""
         ...
@@ -118,6 +133,7 @@ class HttpGeminiClient:
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
         passage_match: Optional[PassageMatch] = None,
+        spoiler_guard: bool = False,
     ) -> Dict[str, Any]:
         if not self.api_key:
             raise ReasoningError("GEMINI_API_KEY is not set")
@@ -144,10 +160,25 @@ class HttpGeminiClient:
                 "Do NOT fabricate source URLs or citations; return an empty 'sources' array if ungrounded.\n"
             )
 
+        spoiler_instruction = ""
+        use_spoiler_guard = is_spoiler_guard_enabled(spoiler_guard)
+        if use_spoiler_guard:
+            reading_horizon = (
+                session.get_reading_horizon_summary()
+                or "only the currently visible passage (exact book position unknown)"
+            )
+            spoiler_instruction = (
+                f"\nAnti-Spoiler Guard ACTIVE:\n"
+                f"- Reading Horizon: {reading_horizon}\n"
+                f"- Instruction: Do NOT spoil plot events, fates, or reveals occurring AFTER the student's current reading horizon. "
+                f"Keep explanations strictly within or before the student's current reading position.\n"
+            )
+
         current_prompt = (
             f"Book: {session.book.title} ({session.book.author})\n"
             f"Current Position: {session.book.location}\n"
             f"{grounding_info}\n"
+            f"{spoiler_instruction}"
             f"Page Passage:\n\"\"\"{page_text}\"\"\"\n\n"
             f"Student Question / Command:\n{command}"
         )
@@ -232,7 +263,9 @@ class StubGeminiClient:
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
         passage_match: Optional[PassageMatch] = None,
+        spoiler_guard: bool = False,
     ) -> Dict[str, Any]:
+        use_spoiler_guard = is_spoiler_guard_enabled(spoiler_guard)
         self.calls.append({
             "command": command,
             "page_text": page_text,
@@ -241,6 +274,7 @@ class StubGeminiClient:
             "history_snapshot": [ex.to_dict() for ex in session.history],
             "model": model,
             "passage_match": passage_match.to_dict() if passage_match else None,
+            "spoiler_guard": use_spoiler_guard,
         })
 
         if self.fail:
@@ -270,9 +304,37 @@ class StubGeminiClient:
             if m and passage_match is None:
                 location = m.group(1).title()
 
+        cmd_lower = command.lower()
+        asks_future_spoiler = bool(_SPOILER_RE.search(cmd_lower))
+
         q_count = len(session.history) + 1
         if is_hamlet:
-            if q_count > 1:
+            if asks_future_spoiler:
+                if use_spoiler_guard:
+                    horizon = (
+                        session.get_reading_horizon_summary()
+                        or "only the currently visible passage (exact book position unknown)"
+                    )
+                    caption = f"Avoiding spoilers beyond {horizon}."
+                    speech_text = (
+                        f"Without spoiling events after {horizon}, Hamlet is focused on his current dilemma "
+                        f"and suspicions at {location}."
+                    )
+                    image_prompt = (
+                        f"A solitary prince in dark Elizabethan doublet, holding a Yorick skull in dim castle chamber, "
+                        f"pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
+                    )
+                else:
+                    caption = "In Act 5, Hamlet avenges his father and dies of poison."
+                    speech_text = (
+                        "In Act 5, Scene 2, Hamlet kills Claudius with the poisoned blade and cup, "
+                        "avenging his father before dying from Laertes's poisoned rapier."
+                    )
+                    image_prompt = (
+                        "Tragic final scene of Hamlet in the royal hall of Elsinore, "
+                        "pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
+                    )
+            elif q_count > 1:
                 caption = (
                     f"Question {q_count} builds on {q_count - 1} prior questions: "
                     f"Hamlet continues struggling with grief and duty."
@@ -281,14 +343,17 @@ class StubGeminiClient:
                     f"Building on our earlier discussion, Hamlet is alone again at {location}. "
                     f"He is weighing whether to endure his uncle's cruelty or take action."
                 )
+                image_prompt = (
+                    f"A solitary prince in dark Elizabethan doublet, holding a Yorick skull in dim castle chamber, "
+                    f"pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
+                )
             else:
                 caption = "Hamlet asks whether enduring pain is nobler than ending it."
                 speech_text = "Hamlet is alone, weighing whether to keep living through suffering or end it."
-
-            image_prompt = (
-                f"A solitary prince in dark Elizabethan doublet, holding a Yorick skull in dim castle chamber, "
-                f"pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
-            )
+                image_prompt = (
+                    f"A solitary prince in dark Elizabethan doublet, holding a Yorick skull in dim castle chamber, "
+                    f"pure black background (#000000), glowing dramatic rim lighting, luminous high contrast."
+                )
         else:
             caption = f"Discussion of {book_title}."
             speech_text = f"Discussion of {book_title} at {location}." if location else f"Discussion of {book_title}."
@@ -439,6 +504,7 @@ async def think(
     session_store: Optional[SessionStore] = None,
     model: Optional[str] = None,
     passage_match: Optional[PassageMatch] = None,
+    spoiler_guard: bool = False,
 ) -> Dict[str, Any]:
     """Execute book reasoning stage (PRD section 4, step 3).
 
@@ -462,23 +528,31 @@ async def think(
             location=passage_match.location,
         )
 
+    # Advance reading horizon with seen passage
+    if passage_match is not None:
+        session.record_seen_passage(
+            passage_text=page_text or passage_match.text,
+            act=passage_match.act,
+            scene=passage_match.scene,
+            line=passage_match.line_end,
+        )
+    elif page_text and page_text.strip():
+        session.record_seen_passage(passage_text=page_text)
+
     active_client = client or get_reasoning_client()
     _sig = inspect.signature(active_client.generate_reasoning)
-    if "passage_match" in _sig.parameters:
-        answer = await active_client.generate_reasoning(
-            command=command,
-            page_text=page_text,
-            session=session,
-            model=model,
-            passage_match=passage_match,
-        )
-    else:
-        answer = await active_client.generate_reasoning(
-            command=command,
-            page_text=page_text,
-            session=session,
-            model=model,
-        )
+    _has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in _sig.parameters.values())
+    gen_kwargs: Dict[str, Any] = {
+        "command": command,
+        "page_text": page_text,
+        "session": session,
+        "model": model,
+    }
+    if _has_varkw or "passage_match" in _sig.parameters:
+        gen_kwargs["passage_match"] = passage_match
+    if _has_varkw or "spoiler_guard" in _sig.parameters:
+        gen_kwargs["spoiler_guard"] = spoiler_guard
+    answer = await active_client.generate_reasoning(**gen_kwargs)
 
     # Ensure answer reflects passage_match coordinates and sources
     if passage_match is not None:
@@ -500,20 +574,21 @@ async def think(
         # No verified passage: never emit unverified source citations
         answer["sources"] = []
 
-    # Update session location and record Q&A exchange
+    # Update session metadata (only record location when grounded to avoid trusting model guesses)
     book = answer.get("book")
     if isinstance(book, dict):
         title = book.get("title")
         author = book.get("author") or ""
-        location = book.get("location") or ""
+        raw_location = book.get("location") or ""
+        trusted_location = raw_location.strip() if (passage_match is not None and isinstance(raw_location, str)) else ""
         if isinstance(title, str) and title.strip():
             session.set_active_book(
                 title=title.strip(),
                 author=author.strip() if isinstance(author, str) else "",
-                location=location.strip() if isinstance(location, str) else "",
+                location=trusted_location,
             )
-        elif isinstance(location, str) and location.strip():
-            session.update_location(location.strip())
+        elif trusted_location:
+            session.update_location(trusted_location)
 
     session.add_exchange(
         question=command,

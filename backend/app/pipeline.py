@@ -125,6 +125,16 @@ async def read_page(frame: Media) -> str:
         raise PipelineError("no_text_found", "No readable text was found on the page.", True) from exc
 
 
+def _accepts_param(fn: Any, param_name: str) -> bool:
+    try:
+        sig = inspect.signature(fn)
+        return param_name in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+    except (ValueError, TypeError):
+        return False
+
+
 NO_SOURCE_TEXT = "No source text"
 
 
@@ -147,9 +157,27 @@ async def think(
     *,
     model: Optional[str] = None,
     passage_match: Optional[PassageMatch] = None,
+    spoiler_guard: bool = False,
 ) -> dict:
     if not os.environ.get("GEMINI_API_KEY", "").strip():
         # offline/test path: byte-identical stub so CI and conformance exchanges are unaffected
+        try:
+            session = default_session_store.get_or_create(session_id)
+            match = passage_match
+            if match is None and page_text and page_text.strip():
+                book_title = session.book.title if session.book and session.book.title else "Hamlet"
+                match = ground_passage(page_text, min_score=0.6, play=book_title)
+            if match is not None:
+                session.record_seen_passage(
+                    passage_text=page_text or match.text,
+                    act=match.act,
+                    scene=match.scene,
+                    line=match.line_end,
+                )
+            elif page_text and page_text.strip():
+                session.record_seen_passage(passage_text=page_text)
+        except Exception:
+            pass
         return {
             "title": "Hamlet, Act 3, Scene 1",
             "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
@@ -157,28 +185,19 @@ async def think(
             "image_prompt": "A lone prince on a dark stage, bright outline on black",
             "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
         }
-    _ai_sig = inspect.signature(_ai_think)
-    if "passage_match" in _ai_sig.parameters:
-        answer = await _ai_think(
-            command,
-            page_text,
-            session_id,
-            model=model,
-            passage_match=passage_match,
-        )
-    else:
-        answer = await _ai_think(command, page_text, session_id, model=model)
+    ai_kwargs: dict[str, Any] = {}
+    if _accepts_param(_ai_think, "model"):
+        ai_kwargs["model"] = model
+    if _accepts_param(_ai_think, "passage_match"):
+        ai_kwargs["passage_match"] = passage_match
+    if _accepts_param(_ai_think, "spoiler_guard"):
+        ai_kwargs["spoiler_guard"] = spoiler_guard
+    answer = await _ai_think(command, page_text, session_id, **ai_kwargs)
     return _mark_ungrounded(answer)
 
 
 def _draw_accepts_style_preset(fn: Any) -> bool:
-    try:
-        sig = inspect.signature(fn)
-        return "style_preset" in sig.parameters or any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
-    except (ValueError, TypeError):
-        return False
+    return _accepts_param(fn, "style_preset")
 
 
 async def draw(
@@ -243,7 +262,7 @@ _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
 # The anti-spoiler reading horizon (#197): a failed request must not advance it either.
-_HORIZON_FIELDS = ("max_position", "seen_passages")
+_HORIZON_FIELDS = ("max_position", "seen_passages", "_horizon_by_book")
 
 
 def _session_state(session) -> tuple:
@@ -467,12 +486,23 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             "sources": [],
         }
     else:
+        spoiler_guard = bool(
+            (decision is not None and getattr(decision, "spoiler_risk", False))
+            or ai.decision.is_spoiler_check_enabled()
+        )
+        think_kwargs: dict[str, Any] = {}
+        reason_model_val = _reason_model if _reason_model != "stub" else None
+        if _accepts_param(think, "model"):
+            think_kwargs["model"] = reason_model_val
+        if _accepts_param(think, "passage_match") and passage_match is not None:
+            think_kwargs["passage_match"] = passage_match
+        if _accepts_param(think, "spoiler_guard"):
+            think_kwargs["spoiler_guard"] = spoiler_guard
         answer = await timed(think(
             think_prompt,
             page_text,
             invoke.session_id,
-            model=_reason_model if _reason_model != "stub" else None,
-            passage_match=passage_match,
+            **think_kwargs,
         ))
 
     await send_stage("drawing")
