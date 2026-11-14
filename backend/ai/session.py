@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -49,12 +49,16 @@ class BookSession:
     """A reading session for a single book held strictly in memory."""
 
     candidate_books: List[BookInfo] = field(default_factory=lambda: [BookInfo()])
+    max_position: Optional[Tuple[int, int, int]] = None
+    seen_passages: List[str] = field(default_factory=list)
 
     def __init__(
         self,
         session_id: str,
         book: Optional[BookInfo] = None,
         candidate_books: Optional[List[BookInfo]] = None,
+        max_position: Optional[Tuple[int, int, int]] = None,
+        seen_passages: Optional[List[str]] = None,
     ) -> None:
         self.session_id = str(session_id)
         self.book = book or BookInfo()
@@ -67,6 +71,44 @@ class BookSession:
         self.history: List[QAExchange] = []
         self.awaiting_book_clarification: bool = False
         self.created_at = time.time()
+        self.max_position = max_position
+        self.seen_passages = list(seen_passages) if seen_passages is not None else []
+
+    def record_seen_passage(
+        self,
+        passage_text: str,
+        act: Optional[int] = None,
+        scene: Optional[int] = None,
+        line: Optional[int] = None,
+    ) -> None:
+        """Record visible passage text (deduping consecutive duplicates) and advance reading horizon."""
+        if passage_text is not None and not isinstance(passage_text, str):
+            raise TypeError("Session seen_passages must be text only (string)")
+
+        cleaned = (passage_text or "").strip()
+        if cleaned:
+            if not self.seen_passages or self.seen_passages[-1] != cleaned:
+                self.seen_passages.append(cleaned)
+
+        if act is not None and scene is not None:
+            try:
+                line_val = int(line or 0)
+                pos = (int(act), int(scene), line_val)
+                if self.max_position is None or pos > self.max_position:
+                    self.max_position = pos
+            except (ValueError, TypeError):
+                pass
+
+    def get_reading_horizon_summary(self) -> str:
+        """Return human-readable summary of furthest reading position."""
+        if self.max_position is not None:
+            act, scene, line = self.max_position
+            if line:
+                return f"Act {act}, Scene {scene}, line {line}"
+            return f"Act {act}, Scene {scene}"
+        if self.book and getattr(self.book, "location", None):
+            return str(self.book.location).strip()
+        return ""
 
     def add_candidate_book(self, book: BookInfo) -> None:
         """Add or update candidate book in the session, deduping by normalized title."""

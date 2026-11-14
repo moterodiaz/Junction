@@ -52,6 +52,8 @@ class RealParserGeminiClient:
         page_text: str,
         session: BookSession,
         model: str = DEFAULT_MODEL_REASON,
+        passage_match: Any = None,
+        spoiler_guard: bool = False,
     ):
         raw_api_payload = json.dumps({
             "candidates": [{
@@ -635,6 +637,218 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             await think("test", "some text with enough words here now ok.", "sess-thread3-err",
                         client=RaisesInternalTypeError())
+
+    def test_session_record_seen_passage_text_only_and_deduping(self):
+        """REQ-REASON-01: seen_passages text-only validation and consecutive deduping."""
+        session = BookSession("s-seen-1")
+        self.assertEqual(session.seen_passages, [])
+
+        # Non-string raises TypeError
+        with self.assertRaises(TypeError):
+            session.record_seen_passage(12345)  # type: ignore
+
+        with self.assertRaises(TypeError):
+            session.record_seen_passage({"passage": "dict"})  # type: ignore
+
+        # Clean string gets recorded
+        session.record_seen_passage("  To be, or not to be  ")
+        self.assertEqual(session.seen_passages, ["To be, or not to be"])
+
+        # Consecutive duplicate is ignored
+        session.record_seen_passage("To be, or not to be")
+        self.assertEqual(session.seen_passages, ["To be, or not to be"])
+
+        # Distinct passage is recorded
+        session.record_seen_passage("Whether 'tis nobler in the mind to suffer")
+        self.assertEqual(len(session.seen_passages), 2)
+
+        # Non-consecutive duplicate is recorded
+        session.record_seen_passage("To be, or not to be")
+        self.assertEqual(len(session.seen_passages), 3)
+
+        # Empty and whitespace passages are skipped
+        session.record_seen_passage("")
+        session.record_seen_passage("   \n\t  ")
+        self.assertEqual(len(session.seen_passages), 3)
+
+    def test_session_record_seen_passage_monotonic_position_tracking(self):
+        """REQ-REASON-01: max_position monotonic forward advancement."""
+        session = BookSession("s-pos-1")
+        self.assertIsNone(session.max_position)
+
+        # Initial position
+        session.record_seen_passage("snippet 1", act=1, scene=2, line=15)
+        self.assertEqual(session.max_position, (1, 2, 15))
+
+        # Advances forward within same scene
+        session.record_seen_passage("snippet 2", act=1, scene=2, line=30)
+        self.assertEqual(session.max_position, (1, 2, 30))
+
+        # Does NOT regress backwards on earlier line in same scene
+        session.record_seen_passage("snippet 3", act=1, scene=2, line=10)
+        self.assertEqual(session.max_position, (1, 2, 30))
+
+        # Does NOT regress backwards on earlier scene in same act
+        session.record_seen_passage("snippet 4", act=1, scene=1, line=50)
+        self.assertEqual(session.max_position, (1, 2, 30))
+
+        # Advances forward to later act
+        session.record_seen_passage("snippet 5", act=3, scene=1, line=64)
+        self.assertEqual(session.max_position, (3, 1, 64))
+
+        # Line None/0 does not regress a higher line
+        session.record_seen_passage("snippet 6", act=3, scene=1, line=None)
+        self.assertEqual(session.max_position, (3, 1, 64))
+
+    def test_get_reading_horizon_summary(self):
+        """REQ-REASON-01: get_reading_horizon_summary formatting."""
+        session = BookSession("s-horizon-1", book=BookInfo(location="Act 1, Scene 1"))
+
+        # When max_position is None, returns book location
+        self.assertEqual(session.get_reading_horizon_summary(), "Act 1, Scene 1")
+
+        # When book location is empty and max_position is None, returns empty string
+        session_empty = BookSession("s-horizon-empty", book=BookInfo(location=""))
+        self.assertEqual(session_empty.get_reading_horizon_summary(), "")
+
+        # When max_position has line=0, returns Act and Scene
+        session.record_seen_passage("line 0 test", act=2, scene=2)
+        self.assertEqual(session.get_reading_horizon_summary(), "Act 2, Scene 2")
+
+        # When max_position has line > 0, returns Act, Scene, and line
+        session.record_seen_passage("line 68 test", act=3, scene=1, line=68)
+        self.assertEqual(session.get_reading_horizon_summary(), "Act 3, Scene 1, line 68")
+
+    async def test_think_advances_reading_horizon_automatically(self):
+        """REQ-REASON-01: think() records seen passages and monotonically advances max_position."""
+        session_id = "s-think-horizon"
+        # First query grounds to Act 3, Scene 1 (line 64)
+        p1 = "To be, or not to be, that is the question:"
+        await think("what is this?", p1, session_id, client=StubGeminiClient())
+
+        session = default_session_store.get(session_id)
+        self.assertIsNotNone(session)
+        self.assertIsNotNone(session.max_position)
+        self.assertEqual(session.max_position[0], 3)
+        self.assertEqual(session.max_position[1], 1)
+        self.assertEqual(session.max_position[2], 64)
+        self.assertEqual(session.get_reading_horizon_summary(), "Act 3, Scene 1, line 64")
+        self.assertIn("To be, or not to be", session.seen_passages[0])
+
+        # Second query with earlier passage (Act 1, Scene 2) must not regress reading horizon
+        p2 = "A little more than kin, and less than kind."
+        await think("who says this?", p2, session_id, client=StubGeminiClient())
+        self.assertEqual(session.max_position, (3, 1, 64))
+        self.assertEqual(session.get_reading_horizon_summary(), "Act 3, Scene 1, line 64")
+        self.assertEqual(len(session.seen_passages), 2)
+
+    async def test_stub_gemini_client_spoiler_guard_true_vs_false(self):
+        """REQ-VOICE-02: StubGeminiClient respects spoiler_guard=True without leaking later-act reveals."""
+        session_id = "s-spoiler-stub"
+        stub = StubGeminiClient()
+        store = SessionStore()
+        session = store.get_or_create(session_id, default_book=BookInfo(title="Hamlet", location="Act 3, Scene 1"))
+        session.record_seen_passage("To be or not to be", act=3, scene=1, line=68)
+
+        spoiler_cmd = "Does Hamlet die at the end of Act 5?"
+
+        # spoiler_guard=False -> leaks Act 5 ending
+        ans_spoiled = await think(
+            spoiler_cmd,
+            "To be or not to be",
+            session_id,
+            client=stub,
+            session_store=store,
+            spoiler_guard=False,
+        )
+        self.assertIn("Act 5", ans_spoiled["caption"])
+        self.assertIn("dies", ans_spoiled["caption"])
+        self.assertIn("kills Claudius", ans_spoiled["speech_text"])
+
+        # spoiler_guard=True -> guards reading horizon and suppresses Act 5 reveal
+        ans_safe = await think(
+            spoiler_cmd,
+            "To be or not to be",
+            session_id,
+            client=stub,
+            session_store=store,
+            spoiler_guard=True,
+        )
+        self.assertIn("Avoiding spoilers beyond Act 3, Scene 1, line 68", ans_safe["caption"])
+        self.assertIn("Without spoiling events after Act 3, Scene 1, line 68", ans_safe["speech_text"])
+        self.assertNotIn("Act 5", ans_safe["caption"])
+
+        # DECISION_ENABLE_SPOILER_CHECK env var forces spoiler_guard=True even if param is False
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "1"}):
+            ans_env = await think(
+                spoiler_cmd,
+                "To be or not to be",
+                session_id,
+                client=stub,
+                session_store=store,
+                spoiler_guard=False,
+            )
+            self.assertIn("Avoiding spoilers", ans_env["caption"])
+            self.assertNotIn("Act 5", ans_env["caption"])
+
+    async def test_http_gemini_client_prompt_includes_anti_spoiler_instruction(self):
+        """REQ-VOICE-02: HttpGeminiClient prompt includes anti-spoiler instruction and horizon when enabled."""
+        client = HttpGeminiClient(api_key="test-api-key")
+        session = BookSession("s-http-spoiler", book=BookInfo(title="Hamlet", location="Act 1, Scene 5"))
+        session.record_seen_passage("Ghost passage", act=1, scene=5, line=40)
+
+        captured_body: Dict[str, Any] = {}
+
+        def mock_urlopen(req, timeout=None):
+            nonlocal captured_body
+            captured_body = json.loads(req.data.decode("utf-8"))
+            mock_resp = mock.MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": json.dumps({
+                                "title": "Hamlet, Act 1, Scene 5",
+                                "caption": "Ghost speaks.",
+                                "speech_text": "The ghost reveals the murder.",
+                                "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 1, Scene 5"},
+                                "sources": [],
+                            })
+                        }]
+                    }
+                }]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+
+        # 1. spoiler_guard=False, env var unset -> no anti-spoiler prompt block
+        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            await client.generate_reasoning("explain", "passage text", session, spoiler_guard=False)
+
+        user_content = captured_body["contents"][-1]["parts"][0]["text"]
+        self.assertNotIn("Anti-Spoiler Guard ACTIVE", user_content)
+        self.assertNotIn("Do NOT spoil plot events", user_content)
+
+        # 2. spoiler_guard=True -> anti-spoiler block and reading horizon injected
+        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            await client.generate_reasoning("explain", "passage text", session, spoiler_guard=True)
+
+        user_content_guarded = captured_body["contents"][-1]["parts"][0]["text"]
+        self.assertIn("Anti-Spoiler Guard ACTIVE", user_content_guarded)
+        self.assertIn("Act 1, Scene 5, line 40", user_content_guarded)
+        self.assertIn(
+            "Do NOT spoil plot events, fates, or reveals occurring AFTER the student's current reading horizon",
+            user_content_guarded,
+        )
+
+        # 3. DECISION_ENABLE_SPOILER_CHECK="true" env var -> activates even with spoiler_guard=False
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "true"}), \
+             mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            await client.generate_reasoning("explain", "passage text", session, spoiler_guard=False)
+
+        user_content_env = captured_body["contents"][-1]["parts"][0]["text"]
+        self.assertIn("Anti-Spoiler Guard ACTIVE", user_content_env)
+        self.assertIn("Act 1, Scene 5, line 40", user_content_env)
 
 
 if __name__ == "__main__":
