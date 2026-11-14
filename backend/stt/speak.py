@@ -83,6 +83,7 @@ class GeminiSpeechClient:
 
         if self._genai is None:
             self._genai = genai.Client(api_key=self.api_key)
+        failed_model = self.model
         try:
             response = await self._generate(text)
         except Exception as exc:
@@ -95,11 +96,12 @@ class GeminiSpeechClient:
                 log.warning("TTS model list failed during fallback: %s", type(lookup_exc).__name__)
                 raise _orig_exc from None
             best = min(names, key=lambda n: ("flash" not in n.lower(), "preview" in n.lower(), n), default=None)
-            if best is None or best == self.model:
+            if best is None or best == failed_model:
                 exc.tts_models = names
                 raise
-            log.warning("TTS model %s not found; using %s from now on", self.model, best)
-            self.model = best
+            if self.model == failed_model:
+                log.warning("TTS model %s not found; using %s from now on", failed_model, best)
+                self.model = best
             response = await self._generate(text)
         if not response.candidates or not response.candidates[0].content:
             raise RuntimeError("no content candidates in speech response")
