@@ -5,6 +5,8 @@ import unittest
 from unittest import mock
 
 from fastapi.testclient import TestClient
+from starlette.testclient import WebSocketDenialResponse
+from starlette.websockets import WebSocketDisconnect
 
 import stt
 from ai.page_reader import DEFAULT_MODEL_READ, NoTextFoundError, PageReadTimeoutError, StubNemotronClient
@@ -241,3 +243,136 @@ class WsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+TOKEN = "t0k3n-for-tests-only"  # not a real credential
+
+
+WSS, WS = "wss://testserver/ws", "ws://testserver/ws"
+
+
+class WsAuthTest(unittest.TestCase):
+    """Optional handshake auth (#133, contracts/LIFECYCLE.md "Optional auth handoff")."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "",
+                                               "WS_AUTH": "", "WS_AUTH_TOKEN": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def refused(self, reason, env, headers=None, url=WSS):
+        """Assert a bare 401 for `reason`, with the credential kept out of the reply and the logs."""
+        with self.assertLogs("metalab", level="WARNING") as logs, mock.patch.dict(os.environ, env):
+            with self.assertRaises(WebSocketDenialResponse) as caught:
+                with TestClient(app).websocket_connect(url, headers=headers or {}):
+                    pass
+        self.assertEqual(caught.exception.status_code, 401)
+        self.assertEqual(caught.exception.text, "")
+        logged = "\n".join(logs.output)
+        self.assertIn(f"handshake refused: {reason}", logged)
+        self.assertNotIn(TOKEN, logged)
+
+    def card_over(self, env, headers=None, url=WSS):
+        with mock.patch.dict(os.environ, env):
+            with TestClient(app).websocket_connect(url, headers=headers or {}) as ws:
+                ws.send_json(invoke())
+                return [ws.receive_json() for _ in range(4)][-1]
+
+    def test_off_by_default_needs_no_credential_even_over_plain_ws(self):
+        self.assertEqual(self.card_over({}, url=WS)["type"], "card")
+
+    def test_off_ignores_a_bad_credential(self):
+        self.assertEqual(self.card_over({"WS_AUTH": "off"}, {"Authorization": "Bearer wrong"})["type"], "card")
+
+    def test_on_with_valid_bearer_over_wss_upgrades(self):
+        card = self.card_over({"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN}, {"Authorization": f"Bearer {TOKEN}"})
+        self.assertEqual(card["type"], "card")
+
+    def test_on_accepts_tls_ended_by_a_proxy(self):
+        card = self.card_over({"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+                              {"Authorization": f"Bearer {TOKEN}", "X-Forwarded-Proto": "https"}, url=WS)
+        self.assertEqual(card["type"], "card")
+
+    def test_on_refuses_missing_credential(self):
+        self.refused("missing or malformed credential", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN})
+
+    def test_on_refuses_invalid_credential(self):
+        self.refused("invalid credential", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+                     {"Authorization": "Bearer wrong"})
+
+    def test_on_refuses_malformed_credentials(self):
+        for header in ("Bearer", "Bearer ", f"Token {TOKEN}", TOKEN, f"Basic {TOKEN}"):
+            with self.subTest(header=header):
+                self.refused("missing or malformed credential", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+                             {"Authorization": header})
+
+    def test_on_refuses_a_credential_in_the_query_string(self):
+        self.refused("missing or malformed credential", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+                     url=f"{WSS}?token={TOKEN}")
+
+    def test_on_refuses_plain_ws_even_with_a_valid_credential(self):
+        self.refused("auth on but the handshake is not over WSS", {"WS_AUTH": "on", "WS_AUTH_TOKEN": TOKEN},
+                     {"Authorization": f"Bearer {TOKEN}"}, url=WS)
+
+    def test_on_without_a_token_fails_closed(self):
+        self.refused("auth on but not configured", {"WS_AUTH": "on", "WS_AUTH_TOKEN": ""},
+                     {"Authorization": f"Bearer {TOKEN}"})
+
+    def test_unknown_auth_mode_fails_closed(self):
+        self.refused("auth on but not configured", {"WS_AUTH": "maybe", "WS_AUTH_TOKEN": TOKEN},
+                     {"Authorization": f"Bearer {TOKEN}"})
+
+
+class WsBoundsTest(unittest.TestCase):
+    """Bounded input and work per socket and per container (#133)."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "",
+                                               "WS_AUTH": "", "WS_MAX_CONNECTIONS": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_oversized_input_closes_with_policy_violation(self):
+        with mock.patch("app.main.MAX_QUEUED_BYTES", 64):
+            with TestClient(app).websocket_connect("/ws") as ws:
+                ws.send_text("x" * 65)
+                with self.assertRaises(WebSocketDisconnect) as caught:
+                    ws.receive_json()
+        self.assertEqual(caught.exception.code, 1008)
+
+    def test_too_many_queued_requests_close_with_policy_violation(self):
+        release = asyncio.Event()
+
+        async def slow_run(invoke, send_stage):
+            await release.wait()
+
+        with mock.patch.object(pipeline, "run", slow_run):
+            with TestClient(app).websocket_connect("/ws") as ws:
+                for n in range(6):  # one running, four queued, the sixth is one too many
+                    ws.send_json(invoke(request_id=f"r{n}"))
+                with self.assertRaises(WebSocketDisconnect) as caught:
+                    ws.receive_json()
+        self.assertEqual(caught.exception.code, 1008)
+
+    def test_connection_cap_refuses_with_503(self):
+        with mock.patch.dict(os.environ, {"WS_MAX_CONNECTIONS": "1"}):
+            client = TestClient(app)
+            with client.websocket_connect("/ws"):
+                with self.assertLogs("metalab", level="WARNING"):
+                    with self.assertRaises(WebSocketDenialResponse) as caught:
+                        with client.websocket_connect("/ws"):
+                            pass
+            self.assertEqual(caught.exception.status_code, 503)
+            with client.websocket_connect("/ws") as ws:  # the slot is free again once the first closes
+                ws.send_json(invoke())
+                self.assertEqual([ws.receive_json() for _ in range(4)][-1]["type"], "card")
+
+    def test_repeated_requests_each_get_exactly_one_terminal_reply(self):
+        with TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_json(invoke(request_id="a"))
+            ws.send_json(invoke(request_id="b"))
+            ws.send_text("not json")
+            replies = [ws.receive_json() for _ in range(9)]
+        terminals = [(r["type"], r["request_id"]) for r in replies if r["type"] != "status"]
+        self.assertEqual(terminals, [("card", "a"), ("card", "b"), ("error", None)])
+        self.assertEqual([r["request_id"] for r in replies if r["type"] == "status"], ["a"] * 3 + ["b"] * 3)

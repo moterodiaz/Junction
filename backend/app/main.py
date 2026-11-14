@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 
 from ai.image import image_router
@@ -15,7 +17,7 @@ from ai.page_reader import PageReadError
 from stt.speak import audio_router
 
 from . import pipeline
-from .config import get_settings
+from .config import auth_config, get_settings, max_connections
 from .latency import StageTimer
 from .messages import Error, Invoke, Stage, Status
 
@@ -49,13 +51,73 @@ async def health() -> dict:
 MAX_QUEUED_FRAMES = 4
 MAX_QUEUED_BYTES = 32 * 1024 * 1024
 
+_open_connections = 0
+
+
+def handshake_refusal(websocket: WebSocket) -> int | None:
+    """HTTP status that refuses this /ws handshake before upgrade, or None to accept it.
+
+    Auth (off by default, contracts/LIFECYCLE.md): when WS_AUTH is on, the client sends
+    `Authorization: Bearer <token>` over WSS. Anything else, including a server with auth on and
+    no token configured, gets the same generic 401. The credential is never logged or echoed.
+    Then the connection cap: one container serves at most WS_MAX_CONNECTIONS sockets."""
+    auth = auth_config()
+    if auth.enabled:
+        reason = None
+        if not auth.ready:
+            reason = "auth on but not configured"
+        elif not secure(websocket):
+            reason = "auth on but the handshake is not over WSS"
+        else:
+            scheme, _, credential = websocket.headers.get("authorization", "").partition(" ")
+            if scheme.lower() != "bearer" or not credential.strip():
+                reason = "missing or malformed credential"
+            elif not hmac.compare_digest(credential.strip().encode(), auth.token.encode()):
+                reason = "invalid credential"
+        if reason:
+            log.warning("handshake refused: %s", reason)
+            return 401
+    if _open_connections >= max_connections():
+        log.warning("handshake refused: %d connections open", _open_connections)
+        return 503
+    return None
+
+
+def secure(websocket: WebSocket) -> bool:
+    """WSS, or TLS ended by a proxy in front of the app (Modal sets X-Forwarded-Proto)."""
+    forwarded = websocket.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return websocket.url.scheme == "wss" or forwarded == "https"
+
+
+async def refuse(websocket: WebSocket, status: int) -> None:
+    """Fail the handshake with a bare HTTP status and no application frames. A server without
+    the denial-response extension still refuses, with its default 403."""
+    try:
+        await websocket.send_denial_response(PlainTextResponse("", status_code=status))
+    except RuntimeError:
+        await websocket.close(code=1008)
+
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
+    """Refuse the handshake (auth, connection cap) or accept it and serve the socket."""
+    global _open_connections
+    status = handshake_refusal(websocket)
+    if status is not None:
+        await refuse(websocket, status)
+        return
+    _open_connections += 1
+    try:
+        await websocket.accept()
+        await serve(websocket)
+    finally:
+        _open_connections -= 1
+
+
+async def serve(websocket: WebSocket) -> None:
     """Handle one request at a time, but keep listening while it runs: a disconnect cancels
     the request (no further model calls, nothing saved to the book session), and a message
     that arrives meanwhile is handled next (#111)."""
-    await websocket.accept()
     receiving: asyncio.Task | None = None
     handling: asyncio.Task | None = None
     queued: list[str | bytes] = []
