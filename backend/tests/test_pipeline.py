@@ -8,6 +8,8 @@ import unittest
 from unittest import mock
 
 from ai.decision import DecisionResult, StubDecisionClient, set_decision_client
+from ai import image
+from ai.image import StubImageClient, set_image_client
 from ai.reasoning import DEFAULT_MODEL_REASON, StubGeminiClient, set_reasoning_client
 from ai.session import default_session_store
 from app import pipeline
@@ -386,6 +388,133 @@ class PipelineDynamicRoutingTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(card.models["reason"], "gemini-3.5-flash-lite")
         self.assertEqual(self._stub_reason.calls[0]["command"], natural_utterance)
+
+    async def test_dynamic_routing_passes_style_preset_gothic_oil_to_image_draw(self):
+        """REQ-IMG-01, REQ-VOICE-02: dynamic routing style_preset gothic_oil is passed to image.draw / format_display_prompt preserving #000000 background."""
+        utterance = "Draw a dramatic scene of the ghost on the battlements"
+        invoke = Invoke(
+            type="invoke", request_id="r-dyn-style-1", session_id="s-dyn-style-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text=utterance,
+        )
+        dec_result = DecisionResult(
+            action="draw",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.93,
+            fallback_used=False,
+            raw_utterance=utterance,
+            style_preset="gothic_oil",
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+        stub_image = StubImageClient(billing_enabled=True)
+        set_image_client(stub_image)
+        try:
+            with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": "https://example.com"}), \
+                 mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="passage"):
+                card = await pipeline.run(invoke, _noop_send_stage)
+
+            self.assertIsNotNone(card.image_url)
+            self.assertTrue(card.image_url.startswith("https://example.com/img/"))
+            self.assertEqual(len(stub_image.calls), 1)
+            prompt = stub_image.calls[0]["prompt"]
+            self.assertIn("#000000", prompt)
+            self.assertIn("gothic oil", prompt)
+            self.assertIn("Stylistic suggestion: subtle gothic oil aesthetic.", prompt)
+        finally:
+            set_image_client(None)
+            image.clear_all_images()
+            image.reset_billing_state()
+
+    async def test_dynamic_routing_passes_style_preset_ink_woodcut_to_image_draw(self):
+        """REQ-IMG-01, REQ-VOICE-02: dynamic routing style_preset ink_woodcut is passed to image.draw / format_display_prompt preserving #000000 background."""
+        utterance = "Draw the duel scene in woodcut style"
+        invoke = Invoke(
+            type="invoke", request_id="r-dyn-style-2", session_id="s-dyn-style-2",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text=utterance,
+        )
+        dec_result = DecisionResult(
+            action="draw",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.91,
+            fallback_used=False,
+            raw_utterance=utterance,
+            style_preset="ink_woodcut",
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+        stub_image = StubImageClient(billing_enabled=True)
+        set_image_client(stub_image)
+        try:
+            with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": "https://example.com"}), \
+                 mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="passage"):
+                card = await pipeline.run(invoke, _noop_send_stage)
+
+            self.assertIsNotNone(card.image_url)
+            self.assertTrue(card.image_url.startswith("https://example.com/img/"))
+            self.assertEqual(len(stub_image.calls), 1)
+            prompt = stub_image.calls[0]["prompt"]
+            self.assertIn("#000000", prompt)
+            self.assertIn("ink woodcut", prompt)
+            self.assertIn("Stylistic suggestion: subtle ink woodcut aesthetic.", prompt)
+        finally:
+            set_image_client(None)
+            image.clear_all_images()
+            image.reset_billing_state()
+
+    async def test_dynamic_routing_style_preset_with_legacy_2arg_draw_monkeypatch(self):
+        """REQ-IMG-01: monkeypatched 2-arg pipeline.draw test stubs still pass untouched without TypeError."""
+        utterance = "Draw a scene with 2-arg stub"
+        invoke = Invoke(
+            type="invoke", request_id="r-dyn-style-3", session_id="s-dyn-style-3",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text=utterance,
+        )
+        dec_result = DecisionResult(
+            action="draw",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance=utterance,
+            style_preset="gothic_oil",
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        two_arg_called = False
+
+        async def legacy_2arg_draw(image_prompt: str, session_id: str) -> str:
+            nonlocal two_arg_called
+            two_arg_called = True
+            return "https://example.com/legacy_draw.png"
+
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="passage"), \
+             mock.patch.object(pipeline, "draw", legacy_2arg_draw):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertTrue(two_arg_called)
+        self.assertEqual(card.image_url, "https://example.com/legacy_draw.png")
+
+    async def test_pipeline_draw_accepts_style_preset_and_forwards_to_image(self):
+        """pipeline.draw directly accepts style_preset and forwards to image.draw."""
+        stub_image = StubImageClient(billing_enabled=True)
+        set_image_client(stub_image)
+        try:
+            with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": "https://example.com"}):
+                url = await pipeline.draw("A dark tower", "sess-test", style_preset="noir_sketch")
+            self.assertIsNotNone(url)
+            self.assertEqual(len(stub_image.calls), 1)
+            prompt = stub_image.calls[0]["prompt"]
+            self.assertIn("#000000", prompt)
+            self.assertIn("noir sketch", prompt)
+        finally:
+            set_image_client(None)
+            image.clear_all_images()
+            image.reset_billing_state()
 
 
 class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCase):

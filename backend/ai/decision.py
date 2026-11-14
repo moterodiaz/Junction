@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import dataclass, field
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 from .session import BookSession
@@ -66,6 +67,21 @@ class DecisionResult:
     book_match: Optional[str] = None
     book_match_confidence: float = 1.0
     book_changed: bool = False
+    style_preset: str = "default"
+    spoiler_risk: bool = False
+    answerable_from_seen: bool = True
+
+    def __post_init__(self) -> None:
+        if self.style_preset == "default" and "style_preset" in self.extra_answers:
+            self.style_preset = str(self.extra_answers["style_preset"])
+        if not self.spoiler_risk and "spoiler_risk" in self.extra_answers:
+            self.spoiler_risk = bool(self.extra_answers["spoiler_risk"])
+        if self.spoiler_risk:
+            self.answerable_from_seen = False
+        elif "answerable_from_seen" in self.extra_answers:
+            self.answerable_from_seen = bool(self.extra_answers["answerable_from_seen"])
+        else:
+            self.answerable_from_seen = not self.spoiler_risk
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,7 +97,16 @@ class DecisionResult:
             "book_match": self.book_match,
             "book_match_confidence": self.book_match_confidence,
             "book_changed": self.book_changed,
+            "style_preset": self.style_preset,
+            "spoiler_risk": self.spoiler_risk,
+            "answerable_from_seen": self.answerable_from_seen,
         }
+
+
+def is_spoiler_check_enabled() -> bool:
+    """Return True if DECISION_ENABLE_SPOILER_CHECK env var is truthy (e.g. 'true', '1', 'yes', 'on')."""
+    val = os.environ.get("DECISION_ENABLE_SPOILER_CHECK", "false").strip().lower()
+    return val in ("1", "true", "yes", "on")
 
 
 def should_clarify_book(decision: DecisionResult, passage_score: float) -> bool:
@@ -129,6 +154,26 @@ def _create_default_specs() -> Dict[str, DecisionQuestionSpec]:
             name="speak_only",
             question_type="noul",
             instructions="Should the response be spoken audio only without updating or displaying a visual card or illustration?",
+            default=False,
+        ),
+        "style_preset": DecisionQuestionSpec(
+            name="style_preset",
+            question_type="choice",
+            instructions="Classify the visual illustration aesthetic and style preset suitable for the book, scene, and utterance.",
+            criteria={
+                "ink_woodcut": "Traditional ink woodcut or engraved print suitable for historical, dramatic, or early modern drama (e.g., Shakespeare, classical tragedies)",
+                "gothic_oil": "Dark, atmospheric gothic oil painting with deep shadows and dramatic lighting",
+                "watercolor_botanical": "Delicate, detailed watercolor or botanical scientific illustration",
+                "noir_sketch": "High-contrast, moody noir charcoal or ink sketch",
+                "classical_etching": "Detailed classical fine-line etching or crosshatch engraving",
+                "default": "Default neutral literary illustration aesthetic",
+            },
+            default="default",
+        ),
+        "spoiler_risk": DecisionQuestionSpec(
+            name="spoiler_risk",
+            question_type="noul",
+            instructions="Does answering the student's question require revealing plot events, character fates, or narrative twists beyond the reader's seen reading horizon?",
             default=False,
         ),
     }
@@ -248,13 +293,34 @@ def fallback_decide(
         if name not in ("action", "task_tier", "needs_image", "speak_only", "book_match", "book_changed"):
             extra[name] = spec.default
 
+    text_lower = (utterance or "").strip().lower()
+    style_preset = "default"
+    words = set(re.findall(r"[a-z]+", text_lower))
+    if words & {"woodcut", "ink"}:
+        style_preset = "ink_woodcut"
+    elif words & {"gothic", "oil"}:
+        style_preset = "gothic_oil"
+    elif words & {"botanical", "watercolor"}:
+        style_preset = "watercolor_botanical"
+    elif words & {"noir", "sketch"}:
+        style_preset = "noir_sketch"
+    elif words & {"etching", "engraving"}:
+        style_preset = "classical_etching"
+
+    spoiler_risk = False
+    if any(w in text_lower for w in ("spoiler", "spoil", "ending", "who dies", "how does it end")):
+        spoiler_risk = True
+
+    extra["style_preset"] = style_preset
+    extra["spoiler_risk"] = spoiler_risk
+    extra["answerable_from_seen"] = not spoiler_risk
+
     book_match: Optional[str] = None
     book_match_confidence: float = 1.0
     book_changed: bool = False
 
     if session and getattr(session, "candidate_books", None):
         active_title = getattr(session.book, "title", "Hamlet") if getattr(session, "book", None) else "Hamlet"
-        text_lower = (utterance or "").strip().lower()
         matched = None
         for b in session.candidate_books:
             if getattr(b, "title", "").strip().lower() in text_lower:
@@ -282,6 +348,9 @@ def fallback_decide(
         book_match=book_match,
         book_match_confidence=book_match_confidence,
         book_changed=book_changed,
+        style_preset=style_preset,
+        spoiler_risk=spoiler_risk,
+        answerable_from_seen=not spoiler_risk,
     )
 
 
@@ -359,10 +428,27 @@ def _parse_decision_response(
         bc_val, _ = _get_val_and_conf(answers.get("book_changed"), "noul", False)
         book_changed = bool(bc_val)
 
+    # style_preset
+    style_spec = specs.get("style_preset", DecisionQuestionSpec("style_preset", "choice", "", default="default"))
+    style_val, style_conf = _get_val_and_conf(answers.get("style_preset"), style_spec.question_type, style_spec.default)
+    valid_styles = {"ink_woodcut", "gothic_oil", "watercolor_botanical", "noir_sketch", "classical_etching", "default"}
+    if str(style_val) not in valid_styles:
+        style_val = style_spec.default
+    style_preset = str(style_val)
+    if style_conf < MIN_CONFIDENCE_THRESHOLD:
+        # Uncertain style never rejects the request; use the default look.
+        style_preset = "default"
+
+    # spoiler_risk
+    spoil_spec = specs.get("spoiler_risk", DecisionQuestionSpec("spoiler_risk", "noul", "", default=False))
+    spoil_val, spoil_conf = _get_val_and_conf(answers.get("spoiler_risk"), spoil_spec.question_type, spoil_spec.default)
+    spoiler_risk = bool(spoil_val)
+    answerable_from_seen = not spoiler_risk
+
     extra: Dict[str, Any] = {}
     extra_confs: List[float] = []
     for name in active_names:
-        if name in ("action", "task_tier", "needs_image", "speak_only", "book_match", "book_changed"):
+        if name in ("action", "task_tier", "needs_image", "speak_only", "book_match", "book_changed", "style_preset", "spoiler_risk"):
             continue
         spec = specs.get(name)
         q_type = spec.question_type if spec else "choice"
@@ -371,7 +457,12 @@ def _parse_decision_response(
         extra[name] = v
         extra_confs.append(c)
 
-    all_confs = [action_conf, tier_conf, img_conf, speak_conf] + extra_confs
+    extra["style_preset"] = style_preset
+    extra["spoiler_risk"] = spoiler_risk
+    extra["answerable_from_seen"] = answerable_from_seen
+
+    confs_to_include = [action_conf, tier_conf, img_conf, speak_conf]
+    all_confs = confs_to_include + extra_confs
     overall_confidence = min(all_confs) if all_confs else 1.0
     rec_model = resolve_model_for_tier(tier_val)
 
@@ -388,6 +479,9 @@ def _parse_decision_response(
         book_match=book_match,
         book_match_confidence=book_match_confidence,
         book_changed=book_changed,
+        style_preset=style_preset,
+        spoiler_risk=spoiler_risk,
+        answerable_from_seen=answerable_from_seen,
     )
 
 
@@ -440,6 +534,17 @@ class GeminiDecisionClient:
         if not hasattr(client, "aio") or not hasattr(client.aio, "decisions"):
             raise DecisionError("google.genai client does not support client.aio.decisions")
 
+        all_specs = get_all_question_specs()
+        if enabled_checks is not None:
+            active_names = [name for name in enabled_checks if name in all_specs]
+        else:
+            active_names = [
+                name for name in all_specs
+                if name != "spoiler_risk" or is_spoiler_check_enabled()
+            ]
+        if not active_names:
+            active_names = ["action", "task_tier", "needs_image", "speak_only"]
+
         # Format input without logging
         parts: List[str] = []
         if session and getattr(session, "book", None):
@@ -447,19 +552,16 @@ class GeminiDecisionClient:
             author = getattr(session.book, "author", "")
             location = getattr(session.book, "location", "")
             parts.append(f"Book: {title} ({author})\nLocation: {location}")
+        if "spoiler_risk" in active_names and session:
+            horizon_getter = getattr(session, "get_reading_horizon_summary", None)
+            if horizon_getter is not None:
+                horizon = horizon_getter() if callable(horizon_getter) else str(horizon_getter)
+                if horizon:
+                    parts.append(f"Reading Horizon: {horizon}")
         if page_text:
             parts.append(f"Page Text:\n{page_text}")
         parts.append(f"Student Utterance: {utterance}")
         shared_input = "\n\n".join(parts)
-
-        all_specs = get_all_question_specs()
-        active_names = (
-            [name for name in enabled_checks if name in all_specs]
-            if enabled_checks is not None
-            else list(all_specs.keys())
-        )
-        if not active_names:
-            active_names = ["action", "task_tier", "needs_image", "speak_only"]
 
         questions_payload: Dict[str, Any] = {}
         for name in active_names:
@@ -554,6 +656,8 @@ class StubDecisionClient:
         book_match: Optional[str] = None,
         book_match_confidence: float = 1.0,
         book_changed: bool = False,
+        style_preset: str = "default",
+        spoiler_risk: bool = False,
     ) -> None:
         self.default_result = default_result
         self.default_answers = default_answers
@@ -563,6 +667,8 @@ class StubDecisionClient:
         self.book_match = book_match
         self.book_match_confidence = book_match_confidence
         self.book_changed = book_changed
+        self.style_preset = style_preset
+        self.spoiler_risk = spoiler_risk
         self.calls: List[Dict[str, Any]] = []
 
     async def decide(
@@ -594,11 +700,13 @@ class StubDecisionClient:
             return self.default_result
         if self.default_answers is not None:
             all_specs = get_all_question_specs()
-            active_names = (
-                [name for name in enabled_checks if name in all_specs]
-                if enabled_checks is not None
-                else list(all_specs.keys())
-            )
+            if enabled_checks is not None:
+                active_names = [name for name in enabled_checks if name in all_specs]
+            else:
+                active_names = [
+                    name for name in all_specs
+                    if name != "spoiler_risk" or is_spoiler_check_enabled()
+                ]
             for k in self.default_answers:
                 if k not in active_names:
                     active_names.append(k)
@@ -652,7 +760,14 @@ class StubDecisionClient:
                 book_changed = False
                 book_match_confidence = 0.90
 
+        style_preset = self.style_preset
+        spoiler_risk = self.spoiler_risk
         rec_model = resolve_model_for_tier(task_tier)
+        extra: Dict[str, Any] = {
+            "style_preset": style_preset,
+            "spoiler_risk": spoiler_risk,
+            "answerable_from_seen": not spoiler_risk,
+        }
         return DecisionResult(
             action=action,
             task_tier=task_tier,
@@ -662,9 +777,13 @@ class StubDecisionClient:
             confidence=0.95,
             fallback_used=False,
             raw_utterance=utterance,
+            extra_answers=extra,
             book_match=book_match,
             book_match_confidence=book_match_confidence,
             book_changed=book_changed,
+            style_preset=style_preset,
+            spoiler_risk=spoiler_risk,
+            answerable_from_seen=not spoiler_risk,
         )
 
 
@@ -749,6 +868,14 @@ async def decide(
                 result.book_match = raw_result.book_match
                 result.book_match_confidence = raw_result.book_match_confidence
                 result.book_changed = raw_result.book_changed
+            if raw_result.style_preset != "default":
+                result.style_preset = raw_result.style_preset
+                result.extra_answers["style_preset"] = result.style_preset
+            if raw_result.spoiler_risk:
+                result.spoiler_risk = raw_result.spoiler_risk
+                result.answerable_from_seen = raw_result.answerable_from_seen
+                result.extra_answers["spoiler_risk"] = result.spoiler_risk
+                result.extra_answers["answerable_from_seen"] = result.answerable_from_seen
         else:
             result = raw_result
 

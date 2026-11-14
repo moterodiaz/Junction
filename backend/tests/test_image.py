@@ -10,6 +10,7 @@ from ai.image import (
     BillingNotEnabledError,
     DUMMY_PNG,
     ImageConfigError,
+    STYLE_PRESETS,
     StubImageClient,
     asgi_image_app,
     cleanup_session,
@@ -21,6 +22,7 @@ from ai.image import (
     get_image_response,
     is_billing_enabled,
     reset_billing_state,
+    resolve_style_cue,
     set_image_client,
     store_image,
     sweep_idle_sessions,
@@ -278,6 +280,114 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("black background", prompt.lower())
         self.assertIn("additive optical", prompt.lower())
         self.assertIn("A golden crown on dark stone", prompt)
+
+    def test_format_display_prompt_default_compatibility(self):
+        base = format_display_prompt("A glowing chalice")
+        self.assertEqual(base, format_display_prompt("A glowing chalice", style_preset=None))
+        self.assertEqual(base, format_display_prompt("A glowing chalice", style_preset="default"))
+        self.assertEqual(base, format_display_prompt("A glowing chalice", style_preset="DEFAULT"))
+        self.assertEqual(base, format_display_prompt("A glowing chalice", style_preset=""))
+        self.assertEqual(base, format_display_prompt("A glowing chalice", style_preset="   "))
+        self.assertIn("#000000", base)
+        self.assertNotIn("Stylistic suggestion", base)
+
+    def test_format_display_prompt_soft_style_suggestion_known_presets(self):
+        expected_cues = {
+            "ink_woodcut": "subtle ink woodcut aesthetic",
+            "gothic_oil": "subtle gothic oil aesthetic",
+            "watercolor_botanical": "subtle watercolor botanical aesthetic",
+            "noir_sketch": "subtle noir sketch aesthetic",
+            "classical_etching": "subtle classical etching aesthetic",
+        }
+        for preset, expected_phrase in expected_cues.items():
+            prompt = format_display_prompt("A skull on a table", style_preset=preset)
+            self.assertIn(f"Stylistic suggestion: {expected_phrase}.", prompt)
+            self.assertIn("#000000", prompt)
+            self.assertIn("black background", prompt.lower())
+            self.assertIn("additive optical", prompt.lower())
+            self.assertIn("A skull on a table", prompt)
+
+    def test_format_display_prompt_unknown_style_treated_as_soft_cue(self):
+        prompt = format_display_prompt(
+            "An hourglass with glowing sand",
+            style_preset="cyberpunk_neon",
+        )
+        self.assertIn("Stylistic suggestion: subtle cyberpunk neon aesthetic.", prompt)
+        self.assertIn("#000000", prompt)
+        self.assertIn("An hourglass with glowing sand", prompt)
+
+    def test_format_display_prompt_punctuation_spacing(self):
+        # Prompt ending with period should not have double period
+        prompt_with_dot = format_display_prompt(
+            "A royal seal in wax.",
+            style_preset="ink_woodcut",
+        )
+        self.assertIn("A royal seal in wax. Stylistic suggestion: subtle ink woodcut aesthetic.", prompt_with_dot)
+        self.assertNotIn("..", prompt_with_dot)
+
+        # Prompt without period gets dot-separated
+        prompt_no_dot = format_display_prompt(
+            "A royal seal in wax",
+            style_preset="ink_woodcut",
+        )
+        self.assertIn("A royal seal in wax. Stylistic suggestion: subtle ink woodcut aesthetic.", prompt_no_dot)
+
+    def test_all_presets_preserve_pure_black_background(self):
+        for preset_name in STYLE_PRESETS:
+            res = format_display_prompt("Sample artifact", style_preset=preset_name)
+            self.assertIn("#000000", res)
+            self.assertIn("Pure solid black background", res)
+
+    def test_resolve_style_cue_behavior(self):
+        self.assertEqual(resolve_style_cue(None), "")
+        self.assertEqual(resolve_style_cue(""), "")
+        self.assertEqual(resolve_style_cue("   "), "")
+        self.assertEqual(resolve_style_cue("default"), "")
+        self.assertEqual(resolve_style_cue("DEFAULT"), "")
+        self.assertEqual(resolve_style_cue("default   "), "")
+
+        self.assertEqual(resolve_style_cue("ink_woodcut"), "ink woodcut")
+        self.assertEqual(resolve_style_cue("ink-woodcut"), "ink woodcut")
+        self.assertEqual(resolve_style_cue("ink woodcut"), "ink woodcut")
+        self.assertEqual(resolve_style_cue("INK_WOODCUT"), "ink woodcut")
+        self.assertEqual(resolve_style_cue("gothic_oil"), "gothic oil")
+        self.assertEqual(resolve_style_cue("watercolor_botanical"), "watercolor botanical")
+        self.assertEqual(resolve_style_cue("noir_sketch"), "noir sketch")
+        self.assertEqual(resolve_style_cue("classical_etching"), "classical etching")
+
+        # Unknown presets normalized cleanly
+        self.assertEqual(resolve_style_cue("steampunk_brass"), "steampunk brass")
+        self.assertEqual(resolve_style_cue("mythic-fantasy"), "mythic-fantasy")
+
+    async def test_draw_propagates_style_preset_to_client(self):
+        stub = StubImageClient(billing_enabled=True)
+        url = await draw(
+            "Ghost king on castle battlements",
+            session_id="style-sess-1",
+            client=stub,
+            style_preset="gothic_oil",
+        )
+        self.assertIsNotNone(url)
+        self.assertEqual(len(stub.calls), 1)
+        sent = stub.calls[0]["prompt"]
+        self.assertIn("Stylistic suggestion: subtle gothic oil aesthetic.", sent)
+        self.assertIn("#000000", sent)
+        self.assertIn("Ghost king on castle battlements", sent)
+
+    async def test_draw_with_default_style_preset_omits_suggestion(self):
+        stub = StubImageClient(billing_enabled=True)
+        url = await draw(
+            "Ghost king on castle battlements",
+            session_id="style-sess-2",
+            client=stub,
+            style_preset="default",
+        )
+        self.assertIsNotNone(url)
+        self.assertEqual(len(stub.calls), 1)
+        sent = stub.calls[0]["prompt"]
+        self.assertNotIn("Stylistic suggestion", sent)
+        self.assertIn("#000000", sent)
+        self.assertIn("Ghost king on castle battlements", sent)
 
     def test_get_image_response(self):
         store_image("img-abc", b"mybytes", mime_type="image/png")
