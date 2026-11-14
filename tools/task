@@ -107,7 +107,7 @@ cmd_next() {
     if [ -z "$first_num" ]; then
       first_num="$number"; first_title="$title"; first_body="$body"; first_area="$area"
     fi
-    if [ -n "$area" ] && [ -n "$my_a" ] && printf '%s\n' "$my_a" | grep -qx "$area"; then
+    if [ -n "$area" ] && [ -n "$my_a" ] && { printf '%s\n' "$my_a" | grep -qx "$area" || { [ "$area" = backend ] && printf '%s\n' "$my_a" | grep -q '^backend-'; }; }; then
       best_num="$number"; best_title="$title"; best_body="$body"; best_area="$area"
       break
     fi
