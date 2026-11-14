@@ -7,10 +7,7 @@ import MetaLabCore
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var session = PhoneSession()
-    @Published private(set) var lens: LensContent = .status(
-        headline: "MetaLab",
-        detail: "Connect the glasses, then ask about the page."
-    )
+    @Published private(set) var lens: LensContent = AppModel.idleLens
     @Published private(set) var phase: Phase = .idle
     @Published var backendURL: String {
         didSet { UserDefaults.standard.set(backendURL, forKey: Keys.backend) }
@@ -33,6 +30,8 @@ final class AppModel: ObservableObject {
     private let speaker = AnswerSpeaker()
     private var bookSessionId: String
     private var activeRequest: String?
+    /// Token of the socket carrying `activeRequest`; replies from any other socket are stale.
+    private var activeSocket: Int?
     private var captureTask: Task<Void, Never>?
     private var waitTask: Task<Void, Never>?
     private var presentTask: Task<Void, Never>?
@@ -90,10 +89,15 @@ final class AppModel: ObservableObject {
         cancelWork()
         glasses?.stopCamera()
         activeRequest = nil
+        activeSocket = nil
         phase = .idle
         bookSessionId = UUID().uuidString
         UserDefaults.standard.set(bookSessionId, forKey: Keys.book)
         session.lastCard = nil
+        lens = Self.idleLens
+        if session.displayEnabled {
+            Task { try? await glasses?.show(Self.idleLens) }
+        }
     }
 
     func invoke() {
@@ -127,14 +131,14 @@ final class AppModel: ObservableObject {
         glasses.onInvocation = { [weak self] in
             self?.invoke()
         }
-        socket.onText = { [weak self] text in
+        socket.onText = { [weak self] text, token in
             Task { @MainActor in
-                self?.receive(text)
+                self?.receive(text, socket: token)
             }
         }
-        socket.onDisconnect = { [weak self] in
+        socket.onDisconnect = { [weak self] token in
             Task { @MainActor in
-                guard let self, self.phase == .waiting else { return }
+                guard let self, token == self.activeSocket, self.phase == .waiting else { return }
                 self.fail(.backendTimeout, retryable: true)
             }
         }
@@ -209,7 +213,7 @@ final class AppModel: ObservableObject {
         lastServerMessage = Date()
         armDeadline(for: requestId)
         socket.disconnect()
-        socket.connect(url: config.webSocketURL)
+        activeSocket = socket.connect(url: config.webSocketURL)
         try await socket.send(body)
         guard activeRequest == requestId else { return }
         phase = .waiting
@@ -217,16 +221,16 @@ final class AppModel: ObservableObject {
         lastServerMessage = Date()
     }
 
-    private func receive(_ text: String) {
-        guard phase == .waiting || phase == .speaking, let data = text.data(using: .utf8) else { return }
-        guard let event = try? Contract.decode(data) else { return }
+    private func receive(_ text: String, socket token: Int) {
+        guard token == activeSocket, phase == .waiting || phase == .speaking,
+              let data = text.data(using: .utf8) else { return }
+        guard let event = try? Contract.decode(data),
+              ResponseFilter.belongs(event, to: activeRequest) else { return }
         switch event {
         case .status(let status):
-            guard status.requestId == activeRequest else { return }
             lastServerMessage = Date()
             Task { await show(LensCopy.content(for: status.stage)) }
         case .card(let card):
-            guard card.requestId == activeRequest else { return }
             lastServerMessage = Date()
             waitTask?.cancel()
             session = SessionMachine.reduce(session, .card(card))
@@ -242,7 +246,6 @@ final class AppModel: ObservableObject {
                 self.phase = .idle
             }
         case .error(let error):
-            guard error.requestId == activeRequest else { return }
             waitTask?.cancel()
             let kind = FailurePolicy.kind(for: error.code)
             fail(kind, retryable: error.retryable, message: error.message)
@@ -283,6 +286,7 @@ final class AppModel: ObservableObject {
     private func fail(_ kind: FailureKind, retryable: Bool, message: String? = nil) {
         cancelWork()
         activeRequest = nil
+        activeSocket = nil
         phase = .idle
         session = SessionMachine.reduce(session, .failure(kind, retryable: retryable))
         if let message, !message.isEmpty {
@@ -345,6 +349,11 @@ final class AppModel: ObservableObject {
             return error.description
         }
     }
+
+    nonisolated private static let idleLens: LensContent = .status(
+        headline: "MetaLab",
+        detail: "Connect the glasses, then ask about the page."
+    )
 
     private enum Keys {
         static let backend = "metalab.backendURL"
