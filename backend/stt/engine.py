@@ -3,20 +3,35 @@
 The default engine is faster-whisper, loaded on first use. It is pinned in
 backend/stt/requirements.txt, not backend/requirements.txt, so tests and CI never load it;
 they swap in a stub with set_engine().
+
+An alternative engine is gemini-3.5-transcribe, selected via STT_ENGINE=gemini.
 """
 
 from __future__ import annotations
 
 import io
+import os
 import threading
-from typing import Callable
+from typing import Any, Callable
 
 Engine = Callable[[bytes], str]
 
+DEFAULT_ENGINE = "whisper"
 WHISPER_MODEL = "small.en"
+GEMINI_MODEL = "gemini-3.5-transcribe"
+
+SHAKESPEARE_VOCABULARY_PROMPT = (
+    "Transcribe the spoken audio accurately and verbatim. "
+    "The speaker is reading or discussing Shakespeare and classic literature. "
+    "Bias vocabulary recognition toward Shakespearean terms, Elizabethan and early modern English, "
+    "literary terminology, and character names from Shakespeare plays (such as Hamlet, Horatio, "
+    "Ophelia, Claudius, Gertrude, Polonius, Macbeth, Othello, Romeo, Juliet, thou, thee, thine, thy). "
+    "Output only the exact transcribed speech text without commentary, explanation, or timestamps."
+)
 
 _engine: Engine | None = None
 _engine_lock = threading.Lock()
+_gemini_client: Any = None
 
 
 def set_engine(engine: Engine | None) -> Engine | None:
@@ -24,6 +39,13 @@ def set_engine(engine: Engine | None) -> Engine | None:
     global _engine
     with _engine_lock:
         previous, _engine = _engine, engine
+    return previous
+
+
+def set_gemini_client(client: Any) -> Any:
+    """Set custom Gemini client for dependency injection / stub testing; return previous."""
+    global _gemini_client
+    previous, _gemini_client = _gemini_client, client
     return previous
 
 
@@ -43,7 +65,11 @@ def _loaded() -> Engine:
     if engine is None:
         with _engine_lock:  # concurrent first calls must not each build a model
             if _engine is None:
-                _engine = _faster_whisper()
+                engine_type = os.environ.get("STT_ENGINE", DEFAULT_ENGINE).strip().lower()
+                if engine_type == "gemini":
+                    _engine = _gemini_engine()
+                else:
+                    _engine = _faster_whisper()
             engine = _engine
     return engine
 
@@ -56,5 +82,85 @@ def _faster_whisper() -> Engine:
     def run(audio: bytes) -> str:
         segments, _ = model.transcribe(io.BytesIO(audio), language="en", beam_size=1)
         return " ".join(s.text.strip() for s in segments)
+
+    return run
+
+
+def _detect_mime_type(audio: bytes) -> str | None:
+    if audio.startswith(b"RIFF"):
+        return "audio/wav"
+    if audio.startswith(b"ID3") or audio[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return "audio/mp3"
+    if audio.startswith(b"OggS"):
+        return "audio/ogg"
+    if audio.startswith(b"fLaC"):
+        return "audio/flac"
+    if audio.startswith(b"\x1aE\xdf\xa3"):
+        return "audio/webm"
+    return None
+
+
+def _gemini_engine(
+    client: Any = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    fallback_to_whisper: bool = True,
+) -> Engine:
+    """Create a speech transcription engine backed by Gemini (gemini-3.5-transcribe)."""
+    target_model = model or os.environ.get("MODEL_TRANSCRIBE", "").strip() or GEMINI_MODEL
+
+    def run(audio: bytes) -> str:
+        if not audio or not audio.strip(b"\x00 \t\r\n"):
+            raise ValueError("Empty or invalid audio clip")
+
+        resolved_client = client if client is not None else _gemini_client
+        if resolved_client is None:
+            resolved_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "").strip()
+            if not resolved_key:
+                if fallback_to_whisper:
+                    try:
+                        return _faster_whisper()(audio)
+                    except Exception:
+                        pass
+                raise RuntimeError("GEMINI_API_KEY is not set for Gemini transcription")
+            from google import genai
+
+            resolved_client = genai.Client(api_key=resolved_key)
+
+        mime = _detect_mime_type(audio)
+        if mime is None:
+            if fallback_to_whisper:
+                try:
+                    return _faster_whisper()(audio)
+                except Exception:
+                    pass
+            raise ValueError("Unsupported audio format for Gemini transcription")
+
+        try:
+            from google.genai import types
+
+            audio_part = types.Part.from_bytes(data=audio, mime_type=mime)
+            response = resolved_client.models.generate_content(
+                model=target_model,
+                contents=[SHAKESPEARE_VOCABULARY_PROMPT, audio_part],
+            )
+            text = ""
+            if hasattr(response, "text") and response.text:
+                text = response.text
+            elif getattr(response, "candidates", None):
+                for candidate in response.candidates:
+                    if getattr(candidate, "content", None) and getattr(candidate.content, "parts", None):
+                        for part in candidate.content.parts:
+                            if getattr(part, "text", None):
+                                text += part.text
+            return text.strip()
+        except Exception as exc:
+            if fallback_to_whisper:
+                try:
+                    return _faster_whisper()(audio)
+                except Exception:
+                    pass
+            # REQ-PRIV-02: Never log or echo audio bytes or user speech in the exception message
+            raise RuntimeError(f"Gemini transcription failed: {type(exc).__name__}") from exc
 
     return run

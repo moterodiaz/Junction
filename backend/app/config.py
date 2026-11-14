@@ -30,6 +30,7 @@ DEFAULTS = {
     "MODEL_REASON_FAST": "gemini-3.5-flash-lite",
     "MODEL_REASON_DEEP": "gemini-4-carbon",
     "DYNAMIC_MODEL_ROUTING": "false",
+    "STT_ENGINE": "whisper",
 }
 
 
@@ -137,6 +138,7 @@ class Settings:
     model_reason_fast: str = "gemini-3.5-flash-lite"
     model_reason_deep: str = "gemini-4-carbon"
     dynamic_model_routing: str = "false"
+    stt_engine: str = "whisper"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:

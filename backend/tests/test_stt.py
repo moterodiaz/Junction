@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import os
 import threading
 import time
 import unittest
@@ -213,6 +214,134 @@ class SetEngineTest(unittest.TestCase):
         self.assertIs(stt.set_engine(second), first)
         self.assertIs(stt.set_engine(first), second)
         self.assertEqual(stt.transcribe(b"clip"), "first")
+
+
+class GeminiSTTEngineTest(unittest.TestCase):
+    """Offline tests for STT_ENGINE=gemini (gemini-3.5-transcribe) adapter."""
+
+    def setUp(self):
+        stt.set_engine(None)
+        engine.set_gemini_client(None)
+        self.addCleanup(stt.set_engine, None)
+        self.addCleanup(engine.set_gemini_client, None)
+
+    def test_default_stt_engine_is_whisper(self):
+        """When STT_ENGINE is unset or default, _faster_whisper is selected."""
+        with mock.patch.dict(os.environ, {"STT_ENGINE": ""}, clear=False):
+            with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "whisper transcript") as mock_whisper:
+                e = engine._loaded()
+                self.assertEqual(e(b"RIFF dummy"), "whisper transcript")
+                mock_whisper.assert_called_once()
+
+    def test_stt_engine_gemini_selection_with_stubbed_client(self):
+        """STT_ENGINE=gemini selects gemini adapter and calls stubbed client."""
+        calls = []
+
+        class StubModels:
+            def generate_content(self, model, contents, **kwargs):
+                calls.append({"model": model, "contents": contents})
+                from types import SimpleNamespace
+                return SimpleNamespace(text="Speak the speech, I pray you")
+
+        stub_client = mock.Mock()
+        stub_client.models = StubModels()
+        engine.set_gemini_client(stub_client)
+
+        with mock.patch.dict(os.environ, {"STT_ENGINE": "gemini"}, clear=False):
+            e = engine._loaded()
+            result = e(b"RIFF fake audio")
+            self.assertEqual(result, "Speak the speech, I pray you")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["model"], "gemini-3.5-transcribe")
+
+    def test_shakespeare_vocabulary_biasing_prompt_usage(self):
+        """Gemini transcription uses the Shakespeare / literature vocabulary prompt."""
+        calls = []
+
+        class StubModels:
+            def generate_content(self, model, contents, **kwargs):
+                calls.append(contents)
+                from types import SimpleNamespace
+                return SimpleNamespace(text="Hamlet, Act 3")
+
+        stub_client = mock.Mock()
+        stub_client.models = StubModels()
+
+        eng = engine._gemini_engine(client=stub_client, fallback_to_whisper=False)
+        transcript = eng(b"RIFF sample audio")
+        self.assertEqual(transcript, "Hamlet, Act 3")
+
+        self.assertEqual(len(calls), 1)
+        contents = calls[0]
+        # First item is the vocabulary biasing prompt
+        prompt = contents[0]
+        self.assertIn("Shakespeare", prompt)
+        self.assertIn("literature", prompt)
+        self.assertIn("Hamlet", prompt)
+        self.assertEqual(prompt, engine.SHAKESPEARE_VOCABULARY_PROMPT)
+        # Second item is the audio part
+        audio_part = contents[1]
+        self.assertEqual(audio_part.inline_data.data, b"RIFF sample audio")
+        self.assertEqual(audio_part.inline_data.mime_type, "audio/wav")
+
+    def test_missing_api_key_clean_fallback_or_descriptive_error(self):
+        """When GEMINI_API_KEY is missing, falls back cleanly to whisper or raises descriptive error."""
+        # 1. Fallback to whisper when whisper engine succeeds
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}, clear=False):
+            with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "fallback to whisper"):
+                eng = engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True)
+                self.assertEqual(eng(b"RIFF audio"), "fallback to whisper")
+
+        # 2. Descriptive error when fallback fails / unavailable without leaking audio (REQ-PRIV-02)
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}, clear=False):
+            with mock.patch.object(engine, "_faster_whisper", side_effect=ImportError("no whisper")):
+                eng = engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True)
+                with self.assertRaises(RuntimeError) as ctx:
+                    eng(b"RIFF audio")
+                msg = str(ctx.exception)
+                self.assertIn("GEMINI_API_KEY is not set", msg)
+                self.assertNotIn("RIFF", msg)
+
+    def test_gemini_client_error_fallback_and_descriptive_exception(self):
+        """When Gemini call fails, falls back cleanly to whisper or raises descriptive exception."""
+        class FailingModels:
+            def generate_content(self, model, contents, **kwargs):
+                raise ConnectionError("connection reset by peer")
+
+        stub_client = mock.Mock()
+        stub_client.models = FailingModels()
+
+        # 1. Fallback when whisper succeeds
+        with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "whisper saved it"):
+            eng = engine._gemini_engine(client=stub_client, fallback_to_whisper=True)
+            self.assertEqual(eng(b"RIFF clip"), "whisper saved it")
+
+        # 2. Descriptive exception when fallback disabled or fails (REQ-PRIV-02)
+        eng_no_fallback = engine._gemini_engine(client=stub_client, fallback_to_whisper=False)
+        with self.assertRaises(RuntimeError) as ctx:
+            eng_no_fallback(b"RIFF secret clip")
+        msg = str(ctx.exception)
+        self.assertIn("Gemini transcription failed", msg)
+        self.assertIn("ConnectionError", msg)
+        self.assertNotIn("secret", msg)
+        self.assertNotIn("RIFF", msg)
+
+    def test_unsupported_audio_clean_error(self):
+        """Unsupported audio format raises clean ValueError without leaking audio data."""
+        stub_client = mock.Mock()
+        eng = engine._gemini_engine(client=stub_client, fallback_to_whisper=False)
+        with self.assertRaises(ValueError) as ctx:
+            eng(b"UNSUPPORTED_DATA_BYTES")
+        self.assertIn("Unsupported audio format", str(ctx.exception))
+        self.assertNotIn("UNSUPPORTED_DATA_BYTES", str(ctx.exception))
+
+    def test_empty_audio_clean_error(self):
+        """Empty audio clip raises ValueError cleanly."""
+        stub_client = mock.Mock()
+        eng = engine._gemini_engine(client=stub_client, fallback_to_whisper=False)
+        with self.assertRaises(ValueError) as ctx:
+            eng(b"   ")
+        self.assertIn("Empty or invalid audio clip", str(ctx.exception))
 
 
 if __name__ == "__main__":
