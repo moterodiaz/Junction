@@ -27,19 +27,23 @@ dependencies_open() {
 }
 
 ready_tasks() {
-  local list number encoded_title encoded_body body
+  local max="${1:-0}" found=0 list number encoded_title encoded_body body
   list="$(issues)" || return 1
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
     body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
     dependencies_open "$body" && continue
     printf '%s\t%s\t%s\n' "$number" "$encoded_title" "$encoded_body"
+    found=$((found + 1))
+    # max=0 means no limit; `next` passes 1 so it stops at the first ready task.
+    [ "$max" -gt 0 ] && [ "$found" -ge "$max" ] && return 0
   done <<< "$list"
+  return 0
 }
 
 cmd_next() {
   local number encoded_title encoded_body title body prd task_slug list
-  list="$(ready_tasks)" || die "could not list tasks from GitHub; retry later"
+  list="$(ready_tasks 1)" || die "could not list tasks from GitHub; retry later"
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
     title="$(printf '%s' "$encoded_title" | base64 --decode 2>/dev/null || printf '%s' "$encoded_title" | base64 -D)"
