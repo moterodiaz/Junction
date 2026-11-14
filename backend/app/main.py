@@ -16,6 +16,12 @@ from .latency import StageTimer
 from .messages import Error, Invoke, Stage, Status
 
 log = logging.getLogger("metalab")
+if not log.handlers:
+    # uvicorn leaves app loggers unconfigured (WARNING, no handler), which hides the INFO latency summaries.
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
 
 app = FastAPI(title="MetaLab backend")
 if image_router is not None:
@@ -74,6 +80,7 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
 
     try:
         card = await pipeline.run(invoke, send_stage)
+        await send(websocket, card)
         outcome = "card"
     except WebSocketDisconnect:
         outcome = "disconnected"
@@ -100,7 +107,6 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         return
     finally:
         timer.log(outcome)
-    await send(websocket, card)
 
 
 async def reject(websocket: WebSocket, request_id: str | None) -> None:
