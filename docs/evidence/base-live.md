@@ -31,7 +31,7 @@ text, transcript or media is kept here.
      card with a usable HTTPS `image_url`. It **failed** on `audio_url` null, on the
      book location and on the sources.
    - Strict audio case: `transcribing → reading → thinking → drawing`, then one card.
-     Real synthesized speech was transcribed and answered. It **failed** for the same
+     The synthesized speech was transcribed and answered. It **failed** for the same
      three reasons.
 2. A typed probe with the same frame gave the card's metadata (no content):
    `book` = Hamlet / William Shakespeare / **Act 1, Scene 1** (expected Scene 2).
@@ -46,7 +46,8 @@ text, transcript or media is kept here.
 ### What this shows, and the open blockers
 
 - Working live: the typed and spoken paths reach a schema-valid card. Speech
-  transcription works with real speech. The generated illustration is retrievable.
+  transcription works with synthesized speech. A human voice, with room noise and
+  accent, is not tested yet. The generated illustration is retrievable.
 - **Grounding:** the scene is wrong and the cited sources are generic, because
   `backend/app/pipeline.py` does not yet pass loader matches into the card. That is
   #129, which waits for @Marcus228's lane #194, then a redeploy.
