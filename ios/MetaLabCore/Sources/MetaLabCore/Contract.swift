@@ -175,6 +175,14 @@ public enum ServerEvent: Equatable, Sendable {
 
 /// Decides whether a decoded server event answers the request the phone is waiting for.
 public enum ResponseFilter {
+    /// A reply counts only when it comes from the socket carrying the active request and belongs to it.
+    public static func accepts(
+        _ event: ServerEvent, fromSocket socket: Int, activeSocket: Int?, activeRequest: String?
+    ) -> Bool {
+        guard let activeSocket, socket == activeSocket else { return false }
+        return belongs(event, to: activeRequest)
+    }
+
     public static func belongs(_ event: ServerEvent, to activeRequest: String?) -> Bool {
         guard let activeRequest else { return false }
         switch event {

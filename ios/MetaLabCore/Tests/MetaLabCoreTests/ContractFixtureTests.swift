@@ -80,6 +80,16 @@ final class ContractFixtureTests: XCTestCase {
         XCTAssertFalse(ResponseFilter.belongs(.card(card(requestId: "second")), to: active))
     }
 
+    func testRepliesFromAnOlderSocketAreDropped() {
+        let nullError = ServerEvent.error(ErrorMessage(requestId: nil, code: .internalError, message: "m", retryable: false))
+        // The previous socket (1) queued a null-id error; the new request runs on socket 2.
+        XCTAssertFalse(ResponseFilter.accepts(nullError, fromSocket: 1, activeSocket: 2, activeRequest: "second"))
+        XCTAssertFalse(ResponseFilter.accepts(nullError, fromSocket: 1, activeSocket: nil, activeRequest: nil))
+        XCTAssertFalse(ResponseFilter.accepts(.card(card(requestId: "second")), fromSocket: 1, activeSocket: 2, activeRequest: "second"))
+        // A null-id error from the current socket still works.
+        XCTAssertTrue(ResponseFilter.accepts(nullError, fromSocket: 2, activeSocket: 2, activeRequest: "second"))
+    }
+
     private func card(requestId: String) -> CardMessage {
         CardMessage(
             requestId: requestId, title: "T", caption: "C", imageURL: nil, speechText: "S",

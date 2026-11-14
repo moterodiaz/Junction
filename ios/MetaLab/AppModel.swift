@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
     private var captureTask: Task<Void, Never>?
     private var waitTask: Task<Void, Never>?
     private var presentTask: Task<Void, Never>?
+    private var idleTask: Task<Void, Never>?
     private var lastServerMessage = Date()
     private var startedWaiting = Date()
 
@@ -96,12 +97,17 @@ final class AppModel: ObservableObject {
         session.lastCard = nil
         lens = Self.idleLens
         if session.displayEnabled {
-            Task { try? await glasses?.show(Self.idleLens) }
+            let book = bookSessionId
+            idleTask = Task { [weak self] in
+                guard let self, !Task.isCancelled, self.bookSessionId == book, self.phase == .idle else { return }
+                try? await self.glasses?.show(Self.idleLens)
+            }
         }
     }
 
     func invoke() {
         guard session.canInvoke, phase == .idle, BackendConfig(string: backendURL) != nil else { return }
+        idleTask?.cancel()
         phase = .capturing
         let settings = CaptureSettings(
             displayEnabled: session.displayEnabled,
@@ -225,7 +231,8 @@ final class AppModel: ObservableObject {
         guard token == activeSocket, phase == .waiting || phase == .speaking,
               let data = text.data(using: .utf8) else { return }
         guard let event = try? Contract.decode(data),
-              ResponseFilter.belongs(event, to: activeRequest) else { return }
+              ResponseFilter.accepts(event, fromSocket: token, activeSocket: activeSocket, activeRequest: activeRequest)
+        else { return }
         switch event {
         case .status(let status):
             lastServerMessage = Date()
@@ -304,6 +311,7 @@ final class AppModel: ObservableObject {
         captureTask?.cancel()
         waitTask?.cancel()
         presentTask?.cancel()
+        idleTask?.cancel()
         speaker.stop()
         socket.disconnect()
     }
