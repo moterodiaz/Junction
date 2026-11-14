@@ -3,6 +3,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
@@ -64,6 +65,9 @@ class RepliesMatchSchemaTest(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(stt.set_engine, stt.set_engine(lambda audio: "draw this"))
+        patcher = mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def assert_schema_valid(self, replies):
         for reply in replies:
@@ -71,8 +75,11 @@ class RepliesMatchSchemaTest(unittest.TestCase):
             self.assertEqual(errors, [], reply)
 
     def test_text_and_audio_flows(self):
-        self.assert_schema_valid(replies_to(invoke()))
-        self.assert_schema_valid(replies_to(invoke(text=None, audio=AUDIO)))
+        for message in (invoke(), invoke(text=None, audio=AUDIO)):
+            with self.subTest(message):
+                replies = replies_to(message)
+                self.assertEqual(replies[-1]["type"], "card")
+                self.assert_schema_valid(replies)
 
     def test_every_error_path(self):
         cases = {
