@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 REPO, ROOT = os.environ["REPO"], os.environ["ROOT"]
 OWNER, NAME = REPO.split("/")
 MARKER = "<!-- metalab-pr-header -->"
+SIGNOFF_START, SIGNOFF_END = "<!-- signoff:start -->", "<!-- signoff:end -->"
 PROTECTED = re.compile(r"^(\.github|\.claude|\.agents|contracts)/")
 REQ = re.compile(r"REQ-[A-Z]+-[0-9]+")
 FIXER_PREFIX = "fix: address greptile review"
@@ -38,7 +39,7 @@ def graphql(query, **vars):
             args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
     return json.loads(gh(*args))["data"]["repository"]
 
-THREADS = "reviewThreads(first:100){nodes{isResolved path line comments(first:30){nodes{author{login} body url}}}}"
+THREADS = "reviewThreads(first:100){totalCount nodes{isResolved path line comments(first:30){nodes{author{login} body url}}}}"
 PR_FIELDS = f"""number title body state createdAt mergedAt author{{login}}
   commits(first:100){{nodes{{commit{{message}}}}}}
   comments(first:100){{nodes{{author{{login}} body url}}}}
@@ -55,15 +56,23 @@ def all_prs():
             return out
         cursor = page["pageInfo"]["endCursor"]
 
+# A disposition is how a reply opens (AGENTS.md section 3 rule 8), not words inside its explanation.
+DISPOSITIONS = [("escalated", re.compile(r"(needs human|left open for a human)")),
+                ("rejected", re.compile(r"not changing")),
+                ("fixed", re.compile(r"((already )?fixed in|\w+ in [0-9a-f]{7,40}\b)"))]
+
 def classify(thread):
-    replies = " ".join(c["body"] for c in thread["comments"]["nodes"][1:]).lower()
-    if "needs human" in replies:
-        return "escalated"
-    if re.search(r"not changing|not valid|invalid|false positive|by design|intentional|won'?t fix", replies):
-        return "rejected"
-    if re.search(r"fixed in|fixed|addressed|done in", replies):
-        return "fixed"
-    return "silent" if thread["isResolved"] else "open"
+    found = None
+    for c in thread["comments"]["nodes"][1:]:
+        login = (c["author"] or {}).get("login") or ""
+        if "greptile" in login:
+            continue
+        opening = re.sub(r"^(\[[^\]]*\]\s*)+", "", c["body"].strip()).lower()
+        for kind, pattern in DISPOSITIONS:
+            if pattern.match(opening):
+                found = kind  # the latest reply with a disposition wins
+                break
+    return found or ("silent" if thread["isResolved"] else "open")
 
 def ai_threads(pr):
     return [t for t in pr["reviewThreads"]["nodes"]
@@ -89,7 +98,7 @@ def repo_metrics(since):
     count = {k: kinds.count(k) for k in ("fixed", "rejected", "escalated", "silent", "open")}
     disposed = count["fixed"] + count["rejected"] + count["escalated"]
     routed = [p for p in prs if needs_human(p)]
-    reverts = [p for p in prs if re.match(r"revert", p["title"], re.I)]
+    reverts = [p for p in merged if re.match(r"revert", p["title"], re.I)]
     with_req = [p for p in prs if REQ.search(p["title"] + " " + (p["body"] or ""))]
     fixer = sum(fixer_commits(p) for p in prs)
     runs = json.loads(gh("run", "list", "-R", REPO, "--workflow", "ci.yml", "--limit", "100", "--json", "conclusion"))
@@ -176,14 +185,16 @@ def check_lines(pr):
 
 def header(number):
     q = f"""query($o:String!,$n:String!,$p:Int!){{repository(owner:$o,name:$n){{pullRequest(number:$p){{
-      number title body labels(first:20){{nodes{{name}}}} files(first:100){{nodes{{path}}}}
-      allCommits: commits(first:100){{nodes{{commit{{message}}}}}}
+      number title body labels(first:20){{nodes{{name}}}}
+      allCommits: commits(first:100){{totalCount nodes{{commit{{message}}}}}}
       commits(last:1){{nodes{{commit{{statusCheckRollup{{contexts(first:30){{nodes{{
         ... on CheckRun{{name conclusion status detailsUrl}} ... on StatusContext{{context state targetUrl}}}}}}}}}}}}}}
-      comments(first:100){{nodes{{author{{login}} body url}}}}
+      comments(first:100){{totalCount nodes{{author{{login}} body url}}}}
       {THREADS}}}}}}}"""
     pr = graphql(q, o=OWNER, n=NAME, p=number)["pullRequest"]
-    files = [f["path"] for f in pr["files"]["nodes"]]
+    # REST pages through up to 3000 files; a rename counts under both its old and new path.
+    files = [p for p in gh("api", "--paginate", f"repos/{REPO}/pulls/{number}/files?per_page=100",
+                           "--jq", ".[] | .filename, (.previous_filename // empty)").splitlines() if p]
     labels = [l["name"] for l in pr["labels"]["nodes"]]
     reqs = sorted(set(REQ.findall(pr["title"] + " " + (pr["body"] or ""))))
     protected = [f for f in files if PROTECTED.match(f)]
@@ -208,7 +219,12 @@ def header(number):
     for t, k in zip(threads, kinds):
         if k in ("silent", "open"):
             out.append(f"  - {k}: [`{t['path']}:{t['line'] or '?'}`]({t['comments']['nodes'][0]['url']})")
-    out += [f"- claude-fix commits on this PR: {fixer} of the 5 cap", "", "### Refused by AI or escalated to a named human"]
+    out.append(f"- claude-fix commits on this PR: {fixer} of the 5 cap")
+    capped = [what for what, conn in (("review threads", pr["reviewThreads"]), ("comments", pr["comments"]), ("commits", pr["allCommits"]))
+              if conn["totalCount"] > len(conn["nodes"])]
+    if capped:
+        out.append(f"- Incomplete: only the first 100 {', '.join(capped)} were read; counts above are lower bounds.")
+    out += ["", "### Refused by AI or escalated to a named human"]
     esc = needs_human(pr) + [c for t, k in zip(threads, kinds) if k == "escalated" for c in t["comments"]["nodes"][1:] if "needs human" in c["body"].lower()]
     if esc:
         for c in esc:
@@ -216,8 +232,9 @@ def header(number):
             out.append(f"- [{first}]({c['url']}) (@{(c['author'] or {}).get('login', '?')})")
     else:
         out.append("- none")
-    out += ["", f"### Human sign-off ({' '.join(owners)})",
-            "- [ ] Checked:", "- [ ] Not checked, and why:", "- [ ] Residual risk accepted:", "",
+    # pr-header.yml keeps whatever the owner wrote between these markers when it refreshes the comment.
+    out += ["", f"### Human sign-off ({' '.join(owners)})", SIGNOFF_START,
+            "- [ ] Checked:", "- [ ] Not checked, and why:", "- [ ] Residual risk accepted:", SIGNOFF_END, "",
             "<details><summary>Pipeline metrics (repo-wide)</summary>", "", table(repo_metrics(67)), "", "</details>"]
     return "\n".join(out)
 

@@ -7,14 +7,21 @@ on:
     types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
   pull_request_review:
     types: [submitted]
+  # Bot comments (claude-fix "needs human", the fix-loop cap) use GITHUB_TOKEN and trigger no events,
+  # so refresh when those workflows finish, and sweep every open PR on a schedule as a backstop.
+  workflow_run:
+    workflows: [ci, claude-fix]
+    types: [completed]
+  schedule:
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
-        description: PR number to refresh
-        required: true
+        description: PR number to refresh (empty = every open PR)
+        required: false
 
 concurrency:
-  group: pr-header-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: pr-header-${{ github.event.pull_request.number || github.event.workflow_run.head_branch || inputs.pr_number || 'all' }}
   cancel-in-progress: true
 
 jobs:
@@ -35,22 +42,25 @@ jobs:
           fi
 
   header:
-    # Fork PRs get a read-only token, so they cannot post; skip them instead of failing.
+    # Fork pull_request runs get a read-only token and cannot post; skip them instead of failing.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name != 'pull_request' && github.event_name != 'pull_request_review') ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
       issues: write
       checks: read
       statuses: read
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       METRICS_REPO: ${{ github.repository }}
-      PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+      EVENT_PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+      RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
     steps:
       # The default branch, not the PR head: the script runs with a write token.
       - uses: actions/checkout@v4
@@ -59,16 +69,39 @@ jobs:
       - name: Upsert trust header
         run: |
           set -euo pipefail
-          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $PR"; exit 1; }
           if [ ! -x tools/metrics ]; then echo "tools/metrics not on the default branch yet; skipping"; exit 0; fi
-          tools/metrics --pr "$PR" > /tmp/header.md
-          marker='<!-- metalab-pr-header -->'
-          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
-            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)"
-          if [ -n "$id" ]; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@/tmp/header.md >/dev/null
-            echo "updated comment $id"
+          if [ -n "$EVENT_PR" ]; then
+            prs="$EVENT_PR"
+          elif [ -n "$RUN_PR" ]; then
+            prs="$RUN_PR"
+          elif [ -n "$RUN_BRANCH" ] && [ "$RUN_BRANCH" != main ]; then
+            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$RUN_BRANCH" --state open --json number --jq '.[].number')"
           else
-            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@/tmp/header.md >/dev/null
-            echo "created header comment"
+            # Schedule, a run on main, or a claude-fix run started by a PR comment (which reports main as its branch).
+            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number --jq '.[].number')"
           fi
+          marker='<!-- metalab-pr-header -->'
+          for pr in $prs; do
+            [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $pr"; exit 1; }
+            tools/metrics --pr "$pr" > "$RUNNER_TEMP/header.md"
+            id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr/comments?per_page=100" \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n1)"
+            if [ -n "$id" ]; then
+              # Keep what the owner wrote in the sign-off block; regenerate everything else.
+              gh api "repos/$GITHUB_REPOSITORY/issues/comments/$id" --jq .body > "$RUNNER_TEMP/old.md"
+              python3 - "$RUNNER_TEMP/old.md" "$RUNNER_TEMP/header.md" <<'PY'
+          import re, sys
+          old, new = (open(p).read() for p in sys.argv[1:])
+          block = re.compile(r"<!-- signoff:start -->.*?<!-- signoff:end -->", re.S)
+          kept = block.search(old)
+          if kept and block.search(new):
+              new = block.sub(lambda _: kept.group(0), new, count=1)
+          open(sys.argv[2], "w").write(new)
+          PY
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$RUNNER_TEMP/header.md" >/dev/null
+              echo "#$pr: updated comment $id"
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -F body=@"$RUNNER_TEMP/header.md" >/dev/null
+              echo "#$pr: created header comment"
+            fi
+          done
