@@ -230,6 +230,20 @@ class SourceLoaderTest(unittest.TestCase):
         match = find_passage("To be, or not to be", play="Hamlet", min_score=0.99)
         self.assertTrue(match is None or match.score >= 0.99)
 
+    def test_min_score_rejects_multiline_passage(self) -> None:
+        # Multi-line path uses a hardcoded score of 0.92; min_score=0.99 must reject it.
+        passage = (
+            "To be, or not to be, question:\n"
+            "Whether 'tis nobler in mind suffer\n"
+            "The slings arrows of outrageous fortune"
+        )
+        self.assertIsNone(find_passage(passage, play="Hamlet", min_score=0.99))
+        # With a permissive threshold the same passage still matches.
+        match = find_passage(passage, play="Hamlet", min_score=0.90)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertGreaterEqual(match.score, 0.90)
+
     def test_exact_line_beats_partial_word_match(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             lines = [

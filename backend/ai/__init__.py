@@ -16,6 +16,9 @@ try:
 except ImportError:
     pass
 
+# Image generation and serving (PRD Section 4, Section 6, Section 9)
+from .image import draw, cleanup_session, get_image, format_display_prompt, StubImageClient
+
 # Source text loader (PRD Section 2, Section 8, Section 10 C4, Issue #29)
 from .source_loader import (
     Act,
@@ -38,11 +41,6 @@ try:
 except ImportError:
     pass
 
-try:
-    from .image import draw  # type: ignore
-except ImportError:
-    pass
-
 __all__ = [
     # Page reading
     "NemotronClient",
@@ -52,6 +50,12 @@ __all__ = [
     "StubNemotronClient",
     "extract_frame_data",
     "read_page",
+    # Image generation
+    "draw",
+    "cleanup_session",
+    "get_image",
+    "format_display_prompt",
+    "StubImageClient",
     # Source text loader
     "Act",
     "Line",
