@@ -26,14 +26,28 @@ dependencies_open() {
   return 1
 }
 
+ready_tasks() {
+  local max="${1:-0}" found=0 list number encoded_title encoded_body body
+  list="$(issues)" || return 1
+  while IFS=$'\t' read -r number encoded_title encoded_body; do
+    [ -n "$number" ] || continue
+    body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
+    dependencies_open "$body" && continue
+    printf '%s\t%s\t%s\n' "$number" "$encoded_title" "$encoded_body"
+    found=$((found + 1))
+    # max=0 means no limit; `next` passes 1 so it stops at the first ready task.
+    [ "$max" -gt 0 ] && [ "$found" -ge "$max" ] && return 0
+  done <<< "$list"
+  return 0
+}
+
 cmd_next() {
   local number encoded_title encoded_body title body prd task_slug list
-  list="$(issues)" || die "could not list tasks from GitHub; retry later"
+  list="$(ready_tasks 1)" || die "could not list tasks from GitHub; retry later"
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
     title="$(printf '%s' "$encoded_title" | base64 --decode 2>/dev/null || printf '%s' "$encoded_title" | base64 -D)"
     body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
-    dependencies_open "$body" && continue
     prd="$(printf '%s\n' "$body" | awk '/^## PRD section[[:space:]]*$/{f=1;next} f&&/^## /{exit} f&&NF{print;exit}')"
     [ -n "$prd" ] || prd="(missing: ask the author to cite one)"
     task_slug="$(slug "$title")"
@@ -68,15 +82,14 @@ cmd_claim() {
 }
 
 cmd_fill() {
-  local count=0 number encoded_title encoded_body body list
-  list="$(issues)" || die "could not list tasks from GitHub; retry later"
+  local count=0 number encoded_title encoded_body list
+  list="$(ready_tasks)" || die "could not list tasks from GitHub; retry later"
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
-    body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
-    dependencies_open "$body" || count=$((count + 1))
+    count=$((count + 1))
   done <<< "$list"
-  if [ "$count" -ge 3 ]; then echo "Queue ok: $count unclaimed tasks."; return 0; fi
-  echo "Queue low ($count < 3). Read Junction-Prep/metalab_prd.md. Pick PRD sections no open or closed task covers (lowest layer first: L0 before L1). File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
+  if [ "$count" -ge 3 ]; then echo "Queue ok: $count ready tasks."; return 0; fi
+  echo "Queue low ($count ready < 3). Read Junction-Prep/metalab_prd.md. Pick PRD sections no open or closed task covers (lowest layer first: L0 before L1). File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
 }
 
 case "${1:-help}" in
