@@ -61,6 +61,42 @@ jobs:
             fi
           done
 
+      - name: Clean in-progress labels and check task queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          board() { gh api "repos/$REPO/issues/1/comments" -f body="[Junction's sweeper] $1" >/dev/null; }
+          since="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)"
+          recent="$(gh api --paginate "repos/$REPO/issues/1/comments?since=$since" --jq '.[].body')"
+          seen() { grep -qF -- "$1" <<<"$recent"; }
+
+          closed="$(gh issue list -R "$REPO" --state closed --label in-progress --json number --jq '.[].number')"
+          while read -r n; do
+            [ -z "$n" ] && continue
+            gh issue edit "$n" -R "$REPO" --remove-label in-progress || true
+          done <<<"$closed"
+
+          count=0
+          tasks="$(gh issue list -R "$REPO" --label task --state open \
+            --search 'no:assignee -label:blocked -label:in-progress' \
+            --limit 100 --json number,body \
+            --jq '.[] | [.number, (.body | @base64)] | @tsv')"
+          while IFS=$'\t' read -r _ b64body; do
+            [ -z "$b64body" ] && continue
+            body="$(base64 --decode <<<"$b64body")"
+            deps="$(awk '/^## Depends on[[:space:]]*$/{f=1;next} f&&/^## /{exit} f{while(match($0, /#[0-9]+/)){print substr($0,RSTART+1,RLENGTH-1);$0=substr($0,RSTART+RLENGTH)}}' <<<"$body")"
+            ready=true
+            while read -r d; do
+              [ -z "$d" ] && continue
+              state="$(gh issue view "$d" -R "$REPO" --json state --jq .state 2>/dev/null)" || state=""
+              [ "$state" != "CLOSED" ] && ready=false && break
+            done <<<"$deps"
+            [ "$ready" = "true" ] && (( ++count )) || true
+          done <<<"$tasks"
+          if [[ "$count" =~ ^[0-9]+$ ]] && (( count < 3 )) && ! seen "task queue low"; then
+            board "task queue low ($count ready). Run tools/task fill and file tasks from Junction-Prep/metalab_prd.md."
+          fi
+
   merged:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest

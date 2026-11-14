@@ -178,7 +178,18 @@ jobs:
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length' \
             | awk '{s+=$1} END {print s+0}')"
           if [ "$open" = 0 ]; then
-            gh pr merge --auto --squash "$PR_NUMBER" --repo "$REPO"
+            if ! gh pr merge --auto --squash "$PR_NUMBER" --repo "$REPO"; then
+              state="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,autoMergeRequest \
+                --jq '.state + " " + (if .autoMergeRequest then "auto" else "noauto" end)')"
+              case "$state" in
+                "MERGED "*|"OPEN auto")
+                  echo "auto-merge already set or PR already merged ($state); treating as success"
+                  ;;
+                *)
+                  exit 1
+                  ;;
+              esac
+            fi
           elif [ "$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)" = "$BEFORE_SHA" ]; then
             author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login)"
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
