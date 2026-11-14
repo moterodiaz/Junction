@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from unittest import mock
 
@@ -28,6 +29,15 @@ def exchange(message, expect):
 
 
 class WsTest(unittest.TestCase):
+    def setUp(self):
+        self._env_patch = mock.patch.dict(os.environ)
+        self._env_patch.start()
+        os.environ.pop("GEMINI_API_KEY", None)
+        os.environ.pop("NVIDIA_API_KEY", None)
+
+    def tearDown(self):
+        self._env_patch.stop()
+
     def test_text_command_streams_stages_then_card(self):
         replies = exchange(invoke(), 4)
         self.assertEqual([r["stage"] for r in replies[:3]], ["reading", "thinking", "drawing"])

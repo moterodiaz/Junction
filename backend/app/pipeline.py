@@ -4,8 +4,10 @@ transcribe -> #27 (backend/stt/), read_page -> #28, think -> #30, draw -> #31.
 
 from __future__ import annotations
 
+import os
 from typing import Awaitable, Callable
 
+from ai import think as _ai_think
 from .messages import Book, Card, Invoke, Media, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
@@ -20,13 +22,16 @@ async def read_page(frame: Media) -> str:
 
 
 async def think(command: str, page_text: str, session_id: str) -> dict:
-    return {
-        "title": "Hamlet, Act 3, Scene 1",
-        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
-        "speech_text": "Hamlet is alone, weighing whether to keep living.",
-        "image_prompt": "A lone prince on a dark stage, bright outline on black",
-        "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
-    }
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        # offline/test path: byte-identical stub so CI and conformance exchanges are unaffected
+        return {
+            "title": "Hamlet, Act 3, Scene 1",
+            "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+            "speech_text": "Hamlet is alone, weighing whether to keep living.",
+            "image_prompt": "A lone prince on a dark stage, bright outline on black",
+            "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+        }
+    return await _ai_think(command, page_text, session_id)
 
 
 async def draw(image_prompt: str) -> str | None:
