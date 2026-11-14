@@ -9,7 +9,10 @@ import base64
 import binascii
 import logging
 import os
-from typing import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Awaitable, Callable, TypeVar
+
+import httpx
 
 import stt
 from ai import image
@@ -18,6 +21,7 @@ from ai import page_reader
 from .messages import Book, Card, ErrorCode, Invoke, Media, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
+T = TypeVar("T")
 log = logging.getLogger("metalab.pipeline")
 
 
@@ -31,6 +35,12 @@ class PipelineError(Exception):
         self.retryable = retryable
 
 
+# Longest any one stage may run before the phone gets a retryable model_timeout.
+STAGE_TIMEOUT_S = float(os.environ.get("STAGE_TIMEOUT_S", "60"))
+
+# A timed-out transcription cannot be stopped, so cap how many can run (and hold audio) at once.
+_STT_THREADS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stt")
+
 UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this."
 
 
@@ -40,7 +50,9 @@ async def transcribe(audio: Media) -> str:
     except (binascii.Error, ValueError) as exc:
         raise PipelineError("stt_failed", "The audio clip could not be decoded.", True) from exc
     try:
-        return await asyncio.to_thread(stt.transcribe, clip)
+        return await asyncio.get_running_loop().run_in_executor(_STT_THREADS, stt.transcribe, clip)
+    except TimeoutError:
+        raise  # timed() turns it into model_timeout
     except Exception as exc:
         log.exception("speech engine failed on a %d byte %s clip", len(clip), audio.mime)
         raise PipelineError("stt_failed", "Speech recognition failed. Try again.", True) from exc
@@ -51,6 +63,15 @@ def command_from(utterance: str) -> stt.Command:
     if command is None:
         raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
     return command
+
+
+async def timed(stage: Awaitable[T]) -> T:
+    """Await one stage under STAGE_TIMEOUT_S. Running out of time, or a stage reporting
+    a timeout (built-in or httpx, which the model SDKs use), becomes model_timeout."""
+    try:
+        return await asyncio.wait_for(stage, STAGE_TIMEOUT_S)
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
 
 
 async def read_page(frame: Media) -> str:
@@ -102,10 +123,10 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         command = command_from(invoke.text)
     else:
         await send_stage("transcribing")
-        command = command_from(await transcribe(invoke.audio))
+        command = command_from(await timed(transcribe(invoke.audio)))
 
     await send_stage("reading")
-    page_text = await read_page(invoke.frame)
+    page_text = await timed(read_page(invoke.frame))
 
     _read_model = (
         page_reader._resolve_config()[2]
@@ -114,10 +135,10 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     )
 
     await send_stage("thinking")
-    answer = await think(command, page_text, invoke.session_id)
+    answer = await timed(think(command, page_text, invoke.session_id))
 
     await send_stage("drawing")
-    image_url = await draw(answer["image_prompt"], invoke.session_id)
+    image_url = await timed(draw(answer["image_prompt"], invoke.session_id))
 
     return Card(
         request_id=invoke.request_id,
