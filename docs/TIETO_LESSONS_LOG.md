@@ -41,13 +41,13 @@ Real incidents from building MetaLab with AI agents on 2026-11-14 (times UTC), e
 ## 7. A PR its author marked "no auto-merge" merged itself  (13:45, PR #100)
 **What happened.** A teammate's agent opened #100 (review plans, docs only) and wrote "no auto-merge" in the description. `claude-fix` enabled auto-merge as soon as it had no unresolved threads, and `github-actions` merged it. The lead had decided not to publish that text, so it had to be removed by a new PR (#115).
 **Why.** The author's intent was written in prose, which no workflow reads. `claude-fix` enables auto-merge on every PR whose threads are resolved.
-**What we changed.** One merge rule (AGENTS.md §3 rule 9), and `claude-fix` skips auto-merge on protected-path PRs (#120).
+**What we changed.** One merge rule (AGENTS.md §3 rule 9), and `claude-fix` skips auto-merge on protected-path PRs (#120). This guard does not cover the incident itself: a docs-only PR is not on a protected path, so an author's "no auto-merge" in prose is still not honored. Holding such a PR remains unsupported (keep it as a draft, which Greptile and auto-merge skip, until it is ready).
 **Rubric lesson.** Clarity: a rule that lives only in prose is not enforced.
 
-## 8. A hosted reviewer reported "pass" while reviewing nothing  (before the event; already fixed)
+## 8. A hosted reviewer reported "pass" while reviewing nothing  (before the event; partly mitigated, not fixed)
 **What happened.** During preparation, a hosted reviewer's credits ran out and it kept reporting success without reviewing anything.
 **Why.** A missing or exhausted credential was treated as "nothing to report".
-**What we changed.** `claude-fix.yml` fails loudly when a required secret is missing, so the check turns red instead of green.
+**What we changed.** `claude-fix.yml` fails loudly when `CLAUDE_CODE_OAUTH_TOKEN` or `BOT_PUSH_TOKEN` is missing, so the fixer's check turns red instead of green. This does not cover the hosted reviewer: nothing yet detects exhausted reviewer credits or a review that never ran. That part is still open.
 **Rubric lesson.** Measurement: a green check must mean the check ran.
 
 ## 9. The fixer loop has a hard cap  (already fixed; PRs #70 and #75)

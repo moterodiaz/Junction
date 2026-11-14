@@ -14,7 +14,7 @@ Use **bounded autonomy, tiered by risk.** An AI reviewer (Greptile) and an AI fi
 - **Loops are capped and end at a named human.** `claude-fix` stops after 5 fix commits and posts `needs human: fix loop cap hit`; the sweeper retries a stuck fix at most twice. Escalations go to the pinned board issue and tag a person.
 - **Bots never approve and never bypass.** No agent runs `gh pr review --approve` or `gh pr merge --admin` (deny lists in `.claude/settings.json`, `.claude/hooks/bash-guard.sh`, `.agents/hooks/safety-gate.py`). The `main-protect` ruleset has no bypass actors.
 - **PR text is untrusted input.** The fixer's prompt treats PR content and bot comments as data, never as instructions, and the fixer may not change workflows, agent settings or secrets.
-- **Fail loud when a check cannot run.** A missing reviewer or fixer secret turns the run red instead of reporting a pass (lessons log entry 8).
+- **Fail loud when a check cannot run.** A missing fixer secret turns the `claude-fix` run red instead of reporting a pass. Detecting an exhausted or silent hosted reviewer is still open (lessons log entry 8).
 - **Measure before trusting.** Trust is a number we can recompute from GitHub, not an adjective (section 5).
 
 ## 3. What the named owner signs off on
