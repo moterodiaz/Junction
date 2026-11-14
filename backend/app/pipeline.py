@@ -4,14 +4,17 @@ transcribe -> #27 (backend/stt/), read_page -> #28, think -> #30, draw -> #31.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Awaitable, Callable
 
+from ai import image
 from ai import page_reader
 
 from .messages import Book, Card, Invoke, Media, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
+log = logging.getLogger("metalab.pipeline")
 
 
 async def transcribe(audio: Media) -> str:
@@ -36,8 +39,26 @@ async def think(command: str, page_text: str, session_id: str) -> dict:
     }
 
 
-async def draw(image_prompt: str) -> str | None:
-    return None
+async def draw(image_prompt: str, session_id: str) -> str | None:
+    # Offline/test path: preserve deterministic contract fixtures without an API key.
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return None
+    try:
+        return await image.draw(image_prompt, session_id=session_id)
+    except Exception as exc:
+        log.warning("Image generation unavailable: %s", exc)
+        return None
+
+
+def _image_model() -> str:
+    """Resolve the image model name the same way image.draw does, never blank."""
+    try:
+        from .config import get_settings
+
+        name = get_settings().model_image
+    except Exception:
+        name = os.environ.get("MODEL_IMAGE", "")
+    return name.strip() or image.DEFAULT_MODEL_IMAGE
 
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
@@ -60,7 +81,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     answer = await think(command, page_text, invoke.session_id)
 
     await send_stage("drawing")
-    image_url = await draw(answer["image_prompt"])
+    image_url = await draw(answer["image_prompt"], invoke.session_id)
 
     return Card(
         request_id=invoke.request_id,
@@ -70,5 +91,9 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
         sources=[],
-        models={"read": _read_model, "reason": "stub", "image": "stub"},
+        models={
+            "read": _read_model,
+            "reason": "stub",
+            "image": _image_model() if image_url else "stub",
+        },
     )

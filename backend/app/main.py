@@ -8,6 +8,7 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from ai.image import image_router
 from ai.page_reader import PageReadError
 
 from . import pipeline
@@ -16,6 +17,8 @@ from .messages import Error, Invoke, Stage, Status
 log = logging.getLogger("metalab")
 
 app = FastAPI(title="MetaLab backend")
+if image_router is not None:
+    app.include_router(image_router)
 
 
 @app.get("/health")
