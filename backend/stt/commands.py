@@ -11,9 +11,10 @@ Command = Literal["explain", "draw", "who_is_this"]
 # With only three commands, any "who" word means "who is this": Whisper writes it as
 # "Whose this?", "Who is it?", "Who's in this picture?", "Tell me who this is."
 # The cost is false hits such as "whose book is this", acceptable for L0.
+# Word forms count too ("Drawing.", "Explanation"), still as whole words ("drawer", "withdraw" don't).
 PATTERNS: dict[Command, re.Pattern[str]] = {
-    "explain": re.compile(r"\bexplain\b"),
-    "draw": re.compile(r"\bdraw\b"),
+    "explain": re.compile(r"\bexpla(?:in(?:s|ed|ing)?|nations?)\b"),
+    "draw": re.compile(r"\bdraw(?:s|n|ing)?\b"),
     "who_is_this": re.compile(r"\bwho(?:se|'s|s)?\b"),
 }
 

@@ -36,6 +36,13 @@ class MatchCommandTest(unittest.TestCase):
     def test_first_command_wins(self):
         self.assertEqual(match_command("draw it, then explain"), "draw")
 
+    def test_word_forms_whisper_writes(self):
+        for heard, command in [("Drawing.", "draw"), ("Make a drawing of this", "draw"),
+                               ("She draws it", "draw"), ("Explained.", "explain"),
+                               ("Explanation, please", "explain"), ("explaining this", "explain")]:
+            with self.subTest(heard):
+                self.assertEqual(match_command(heard), command)
+
     def test_whole_words_only(self):
         self.assertIsNone(match_command("the drawer is unexplained"))
         self.assertIsNone(match_command("Withdraw it"))
