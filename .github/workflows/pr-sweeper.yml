@@ -123,8 +123,9 @@ jobs:
           board() { gh api "repos/$REPO/issues/1/comments" -f body="[Junction's sweeper] $1" >/dev/null; }
 
           now_epoch="$(date -u +%s)"
+          # No commits field here: it multiplies into a GraphQL query over GitHub's 500,000-node limit.
           prs="$(gh pr list -R "$REPO" --state open \
-            --json number,isDraft,author,headRefName,updatedAt,commits --limit 100)"
+            --json number,isDraft,author,headRefName,updatedAt --limit 100)"
 
           jq -c '.[] | select(.isDraft | not)' <<<"$prs" | while IFS= read -r row; do
             n="$(jq -r .number <<<"$row")"
@@ -146,7 +147,9 @@ jobs:
             grep -qF "needs human:" <<<"$pr_comments" && continue
 
             # (c) last activity check (20 min threshold)
-            last_activity="$(jq -r '(.commits[-1].committedDate // .updatedAt)' <<<"$row")"
+            last_activity="$(gh api --paginate "repos/$REPO/pulls/$n/commits?per_page=100" \
+              | jq -rs '[.[][] | .commit.committer.date] | max // empty')" || continue
+            [ -n "$last_activity" ] || last_activity="$(jq -r .updatedAt <<<"$row")"
             # --paginate runs --jq once per page, so slurp all pages and pick one latest timestamp.
             latest_bot="$(gh api --paginate "repos/$REPO/issues/$n/comments" \
               | jq -rs '[.[][] | select(.user.login == "claude[bot]" or .user.login == "github-actions[bot]") | .created_at] | max // empty')" || continue
