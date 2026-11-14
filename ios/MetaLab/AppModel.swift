@@ -15,6 +15,12 @@ final class AppModel: ObservableObject {
     @Published var typedCommand: String = ""
     @Published var keepSampleFrames: Bool = false
     @Published var useStandalonePhoto: Bool = false
+    @Published var earconsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(earconsEnabled, forKey: Keys.earcons)
+            speaker.earconsEnabled = earconsEnabled
+        }
+    }
     @Published private(set) var sampleFrameURL: URL?
     @Published private(set) var configureError: String?
 
@@ -48,6 +54,12 @@ final class AppModel: ObservableObject {
             bookSessionId = UUID().uuidString
             UserDefaults.standard.set(bookSessionId, forKey: Keys.book)
         }
+        if UserDefaults.standard.object(forKey: Keys.earcons) != nil {
+            earconsEnabled = UserDefaults.standard.bool(forKey: Keys.earcons)
+        } else {
+            earconsEnabled = true
+        }
+        speaker.earconsEnabled = earconsEnabled
         do {
             try Wearables.configure()
             let bridge = GlassesBridge()
@@ -236,6 +248,7 @@ final class AppModel: ObservableObject {
         switch event {
         case .status(let status):
             lastServerMessage = Date()
+            speaker.playEarcon(for: status.stage)
             Task { await show(LensCopy.content(for: status.stage)) }
         case .card(let card):
             lastServerMessage = Date()
@@ -367,5 +380,6 @@ final class AppModel: ObservableObject {
         static let backend = "metalab.backendURL"
         static let book = "metalab.bookSessionId"
         static let configure = "metalab.configureError"
+        static let earcons = "metalab.earconsEnabled"
     }
 }

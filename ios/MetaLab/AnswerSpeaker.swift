@@ -7,14 +7,41 @@ import MetaLabCore
 final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
     private var player: AVAudioPlayer?
+    private var earconPlayer: AVAudioPlayer?
     private var speechDone: CheckedContinuation<Void, Never>?
+    var earconsEnabled: Bool = true
 
     override init() {
         super.init()
         synthesizer.delegate = self
     }
 
+    /// Plays a subtle, non-blocking client-side status earcon/chime cue for a server pipeline stage.
+    /// Safe no-op in headless/simulator environments and never interrupts active speech synthesis.
+    func playEarcon(for stage: PipelineStage) {
+        guard earconsEnabled else { return }
+        guard player == nil, !synthesizer.isSpeaking else { return }
+        guard let data = Self.earconAudioData(for: stage) else { return }
+        do {
+            stopEarcon()
+            try? configureRoute()
+            let player = try AVAudioPlayer(data: data)
+            player.volume = 0.35
+            self.earconPlayer = player
+            player.prepareToPlay()
+            player.play()
+        } catch {
+            // Safe no-op in simulator or headless test environments
+        }
+    }
+
+    func stopEarcon() {
+        earconPlayer?.stop()
+        earconPlayer = nil
+    }
+
     func speak(_ route: SpeechRoute) async {
+        stopEarcon()
         switch route {
         case .silent:
             return
@@ -45,10 +72,68 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     func stop() {
+        stopEarcon()
         player?.stop()
         player = nil
         synthesizer.stopSpeaking(at: .immediate)
         finishSpeech()
+    }
+
+    private static let earconCache: [PipelineStage: Data] = {
+        var cache: [PipelineStage: Data] = [:]
+        for stage in PipelineStage.allCases {
+            if let data = makeChime(for: stage) {
+                cache[stage] = data
+            }
+        }
+        return cache
+    }()
+
+    static func earconAudioData(for stage: PipelineStage) -> Data? {
+        earconCache[stage]
+    }
+
+    private static func makeChime(for stage: PipelineStage) -> Data? {
+        let sampleRate = 24000
+        let duration: Double = 0.08
+        let sampleCount = Int(Double(sampleRate) * duration)
+
+        let frequency: Double
+        switch stage {
+        case .transcribing:
+            frequency = 523.25 // C5
+        case .reading:
+            frequency = 659.25 // E5
+        case .thinking:
+            frequency = 783.99 // G5
+        case .drawing:
+            frequency = 1046.50 // C6
+        }
+
+        let maxAmp: Double = 4000.0
+        let attack = Int(Double(sampleCount) * 0.15)
+        let decayStart = Int(Double(sampleCount) * 0.50)
+
+        var samples = [Int16]()
+        samples.reserveCapacity(sampleCount)
+
+        for i in 0..<sampleCount {
+            let t = Double(i) / Double(sampleRate)
+            let waveform = sin(2.0 * .pi * frequency * t) + 0.3 * sin(4.0 * .pi * frequency * t)
+            let envelope: Double
+            if i < attack {
+                envelope = Double(i) / Double(attack)
+            } else if i > decayStart {
+                envelope = max(0.0, 1.0 - Double(i - decayStart) / Double(sampleCount - decayStart))
+            } else {
+                envelope = 1.0
+            }
+            let sampleVal = waveform * maxAmp * envelope
+            let clamped = max(Double(Int16.min), min(Double(Int16.max), sampleVal))
+            samples.append(Int16(clamped))
+        }
+
+        return AudioClip.wav(pcm16: samples, sampleRate: sampleRate)
     }
 
     private func finishSpeech() {
