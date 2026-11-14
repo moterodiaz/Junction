@@ -12,9 +12,16 @@ from ai.image import image_router
 from ai.page_reader import PageReadError
 
 from . import pipeline
+from .latency import StageTimer
 from .messages import Error, Invoke, Stage, Status
 
 log = logging.getLogger("metalab")
+if not log.handlers:
+    # uvicorn leaves app loggers unconfigured (WARNING, no handler), which hides the INFO latency summaries.
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
 
 app = FastAPI(title="MetaLab backend")
 if image_router is not None:
@@ -64,12 +71,19 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         await reject(websocket, request_id)
         return
 
+    timer = StageTimer(invoke.request_id)
+    outcome = "error"
+
     async def send_stage(stage: Stage) -> None:
+        timer.start(stage)
         await send(websocket, Status(request_id=invoke.request_id, stage=stage))
 
     try:
         card = await pipeline.run(invoke, send_stage)
+        await send(websocket, card)
+        outcome = "card"
     except WebSocketDisconnect:
+        outcome = "disconnected"
         raise
     except pipeline.PipelineError as exc:
         log.info("request %s failed: %s", invoke.request_id, exc.code)
@@ -91,7 +105,8 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         await send(websocket, Error(request_id=invoke.request_id, code="internal",
                                     message="Something went wrong. Try again.", retryable=True))
         return
-    await send(websocket, card)
+    finally:
+        timer.log(outcome)
 
 
 async def reject(websocket: WebSocket, request_id: str | None) -> None:
