@@ -22,7 +22,7 @@ Preserve the existing Nemotron/Gemini reader chain and truthful `card.models.rea
 - **submission-ready:** Mateo accepts validated evidence, applicable forms/permissions/confirmation and completed materials.
 - **submitted:** actual separately authorized submission receipt/link/time is recorded.
 
-Baseline below reflects inspected repository/issues on 2026-11-14, not a new sponsor confirmation. No track is marked submission-ready or submitted by this pass. Record credential status, required form status, sponsor confirmation and live evidence independently; “unknown” is not “done”.
+Baseline below reflects inspected repository/issues on 2026-11-14, not a new sponsor confirmation. Live per-track evidence (Meta, Gemini, Modal, Nemotron, Verda) as of 2026-11-15 is in `docs/evidence/HOST.md`. No track is marked submission-ready or submitted by this pass. Record credential status, required form status, sponsor confirmation and live evidence independently; “unknown” is not “done”.
 
 | Challenge | Module / requirement | Baseline | Required evidence and explicit blockers | Execution entry |
 |---|---|---|---|---|
