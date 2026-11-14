@@ -57,6 +57,28 @@ from .reasoning import (
     think,
 )
 
+# Decision routing (PRD Section 4, Section 5, Issue #185)
+from .decision import (
+    DEFAULT_MODEL_BALANCED,
+    DEFAULT_MODEL_DECISION,
+    DEFAULT_MODEL_DEEP,
+    DEFAULT_MODEL_FAST,
+    DecisionError,
+    DecisionQuestionSpec,
+    DecisionResult,
+    GeminiDecisionClient,
+    StubDecisionClient,
+    decide,
+    fallback_decide,
+    get_all_question_specs,
+    get_decision_client,
+    get_question_spec,
+    register_question_spec,
+    reset_question_specs,
+    resolve_model_for_tier,
+    set_decision_client,
+)
+
 # Optional sibling modules if present
 try:
     from .reasoning import think  # type: ignore
@@ -110,4 +132,23 @@ __all__ = [
     "parse_reasoning_json",
     "set_reasoning_client",
     "think",
+    # Decision routing
+    "DEFAULT_MODEL_BALANCED",
+    "DEFAULT_MODEL_DECISION",
+    "DEFAULT_MODEL_DEEP",
+    "DEFAULT_MODEL_FAST",
+    "DecisionError",
+    "DecisionQuestionSpec",
+    "DecisionResult",
+    "GeminiDecisionClient",
+    "StubDecisionClient",
+    "decide",
+    "fallback_decide",
+    "get_all_question_specs",
+    "get_decision_client",
+    "get_question_spec",
+    "register_question_spec",
+    "reset_question_specs",
+    "resolve_model_for_tier",
+    "set_decision_client",
 ]
