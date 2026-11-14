@@ -50,6 +50,17 @@ async def draw(image_prompt: str, session_id: str) -> str | None:
         return None
 
 
+def _image_model() -> str:
+    """Resolve the image model name the same way image.draw does, never blank."""
+    try:
+        from .config import get_settings
+
+        name = get_settings().model_image
+    except Exception:
+        name = os.environ.get("MODEL_IMAGE", "")
+    return name.strip() or image.DEFAULT_MODEL_IMAGE
+
+
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run every stage in order, reporting each one before it starts."""
     if invoke.text is not None:
@@ -83,6 +94,6 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         models={
             "read": _read_model,
             "reason": "stub",
-            "image": os.environ.get("MODEL_IMAGE", image.DEFAULT_MODEL_IMAGE) if image_url else "stub",
+            "image": _image_model() if image_url else "stub",
         },
     )
