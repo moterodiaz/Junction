@@ -50,6 +50,11 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
 
     await send_stage("reading")
     page_text = await read_page(invoke.frame)
+    _read_model = (
+        page_reader._resolve_config()[2]
+        if os.environ.get("NVIDIA_API_KEY", "").strip()
+        else "stub"
+    )
 
     await send_stage("thinking")
     answer = await think(command, page_text, invoke.session_id)
@@ -65,5 +70,5 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
         sources=[],
-        models={"read": "stub", "reason": "stub", "image": "stub"},
+        models={"read": _read_model, "reason": "stub", "image": "stub"},
     )

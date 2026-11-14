@@ -4,7 +4,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from ai.page_reader import NoTextFoundError, PageReadTimeoutError, StubNemotronClient
+from ai.page_reader import DEFAULT_MODEL_READ, NoTextFoundError, PageReadTimeoutError, StubNemotronClient
 from app import pipeline
 from app.main import app
 
@@ -29,6 +29,11 @@ def exchange(message, expect):
 
 
 class WsTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ", {"NVIDIA_API_KEY": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_text_command_streams_stages_then_card(self):
         replies = exchange(invoke(), 4)
         self.assertEqual([r["stage"] for r in replies[:3]], ["reading", "thinking", "drawing"])
@@ -105,6 +110,18 @@ class WsTest(unittest.TestCase):
             replies = exchange(invoke(), 4)
         self.assertEqual(replies[3]["caption"], "Text read by Nemotron")
         self.assertEqual(len(reader.calls), 1)
+
+    def test_models_read_is_stub_on_offline_path(self):
+        # setUp already clears NVIDIA_API_KEY
+        replies = exchange(invoke(), 4)
+        self.assertEqual(replies[3]["models"]["read"], "stub")
+
+    def test_models_read_is_model_name_on_real_reader_path(self):
+        reader = StubNemotronClient(default_response="some text")
+        with mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"}), \
+                mock.patch("ai.page_reader.NemotronClient", return_value=reader):
+            replies = exchange(invoke(), 4)
+        self.assertEqual(replies[3]["models"]["read"], DEFAULT_MODEL_READ)
 
     def test_no_text_error_keeps_socket_open(self):
         with mock.patch.object(pipeline, "read_page", side_effect=[NoTextFoundError(), "page text"]):
