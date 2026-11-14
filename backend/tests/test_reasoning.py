@@ -293,7 +293,7 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
     def test_parse_reasoning_json_malformed_bracketed_output_does_not_leak_secret(self):
         """REQ-PRIV-02: Model output with malformed bracketed JSON must not leak in ReasoningError."""
         session = BookSession("s-privacy-parse-2")
-        bad_json = "{'title': SECRET_UNQUOTED_VALUE, missing_closing_bracket"
+        bad_json = "{'title': SECRET_UNQUOTED_VALUE}"
         with self.assertRaises(ReasoningError) as ctx:
             parse_reasoning_json(bad_json, session)
 
