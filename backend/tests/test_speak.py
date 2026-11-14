@@ -1,17 +1,20 @@
 """#91: the spoken answer as a WAV at card.audio_url, or null so the phone uses its own voice."""
 
+import asyncio
 import io
 import json
 import os
 import unittest
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 import stt
+from app import pipeline
 from app.main import app
 from stt import speak
 
@@ -32,7 +35,7 @@ class StubSpeech:
         return self.pcm
 
 
-class SpeakTest(unittest.TestCase):
+class SpeakBase(unittest.TestCase):
     def setUp(self):
         env = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "", "IMAGE_BASE_URL": BASE})
         env.start()
@@ -51,6 +54,8 @@ class SpeakTest(unittest.TestCase):
                     self.assertEqual([e.message for e in SCHEMA.iter_errors(reply)], [])
                     return reply
 
+
+class SpeakTest(SpeakBase):
     def test_speech_is_served_as_wav_at_audio_url(self):
         client = StubSpeech()
         speak.set_speech_client(client)
@@ -86,6 +91,74 @@ class SpeakTest(unittest.TestCase):
         ids = [speak.store(b"\x00\x00") for _ in range(speak.MAX_CLIPS + 5)]
         self.assertIsNone(speak.get(ids[0]))
         self.assertIsNotNone(speak.get(ids[-1]))
+
+
+class SessionClipsTest(SpeakBase):
+    """#109: clips belong to the session that asked, and never outlive it (PRD section 6)."""
+
+    def test_ending_a_session_deletes_only_its_clips(self):
+        a1, a2, b1 = speak.store(b"a1", "A"), speak.store(b"a2", "A"), speak.store(b"b1", "B")
+        self.assertEqual(speak.cleanup_session("A"), 2)
+        self.assertIsNone(speak.get(a1))
+        self.assertIsNone(speak.get(a2))
+        self.assertEqual(speak.get(b1), b"b1")
+        self.assertEqual(TestClient(app).get(f"/audio/{a1}.wav").status_code, 404)
+        self.assertEqual(speak.cleanup_session("A"), 0)
+
+    def test_a_request_clip_is_filed_under_its_session(self):
+        speak.set_speech_client(StubSpeech())
+        url = self.card()["audio_url"]
+        self.assertEqual(speak.cleanup_session("s1"), 1)
+        self.assertEqual(TestClient(app).get(url.removeprefix(BASE)).status_code, 404)
+
+    def test_clips_expire(self):
+        with mock.patch.object(speak, "clock", lambda: 1000.0):
+            clip = speak.store(b"old", "A")
+        with mock.patch.object(speak, "clock", lambda: 1000.0 + speak.CLIP_TTL_S + 1):
+            self.assertIsNone(speak.get(clip))
+            self.assertEqual(speak.cleanup_session("A"), 0)
+
+    def test_a_failed_request_leaves_no_clip_behind(self):
+        speak.set_speech_client(StubSpeech())
+
+        async def broken_draw(*args, **kwargs):
+            await asyncio.sleep(0.05)  # speech finishes and stores its clip first
+            raise RuntimeError("draw broke")
+
+        stored = []
+        real_store = speak.store
+        with mock.patch.object(pipeline, "draw", broken_draw), \
+                mock.patch.object(speak, "store", lambda *a: stored.append(real_store(*a)) or stored[-1]):
+            self.assertEqual(self.card()["type"], "error")
+        self.assertEqual(len(stored), 1)  # a clip was made...
+        self.assertIsNone(speak.get(stored[0]))  # ...and deleted with the failed request
+
+
+class GeminiResponseTest(unittest.TestCase):
+    """The real client: audio part found among others, rate read from its mime type, one Client."""
+
+    def test_audio_part_and_rate_and_one_client(self):
+        made = []
+
+        class FakeModels:
+            async def generate_content(self, **kwargs):
+                text = SimpleNamespace(inline_data=None, text="hi")
+                audio = SimpleNamespace(inline_data=SimpleNamespace(
+                    data=b"\x01\x00" * 8, mime_type="audio/L16;codec=pcm;rate=16000"))
+                return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[text, audio]))])
+
+        def fake_client(api_key):
+            made.append(api_key)
+            return SimpleNamespace(aio=SimpleNamespace(models=FakeModels()))
+
+        client = speak.GeminiSpeechClient("key", "tts-model")
+        with mock.patch("google.genai.Client", fake_client):
+            pcm, rate = asyncio.run(client.synthesize("one"))
+            asyncio.run(client.synthesize("two"))
+        self.assertEqual((pcm, rate), (b"\x01\x00" * 8, 16000))
+        self.assertEqual(made, ["key"])
+        with wave.open(io.BytesIO(speak.to_wav(pcm, rate))) as wav:
+            self.assertEqual(wav.getframerate(), 16000)
 
 
 if __name__ == "__main__":

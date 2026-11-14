@@ -16,7 +16,7 @@ from typing import Awaitable, Callable, Optional, TypeVar
 import httpx
 
 import stt
-from stt.speak import speak
+from stt.speak import discard as discard_clip, speak
 from ai import image
 from ai import page_reader
 from ai.reasoning import resolve_reason_model
@@ -209,7 +209,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     # would see. It is optional: None on any failure or timeout, and the phone speaks the text.
     async def _speak() -> str | None:
         try:
-            return await asyncio.wait_for(speak(answer["speech_text"]), STAGE_TIMEOUT_S)
+            return await asyncio.wait_for(speak(answer["speech_text"], invoke.session_id), STAGE_TIMEOUT_S)
         except Exception as exc:
             log.warning("Speech unavailable: %s", type(exc).__name__)
             return None
@@ -224,7 +224,16 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             log.warning("Image generation timed out; sending the card without a picture")
             return None
 
-    image_url, audio_url = await asyncio.gather(_draw(), _speak())
+    speaking = asyncio.create_task(_speak())
+    try:
+        image_url = await _draw()
+    except BaseException:
+        # The request fails, so its clip would never reach the phone: stop or delete it (#109).
+        speaking.cancel()
+        if speaking.done() and not speaking.cancelled():
+            discard_clip(speaking.result())
+        raise
+    audio_url = await speaking
 
     return Card(
         request_id=invoke.request_id,
