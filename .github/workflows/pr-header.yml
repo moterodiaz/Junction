@@ -20,9 +20,8 @@ on:
         description: PR number to refresh (empty = every open PR)
         required: false
 
-concurrency:
-  group: pr-header-${{ github.event.pull_request.number || github.event.workflow_run.head_branch || inputs.pr_number || 'all' }}
-  cancel-in-progress: true
+# No concurrency group: GitHub reports a cancelled run as a failed check on the PR. Each run regenerates the
+# whole header, and the duplicate cleanup below handles two runs that both create one.
 
 jobs:
   req-id:
