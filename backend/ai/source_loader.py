@@ -447,6 +447,9 @@ def find_passage(
                 source=loaded_play.get_source_citation(),
             )
 
+    # Size the window from the query so full-page transcripts can match.
+    max_window_lines = max(max_window_lines, min(len(query_words) // 2 + 2, 60))
+
     # 2. Multi-line window search (exact normalized substring)
     total = len(lines)
     for window_size in range(2, max_window_lines + 1):
