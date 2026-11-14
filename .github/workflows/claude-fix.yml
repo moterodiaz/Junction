@@ -180,6 +180,9 @@ jobs:
         run: |
           set -euo pipefail
           git fetch -q origin main
+          [ -n "$BEFORE_SHA" ] || { echo "::error::no pre-fix SHA recorded; refusing to push"; exit 1; }
+          # A file, not process substitution, so a failed diff stops the job under set -e instead of passing as "no files".
+          git diff -z --no-renames --name-only "$BEFORE_SHA" HEAD > "$RUNNER_TEMP/changed"
           bad=""
           # -z: raw names (no C-quoting); --no-renames: a move out of a protected path lists both sides.
           while IFS= read -r -d '' f; do
@@ -187,7 +190,7 @@ jobs:
             # A protected file that now matches main came in through a merge of origin/main, not from the bot.
             git diff --quiet origin/main HEAD -- "$f" && continue
             bad="$bad $f"
-          done < <(git diff -z --no-renames --name-only "$BEFORE_SHA" HEAD)
+          done < "$RUNNER_TEMP/changed"
           if [ -n "$bad" ]; then
             echo "::error::claude-fix changed protected paths:$bad"
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
