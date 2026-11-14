@@ -1,0 +1,214 @@
+"""Unit tests for public-domain Hamlet source text loader and passage locator.
+
+Tests cover:
+- PRD Section 2: Loading source text to place passages by act, scene, and line.
+- PRD Section 8: Demo play (Hamlet) and canonical quotes.
+- PRD Section 10 Open Question 7 (C4) and Issue #29: Adding a play is a data-only change.
+- Multi-line, OCR-noisy, and fuzzy passage recognition.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+from ai import (
+    find_passage,
+    get_play,
+    get_source_citation,
+    list_plays,
+    load_play,
+    locate_passage,
+    set_plays_directory,
+)
+
+
+class SourceLoaderTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        # Ensure default plays directory is restored after any custom directory test
+        set_plays_directory(None)
+
+    def test_hamlet_metadata_and_license(self) -> None:
+        """Verify Hamlet source text provenance, Project Gutenberg URL, and public-domain license."""
+        play = load_play("Hamlet")
+        self.assertEqual(play.id, "hamlet")
+        self.assertEqual(play.title, "Hamlet")
+        self.assertEqual(play.author, "William Shakespeare")
+        self.assertEqual(play.source_url, "https://www.gutenberg.org/ebooks/1524")
+        self.assertIn("Public Domain", play.license)
+        self.assertEqual(len(play.acts), 5)
+        self.assertGreater(play.total_lines, 3500)
+
+    def test_list_plays_discovers_hamlet(self) -> None:
+        """Verify list_plays discovers registered play JSON files."""
+        plays = list_plays()
+        self.assertIn("hamlet", plays)
+
+    def test_data_only_extensibility(self) -> None:
+        """Verify PRD Open Question 7: adding a play is a data-only change.
+
+        Placing a new play JSON into a directory makes it immediately discoverable
+        and searchable without modifying any code.
+        """
+        sample_play = {
+            "id": "macbeth",
+            "title": "Macbeth",
+            "full_title": "The Tragedy of Macbeth",
+            "author": "William Shakespeare",
+            "source_url": "https://www.gutenberg.org/ebooks/1533",
+            "license": "Public Domain (Project Gutenberg License)",
+            "acts": [
+                {
+                    "act": 1,
+                    "act_roman": "I",
+                    "scenes": [
+                        {
+                            "scene": 1,
+                            "scene_roman": "I",
+                            "location_desc": "An open place. Thunder and lightning.",
+                            "lines": [
+                                {
+                                    "type": "line",
+                                    "line": 1,
+                                    "speaker": "FIRST WITCH",
+                                    "text": "When shall we three meet again",
+                                },
+                                {
+                                    "type": "line",
+                                    "line": 2,
+                                    "speaker": "FIRST WITCH",
+                                    "text": "In thunder, lightning, or in rain?",
+                                },
+                                {
+                                    "type": "line",
+                                    "line": 10,
+                                    "speaker": "ALL",
+                                    "text": "Fair is foul, and foul is fair:",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            play_file = tmppath / "macbeth.json"
+            with open(play_file, "w", encoding="utf-8") as f:
+                json.dump(sample_play, f)
+
+            # Point loader to the new directory (pure data change)
+            set_plays_directory(tmppath)
+
+            plays = list_plays()
+            self.assertEqual(plays, ["macbeth"])
+
+            loaded = load_play("macbeth")
+            self.assertEqual(loaded.title, "Macbeth")
+            self.assertEqual(loaded.source_url, "https://www.gutenberg.org/ebooks/1533")
+
+            match = find_passage("Fair is foul, and foul is fair", play="macbeth")
+            self.assertIsNotNone(match)
+            assert match is not None
+            self.assertEqual(match.act, 1)
+            self.assertEqual(match.scene, 1)
+            self.assertEqual(match.line_start, 10)
+            self.assertEqual(match.speaker, "ALL")
+
+    def test_locate_canonical_hamlet_passages(self) -> None:
+        """Verify placing key passages by Act, Scene, and Line (PRD section 2 and 8)."""
+        test_cases = [
+            ("To be, or not to be, that is the question", 3, 1, 64, "HAMLET"),
+            ("A little more than kin, and less than kind", 1, 2, 70, "HAMLET"),
+            ("Neither a borrower nor a lender be", 1, 3, 81, "POLONIUS"),
+            ("This above all: to thine own self be true", 1, 3, 84, "POLONIUS"),
+            ("Something is rotten in the state of Denmark", 1, 4, 101, "MARCELLUS"),
+            ("Brevity is the soul of wit", 2, 2, 99, "POLONIUS"),
+            ("The play’s the thing", 2, 2, 563, "HAMLET"),
+            ("The lady protests too much, methinks", 3, 2, 232, "QUEEN"),
+            ("Words without thoughts never to heaven go", 3, 3, 104, "KING"),
+            ("I must be cruel, only to be kind", 3, 4, 198, "HAMLET"),
+            ("Alas, poor Yorick! I knew him, Horatio", 5, 1, 150, "HAMLET"),
+            ("The rest is silence", 5, 2, 360, "HAMLET"),
+        ]
+
+        for quote, exp_act, exp_scene, exp_line, exp_speaker in test_cases:
+            with self.subTest(quote=quote):
+                match = locate_passage(quote, play="Hamlet")
+                self.assertIsNotNone(match, f"Failed to match: {quote}")
+                assert match is not None
+                self.assertEqual(match.act, exp_act)
+                self.assertEqual(match.scene, exp_scene)
+                self.assertEqual(match.line_start, exp_line)
+                if exp_speaker:
+                    self.assertEqual(match.speaker, exp_speaker)
+                self.assertEqual(match.play_title, "Hamlet")
+
+    def test_locate_multiline_passage(self) -> None:
+        """Verify recognizing multi-line passages spanning line ranges."""
+        passage = (
+            "To be, or not to be, that is the question:\n"
+            "Whether 'tis nobler in the mind to suffer\n"
+            "The slings and arrows of outrageous fortune"
+        )
+        match = find_passage(passage, play="Hamlet")
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertEqual(match.line_start, 64)
+        self.assertEqual(match.line_end, 66)
+        self.assertIn("lines 64-66", match.location)
+
+    def test_fuzzy_and_ocr_noise_tolerance(self) -> None:
+        """Verify tolerance to typical camera/OCR artifacts: missing punctuation, casing, line break."""
+        noisy_transcription = "to be or not to be that is the queston whether tis nobler in the mind"
+        match = find_passage(noisy_transcription, play="Hamlet", min_score=0.6)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertEqual(match.line_start, 64)
+        self.assertGreaterEqual(match.score, 0.6)
+
+    def test_unmatched_passage_returns_none(self) -> None:
+        """Verify queries not present in the play return None gracefully."""
+        self.assertIsNone(find_passage("A completely invented line not in Shakespeare", play="Hamlet"))
+        self.assertIsNone(find_passage("", play="Hamlet"))
+        self.assertIsNone(find_passage("    ", play="Hamlet"))
+
+    def test_source_citation_format(self) -> None:
+        """Verify source citation conforms to PRD Section 7 Card schema."""
+        citation = get_source_citation("Hamlet")
+        self.assertEqual(citation["title"], "Hamlet, public-domain text")
+        self.assertEqual(citation["url"], "https://www.gutenberg.org/ebooks/1524")
+
+    def test_cross_play_search(self) -> None:
+        """Verify searching across all registered plays when play is None."""
+        match = find_passage("To be, or not to be", play=None)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.play_title, "Hamlet")
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+
+    def test_passage_match_to_dict(self) -> None:
+        """Verify PassageMatch dictionary representation."""
+        match = find_passage("To be, or not to be, that is the question", play="Hamlet")
+        self.assertIsNotNone(match)
+        assert match is not None
+        d = match.to_dict()
+        self.assertEqual(d["play"], "Hamlet")
+        self.assertEqual(d["act"], 3)
+        self.assertEqual(d["scene"], 1)
+        self.assertEqual(d["line_start"], 64)
+        self.assertEqual(d["speaker"], "HAMLET")
+        self.assertIn("source", d)
+        self.assertEqual(d["source"]["url"], "https://www.gutenberg.org/ebooks/1524")
+
+
+if __name__ == "__main__":
+    unittest.main()
