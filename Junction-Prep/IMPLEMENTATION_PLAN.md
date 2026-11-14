@@ -21,10 +21,10 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 
 | Stream | Start / preserve | Then |
 |---|---|---|
-| A / Ahmed | BASE-A4/A5/A6/A7 (#109–112), approved BASE-A1 grounding | BASE-A2/A3 → INTENT-A1 → VOICE-A1 → RESEARCH-A1; EVID-A1 independent |
-| B / Maksym | BASE-B1 contract decode, BASE-B2 real capture/recovery | INTENT-B1 → VOICE-B1 / RESEARCH-B1; optional MEDIA/BLUEPRINT; EVID-B1 independent |
-| C / Marcus | BASE-C0 #29 and BASE-C1 #108; reuse image fix #105 | INTENT-C1 → RESEARCH-C1; gated GEMMA/MEDIA/BLUEPRINT adapters; EVID-C1 independent |
-| D / Mateo | BASE-D1 lifecycle contract; preserve BASE-D0 #81 and TRUST-D0–D3 #117–121 | G0/G1 and module acceptance; prerequisites, TRUST/BUILD/DEV/HOST and release preparation |
+| A / Ahmed | BASE-A4/A5/A6/A7 (#109–112), approved BASE-A1 grounding [#129](https://github.com/moterodiaz/Junction/issues/129) | BASE-A2/A3 → INTENT-A1 → VOICE-A1 → RESEARCH-A1; EVID-A1 independent |
+| B / Maksym | BASE-B1 contract decode [#134](https://github.com/moterodiaz/Junction/issues/134), BASE-B2 hardware [#140](https://github.com/moterodiaz/Junction/issues/140) | INTENT-B1 → VOICE-B1 / RESEARCH-B1; optional MEDIA/BLUEPRINT; EVID-B1 independent |
+| C / Marcus | BASE-C0 [#29](https://github.com/moterodiaz/Junction/issues/29), BASE-C1 [#108](https://github.com/moterodiaz/Junction/issues/108); reuse image fix #105 | INTENT-C1 → RESEARCH-C1; gated GEMMA/MEDIA/BLUEPRINT adapters; EVID-C1 independent |
+| D / Mateo | BASE-D1 lifecycle contract [#128](https://github.com/moterodiaz/Junction/issues/128); preserve BASE-D0 [#81](https://github.com/moterodiaz/Junction/issues/81) and TRUST-D0–D3 #117–121 | G0/G1 and module acceptance; prerequisites, TRUST/BUILD/DEV/HOST and release preparation |
 
 ## Module coverage
 
@@ -44,7 +44,7 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 
 ## Task specifications
 
-Dependencies below use stable IDs until publication resolves them to actual issue numbers. Each task is bounded to its named files; proposed new files are not present implementations. Existing issue text/acceptance remains authoritative for already claimed work, augmented by the coordinated metadata rather than silently reassigned.
+Published dependencies below use actual issue numbers; stable task IDs remain the coordination keys. All 41 new issues were created blocked; 11 existing issues were enriched without changing assignees or open/closed state. The documentation PR is [#127](https://github.com/moterodiaz/Junction/pull/127), pending review/acceptance. Each task is bounded to its named files; proposed new files are not present implementations. Existing issue text/acceptance remains authoritative for already claimed work, augmented by the coordinated metadata rather than silently reassigned.
 
 <!-- task:BASE-C0 -->
 ## BASE-C0: Verify the existing Hamlet source loader
@@ -83,7 +83,7 @@ none
 backend-ai
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/29
+[#29](https://github.com/moterodiaz/Junction/issues/29)
 
 <!-- task:BASE-C1 -->
 ## BASE-C1: Remove user content from AI errors and logs
@@ -122,7 +122,7 @@ none
 backend-ai
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/108
+[#108](https://github.com/moterodiaz/Junction/issues/108)
 
 <!-- task:BASE-A4 -->
 ## BASE-A4: Make spoken clips session-owned and expiring
@@ -161,7 +161,7 @@ none
 backend-app
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/109
+[#109](https://github.com/moterodiaz/Junction/issues/109)
 
 <!-- task:BASE-A5 -->
 ## BASE-A5: Handle speech capacity within the existing budget
@@ -194,13 +194,13 @@ backend/test.sh with a third request succeeding when a slot frees, bounded exhau
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-BASE-A4
+#109
 
 ### Area
 backend-app
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/110
+[#110](https://github.com/moterodiaz/Junction/issues/110)
 
 <!-- task:BASE-A6 -->
 ## BASE-A6: Cancel abandoned WebSocket work
@@ -239,7 +239,7 @@ none
 backend-app
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/111
+[#111](https://github.com/moterodiaz/Junction/issues/111)
 
 <!-- task:BASE-A7 -->
 ## BASE-A7: Validate every model-produced card
@@ -272,13 +272,13 @@ backend/test.sh and contracts/test.sh with odd/empty fields and malformed HTTPS 
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-BASE-A5
+#110
 
 ### Area
 backend-app
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/112
+[#112](https://github.com/moterodiaz/Junction/issues/112)
 
 <!-- task:BASE-D0 -->
 ## BASE-D0: Prove successful live typed and audio cards
@@ -317,7 +317,7 @@ Named owner supplies adapter/contract or manual/hardware/test outcomes to the ne
 contracts
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/81
+[#81](https://github.com/moterodiaz/Junction/issues/81)
 
 <!-- task:TRUST-D0 -->
 ## TRUST-D0: Reuse the lead's concept card and registry work
@@ -356,7 +356,7 @@ none
 contracts
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/117
+[#117](https://github.com/moterodiaz/Junction/issues/117)
 
 <!-- task:TRUST-D1 -->
 ## TRUST-D1: Reuse requirement-linked task and PR templates
@@ -389,13 +389,13 @@ Original #118 checks plus a real PR with Requirement, Verified by AI, Refused/es
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-TRUST-D0
+#117
 
 ### Area
 contracts
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/118
+[#118](https://github.com/moterodiaz/Junction/issues/118)
 
 <!-- task:TRUST-D2 -->
 ## TRUST-D2: Reuse protected-path workflow enforcement
@@ -428,13 +428,13 @@ Original #120 checks and actual protected-path refusal/owner-merge evidence. Do 
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-TRUST-D0
+#117
 
 ### Area
 contracts
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/120
+[#120](https://github.com/moterodiaz/Junction/issues/120)
 
 <!-- task:TRUST-D3 -->
 ## TRUST-D3: Reuse measured trust tooling and claim requirement gate
@@ -467,13 +467,13 @@ Original #121 metrics check plus a real requirement-linked PR header and refused
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-TRUST-D0
+#117
 
 ### Area
 contracts
 
 ### GitHub issue
-https://github.com/moterodiaz/Junction/issues/121
+[#121](https://github.com/moterodiaz/Junction/issues/121)
 
 <!-- task:BASE-D1 -->
 ## BASE-D1: Specify compatible session lifecycle and auth handoff
@@ -512,7 +512,7 @@ Named owner supplies adapter/contract or manual/hardware/test outcomes to the ne
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#128](https://github.com/moterodiaz/Junction/issues/128)
 
 <!-- task:BASE-A1 -->
 ## BASE-A1: Wire grounded Hamlet and unknown-book answers
@@ -545,13 +545,13 @@ backend/test.sh with independent Hamlet reference passages and unknown-book case
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-C0, BASE-A7, #102
+#123, #29, #112, #102
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#129](https://github.com/moterodiaz/Junction/issues/129)
 
 <!-- task:BASE-A2 -->
 ## BASE-A2: Harden transport and coordinate optional auth
@@ -584,13 +584,13 @@ backend/test.sh covers malformed/oversized requests, auth absent/bad/valid and d
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-A1, BASE-D1
+#123, #129, #128
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#133](https://github.com/moterodiaz/Junction/issues/133)
 
 <!-- task:BASE-A3 -->
 ## BASE-A3: Complete application session cleanup and isolation
@@ -623,13 +623,13 @@ backend/test.sh with two sessions, explicit end, abandoned expiry, exception, di
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-D1, BASE-A2, BASE-A4, BASE-A6, BASE-C1
+#123, #128, #133, #109, #111, #108
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#139](https://github.com/moterodiaz/Junction/issues/139)
 
 <!-- task:BASE-B1 -->
 ## BASE-B1: Decode contract errors and adopt lifecycle/auth handoff
@@ -662,13 +662,13 @@ ios/test.sh plus real Swift/Xcode build with contract fixtures and malformed res
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-D1
+#123, #128
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#134](https://github.com/moterodiaz/Junction/issues/134)
 
 <!-- task:BASE-B2 -->
 ## BASE-B2: Verify capture display audio and recovery on hardware
@@ -701,13 +701,13 @@ ios/test.sh is only proxy evidence. Record device/DAT/Xcode versions and five re
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-B1
+#123, #134
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#140](https://github.com/moterodiaz/Junction/issues/140)
 
 <!-- task:BASE-G0 -->
 ## BASE-G0: G0 accept the proven reading assistant
@@ -740,13 +740,13 @@ Lead @moterodiaz posts an explicit acceptance comment linked to revision, test o
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-D0, BASE-A3, BASE-A5, BASE-A7, BASE-B2, BASE-C1
+#123, #81, #139, #110, #112, #140, #108
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#141](https://github.com/moterodiaz/Junction/issues/141)
 
 <!-- task:INTENT-D1 -->
 ## INTENT-D1: Contract natural intent follow-ups and controls
@@ -779,13 +779,13 @@ contracts/test.sh with planned natural/follow-up/reset/cancel/ambiguity fixtures
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-G0, BASE-D1
+#123, #141, #128
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#142](https://github.com/moterodiaz/Junction/issues/142)
 
 <!-- task:INTENT-C1 -->
 ## INTENT-C1: Resolve natural intent and reason over follow-ups
@@ -818,13 +818,13 @@ backend/test.sh with new intent tests for L0 positives/whole-word negatives, nat
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-D1
+#123, #142
 
 ### Area
 backend-ai
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#146](https://github.com/moterodiaz/Junction/issues/146)
 
 <!-- task:INTENT-A1 -->
 ## INTENT-A1: Preserve utterances and dispatch bounded intent
@@ -857,13 +857,13 @@ backend/test.sh with full utterance reaching C unchanged, L0 regressions, clarif
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-C1, BASE-A3
+#123, #146, #139
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#150](https://github.com/moterodiaz/Junction/issues/150)
 
 <!-- task:INTENT-B1 -->
 ## INTENT-B1: Present follow-up session reset and cancel controls
@@ -896,13 +896,13 @@ ios/test.sh and real hardware follow-up/reset/cancel/reconnect exchanges; no cro
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-D1, BASE-B2
+#123, #142, #140
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#147](https://github.com/moterodiaz/Junction/issues/147)
 
 <!-- task:INTENT-G1 -->
 ## INTENT-G1: G1 accept natural interaction without L0 regression
@@ -935,13 +935,13 @@ Existing contracts/test.sh plus new scenarios to implement. Lead acceptance comm
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-G0, INTENT-A1, INTENT-B1
+#123, #141, #150, #147
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#154](https://github.com/moterodiaz/Junction/issues/154)
 
 <!-- task:VOICE-A1 -->
 ## VOICE-A1: Add bounded ElevenLabs speech using existing answer text
@@ -974,13 +974,13 @@ backend/test.sh with planned missing-key, timeout, failure/bad-audio, cancellati
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-G1, BASE-A4
+#123, #154, #109
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#156](https://github.com/moterodiaz/Junction/issues/156)
 
 <!-- task:VOICE-B1 -->
 ## VOICE-B1: Verify ElevenLabs playback and system voice fallback
@@ -1013,13 +1013,13 @@ ios/test.sh and real provider playback/display-off tests including interrupted, 
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-G1
+#123, #154
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#157](https://github.com/moterodiaz/Junction/issues/157)
 
 <!-- task:VOICE-G2 -->
 ## VOICE-G2: G2 accept ElevenLabs independently
@@ -1052,13 +1052,13 @@ Lead acceptance comment links actual provider/config revision, playback observat
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, VOICE-A1, VOICE-B1
+#123, #156, #157
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#159](https://github.com/moterodiaz/Junction/issues/159)
 
 <!-- task:RESEARCH-D1 -->
 ## RESEARCH-D1: Specify research provenance endpoint and locality contract
@@ -1091,13 +1091,13 @@ Document endpoint/tool requirement, source link and confirmation date, credentia
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-G1
+#123, #154
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#158](https://github.com/moterodiaz/Junction/issues/158)
 
 <!-- task:RESEARCH-C1 -->
 ## RESEARCH-C1: Discover extract and verify live performance information
@@ -1130,13 +1130,13 @@ backend/test.sh with new provider fixtures plus real Helsinki query evidence. Ve
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, RESEARCH-D1
+#123, #158
 
 ### Area
 backend-ai
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#160](https://github.com/moterodiaz/Junction/issues/160)
 
 <!-- task:RESEARCH-A1 -->
 ## RESEARCH-A1: Integrate bounded research with session-only cache
@@ -1169,13 +1169,13 @@ backend/test.sh with new budget exhaustion, missing-key, partial/all failure, re
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, RESEARCH-C1, VOICE-A1
+#123, #160, #156
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#162](https://github.com/moterodiaz/Junction/issues/162)
 
 <!-- task:RESEARCH-B1 -->
 ## RESEARCH-B1: Present concise research comparisons and source links
@@ -1208,13 +1208,13 @@ ios/test.sh and real hardware comparison/source-link check, missing-locality cla
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, RESEARCH-D1
+#123, #158
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#161](https://github.com/moterodiaz/Junction/issues/161)
 
 <!-- task:RESEARCH-G2 -->
 ## RESEARCH-G2: G2 accept useful live research independently
@@ -1247,13 +1247,13 @@ Lead acceptance comment links live facts with fetch times, provider contribution
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, RESEARCH-A1, RESEARCH-B1
+#123, #162, #161
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#164](https://github.com/moterodiaz/Junction/issues/164)
 
 <!-- task:GEMMA-C1 -->
 ## GEMMA-C1: Evaluate hosted Gemma text intent classification
@@ -1286,13 +1286,13 @@ New backend tests and evaluation entry point are work to implement. Record datas
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-G0
+#123, #141
 
 ### Area
 backend-ai
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#143](https://github.com/moterodiaz/Junction/issues/143)
 
 <!-- task:GEMMA-A1 -->
 ## GEMMA-A1: Wire optional Gemma with bounded fallback
@@ -1325,13 +1325,13 @@ backend/test.sh covers default-off, absent credentials, timeout, low confidence,
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, GEMMA-C1, BASE-A3
+#123, #143, #139
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#148](https://github.com/moterodiaz/Junction/issues/148)
 
 <!-- task:GEMMA-G3 -->
 ## GEMMA-G3: G3 decide Gemma activation from measured evidence
@@ -1364,13 +1364,13 @@ Lead explicitly accepts passing evidence before enabling/closing as accepted. Fa
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, GEMMA-C1, GEMMA-A1
+#123, #143, #148
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#151](https://github.com/moterodiaz/Junction/issues/151)
 
 <!-- task:MEDIA-D1 -->
 ## MEDIA-D1: Resolve Cloudinary eligible tooling and retention blockers
@@ -1403,13 +1403,13 @@ Cite current sponsor/tool guidance and dated confirmation; record credentials/fo
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-G0
+#123, #141
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#144](https://github.com/moterodiaz/Junction/issues/144)
 
 <!-- task:MEDIA-C1 -->
 ## MEDIA-C1: Transform generated illustrations with Cloudinary tooling
@@ -1442,13 +1442,13 @@ backend/test.sh with new generated-only input, transform failure, timeout, safe 
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, MEDIA-D1
+#123, #144
 
 ### Area
 backend-ai
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#149](https://github.com/moterodiaz/Junction/issues/149)
 
 <!-- task:MEDIA-A1 -->
 ## MEDIA-A1: Own Cloudinary delivery deletion and expiry lifecycle
@@ -1481,13 +1481,13 @@ backend/test.sh with new two-session, deletion-after-error/disconnect, late-comp
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, MEDIA-C1, BASE-A3
+#123, #149, #139
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#152](https://github.com/moterodiaz/Junction/issues/152)
 
 <!-- task:MEDIA-B1 -->
 ## MEDIA-B1: Verify transformed illustration legibility on the lens
@@ -1520,13 +1520,13 @@ ios/test.sh plus real hardware before/after observation and a concrete usability
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, MEDIA-C1
+#123, #149
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#153](https://github.com/moterodiaz/Junction/issues/153)
 
 <!-- task:MEDIA-G3 -->
 ## MEDIA-G3: G3 accept Cloudinary only with privacy and benefit evidence
@@ -1559,13 +1559,13 @@ Lead acceptance comment links tooling proof, hardware result and live original/d
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, MEDIA-A1, MEDIA-B1
+#123, #152, #153
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#155](https://github.com/moterodiaz/Junction/issues/155)
 
 <!-- task:BLUEPRINT-D1 -->
 ## BLUEPRINT-D1: Version the drawing contract and clear the Stoa dataset
@@ -1598,13 +1598,13 @@ contracts/test.sh extended with new drawing/strict-old-client fixtures. Record d
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, INTENT-G1, VOICE-G2
+#123, #154, #159
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#163](https://github.com/moterodiaz/Junction/issues/163)
 
 <!-- task:BLUEPRINT-C1 -->
 ## BLUEPRINT-C1: Answer from real drawings with verifiable source regions
@@ -1637,13 +1637,13 @@ New tests/evaluator are work to implement. Score held-out drawings against indep
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BLUEPRINT-D1
+#123, #163
 
 ### Area
 backend-ai
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#165](https://github.com/moterodiaz/Junction/issues/165)
 
 <!-- task:BLUEPRINT-A1 -->
 ## BLUEPRINT-A1: Add a bounded negotiated document-processing path
@@ -1676,13 +1676,13 @@ backend/test.sh with new oversize/too-many-pages/unsupported-version/unreadable/
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BLUEPRINT-C1, BASE-A3
+#123, #165, #139
 
 ### Area
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#167](https://github.com/moterodiaz/Junction/issues/167)
 
 <!-- task:BLUEPRINT-B1 -->
 ## BLUEPRINT-B1: Present document mode and drawing source regions
@@ -1715,13 +1715,13 @@ ios/test.sh with planned decoding/region-transform fixtures plus real sponsor-cl
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BLUEPRINT-D1
+#123, #163
 
 ### Area
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#166](https://github.com/moterodiaz/Junction/issues/166)
 
 <!-- task:BLUEPRINT-G3 -->
 ## BLUEPRINT-G3: G3 accept Stoa from cleared-dataset accuracy and cost evidence
@@ -1754,13 +1754,13 @@ Lead acceptance comment links dataset clearance, pre-agreed numeric thresholds a
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BLUEPRINT-A1, BLUEPRINT-B1
+#123, #167, #166
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#168](https://github.com/moterodiaz/Junction/issues/168)
 
 <!-- task:EVID-A1 -->
 ## EVID-A1: Supply cleared core build trust development and hosting evidence
@@ -1799,7 +1799,7 @@ Named owner supplies adapter/contract or manual/hardware/test outcomes to the ne
 backend-app
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#130](https://github.com/moterodiaz/Junction/issues/130)
 
 <!-- task:EVID-B1 -->
 ## EVID-B1: Supply cleared Swift hardware and development evidence
@@ -1838,7 +1838,7 @@ Named owner supplies adapter/contract or manual/hardware/test outcomes to the ne
 ios
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#131](https://github.com/moterodiaz/Junction/issues/131)
 
 <!-- task:EVID-C1 -->
 ## EVID-C1: Supply cleared AI grounding model and build evidence
@@ -1877,7 +1877,7 @@ Named owner supplies adapter/contract or manual/hardware/test outcomes to the ne
 backend-ai
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#132](https://github.com/moterodiaz/Junction/issues/132)
 
 <!-- task:TRUST-GATE -->
 ## TRUST-GATE: Validate the Tieto requirement-linked PR walkthrough
@@ -1910,13 +1910,13 @@ Lead accepts linked real PR, actual metrics with denominator/time window and lim
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, TRUST-D0, TRUST-D1, TRUST-D2, TRUST-D3, EVID-A1, EVID-B1, EVID-C1
+#123, #117, #118, #120, #121, #130, #131, #132
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#135](https://github.com/moterodiaz/Junction/issues/135)
 
 <!-- task:BUILD-D1 -->
 ## BUILD-D1: Prove a dedicated CRACI build before CI migration
@@ -1949,13 +1949,13 @@ Record actual CRACI build/run evidence and compare test/dependency coverage with
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, EVID-A1, EVID-B1, EVID-C1
+#123, #130, #131, #132
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#136](https://github.com/moterodiaz/Junction/issues/136)
 
 <!-- task:DEV-D1 -->
 ## DEV-D1: Validate actual Codex contributions and a cleared Entire workflow
@@ -1988,13 +1988,13 @@ Lead accepts sanitized contribution map, real workflow/checkpoint/graph evidence
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, EVID-A1, EVID-B1, EVID-C1
+#123, #130, #131, #132
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#137](https://github.com/moterodiaz/Junction/issues/137)
 
 <!-- task:HOST-D1 -->
 ## HOST-D1: Validate existing-track contributions and Verda eligibility
@@ -2027,13 +2027,13 @@ Record confirmed endpoints/model IDs, successful contributions and missing crede
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, EVID-A1, EVID-B1, EVID-C1
+#123, #130, #131, #132
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#138](https://github.com/moterodiaz/Junction/issues/138)
 
 <!-- task:RELEASE-D1 -->
 ## RELEASE-D1: Confirm feature freeze and prepare only validated submissions
@@ -2066,10 +2066,10 @@ Named lead records freeze decision, enabled/disabled list, live/hardware validat
 Named owner supplies adapter/contract or manual/hardware/test outcomes to the next stream and D. Record revision, actual commands/outcomes, missing checks and provider-policy limits. Gate tasks require explicit lead acceptance before closure; documentation is not completion evidence.
 
 ### Depends on
-#123, BASE-G0, HOST-D1
+#123, #141, #138
 
 ### Area
 contracts
 
 ### GitHub issue
-Pending publication after documentation PR.
+[#145](https://github.com/moterodiaz/Junction/issues/145)
