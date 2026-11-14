@@ -15,9 +15,11 @@ on:
     types: [labeled]
 
 jobs:
-  # Adding the no-auto-merge label holds the PR at once, even if auto-merge was already enabled.
+  # Adding no-auto-merge or integration-paused holds the PR at once, even if auto-merge was already enabled.
   hold:
-    if: github.event_name == 'pull_request' && github.event.label.name == 'no-auto-merge'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.label.name == 'no-auto-merge' || github.event.label.name == 'integration-paused')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -26,12 +28,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.number }}
+      LABEL: ${{ github.event.label.name }}
     steps:
       - name: Disable auto-merge
         run: |
           if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
             gh pr merge --disable-auto "$PR" --repo "$GITHUB_REPOSITORY"
-            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Held: \`no-auto-merge\` label added, so auto-merge is off. The owner merges (AGENTS.md §3 rule 9)."
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Held: \`$LABEL\` label added, so auto-merge is off. The owner merges (AGENTS.md §3 rules 9 and 10)."
           fi
 
   fix:
@@ -84,6 +87,13 @@ jobs:
           head_repo="$(jq -r '.head.repo.full_name' <<<"$pr_json")"
           if [[ "$head_repo" != "$REPO" ]]; then
             echo "Fork PR; refusing to push."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Checked at run time, so a fix queued before the pause also stops here (AGENTS.md §3 rule 10).
+          if jq -e '[.labels[].name] | index("integration-paused") != null' <<<"$pr_json" >/dev/null; then
+            echo "PR is labelled integration-paused; claude-fix does not run until the lead releases it."
+            gh pr merge --disable-auto "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -235,11 +245,11 @@ jobs:
           # Match in jq on the raw JSON names, old and new, so renames and odd filenames cannot slip past.
           protected="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
             --jq '[.[] | .filename, (.previous_filename // empty) | select(test("^(\\.github|\\.claude|\\.agents|contracts)/"))] | join(" ")' | tr '\n' ' ' | sed 's/^ *//; s/ *$//')"
-          no_auto="$(gh api "repos/$REPO/issues/$PR_NUMBER" --jq '[.labels[].name] | index("no-auto-merge") != null')"
+          no_auto="$(gh api "repos/$REPO/issues/$PR_NUMBER" --jq '[.labels[].name] | (index("no-auto-merge") != null or index("integration-paused") != null)')"
           if [ -n "$protected" ] || [ "$no_auto" = true ]; then
             reason="touches protected paths ($protected)"
             if [ "$no_auto" = true ]; then
-              reason="is labelled no-auto-merge"
+              reason="is labelled no-auto-merge or integration-paused"
               # A hold also cancels an auto-merge someone enabled earlier.
               gh pr merge --disable-auto "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true
             fi

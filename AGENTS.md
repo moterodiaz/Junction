@@ -4,16 +4,18 @@
 
 New here or kickoff day? Read KICKOFF.md, then run tools/onboard.
 
+**Priority override (2026-11-14):** the integration backlog is paused (issues labelled `integration-paused`) and @maksymmatviievskyi, @Marcus228 and @Ahm3d-KA work only their priority lanes; only @moterodiaz works the backlog. See §3 rule 10.
+
 For the approved module backlog, read `Junction-Prep/IMPLEMENTATION_PLAN.md` and PRD §§12–14, using `docs/REQUIREMENTS.md` as the only requirement registry. Keep the four existing owners/areas; lead-owned docs/CI/evidence work routes through `contracts`, not a fifth area. Search open and closed issues before filing; claim only ready work, keep optional modules disabled until accepted, and never close a release gate without evidence and explicit lead acceptance.
 
 Every agent reads this file first. The flow, in order:
 
 1. **Own worktree.** `tools/wt <issue#>-<slug>` creates your branch from fresh `origin/main` in a sibling folder; work only there. Never edit in the shared checkout or on `main`. After your PR merges, `tools/wt rm <slug>`.
 2. **The PRD is the source of truth** for what we build: `Junction-Prep/metalab_prd.md`. Every task cites a PRD section. If a task issue and the PRD disagree, the PRD wins; change the PRD only by PR.
-3. **Get work from the issue board.** `tools/task next` shows the next unclaimed task; `tools/task claim <N>` takes it. Never start work without a claimed task issue.
+3. **Get work from the issue board.** `tools/task next` shows your priority-lane task first (also when it is already assigned to you), otherwise the next unclaimed task; `tools/task claim <N>` takes it. Never start work without a claimed task issue.
 4. **Ship on your own time.** When a feature is done, open a PR to `main` from your worktree (`Closes #N`).
 5. **PRs run themselves.** Greptile reviews, `claude-fix` fixes its comments and pushes, `ci` runs, and GitHub auto-merges. Do not hand-fix bot threads or approve a PR; never use `--admin`. Who may merge what is §3 rule 9; PRs touching `.github/`, `.claude/`, `.agents/` or `contracts/` need their owner's merge.
-6. **Never idle.** After opening a PR, run `tools/task next` and claim the next task. If the queue is below 3, run `tools/task fill` and file more tasks from the PRD.
+6. **Never idle, within your lane.** After opening a PR, run `tools/task next` and claim what it offers. If it says **Wait**, wait (`tools/board wait`): never fall back to paused integration work, another owner's task or new filings (§3 rule 10). Only when `next` offers no task and does not say wait, and the queue is below 3, run `tools/task fill` and file more tasks from the PRD.
 7. **Conflicts go on the board**, not to a human: see section 6.
 
 ## 1. The board (pinned GitHub issue)
@@ -48,6 +50,7 @@ Humans over agents. Only the team lead reassigns work between teammates. If anyo
 7. Every task issue and PR names a requirement id from `docs/REQUIREMENTS.md` (`REQ-...`). No id, no claim; add a row there first if none fits.
 8. Never resolve a review thread without a reply: `Fixed in <sha>` or `Not changing: <reason>`. A thread resolved in silence counts as an unreviewed change in `tools/metrics`.
 9. **Merge authority** (the only statement of this rule). Any agent, and `claude-fix`, may enable auto-merge (`gh pr merge --squash --auto`) once `ci` and `Greptile Review` pass and every review thread has a written reply (rule 8). No agent approves a review (`gh pr review --approve`), uses `--admin`, or merges a PR with failing or pending checks. A PR that touches `.github/`, `.claude/`, `.agents/` or `contracts/` is merged by its owner (section 4; the lead owns `.github/`, `.claude/` and `.agents/`): agents do not enable auto-merge on it, and the `claude-fix` workflow refuses to push to those paths or to enable auto-merge on such a PR. To hold any other PR for its owner, add the `no-auto-merge` label; `claude-fix` honors it.
+10. **Priority lanes and the integration pause** (the only statement of this rule). A `priority-lane` task has a `## Lane` section (`Owner: @login`, `Order: N`); only that owner takes it, in order, and `tools/task next` serves it before anything else. Current lanes: @maksymmatviievskyi #184; @Marcus228 #185; @Ahm3d-KA #182 (PR #183), then #186. While any open issue is labelled `integration-paused`, only @moterodiaz may claim or work paused issues (their `blocked` labels and `## Depends on` gates still apply to him); everyone else works only their lane, and a finished or blocked lane waits instead of taking other work. `needs-owner-ok` means the owner's human confirms problem, architecture and solution on the issue before coding. `claude-fix` and the PR sweeper do nothing on a PR labelled `integration-paused` (no fixes, retries, nudges or auto-merge); `no-auto-merge` alone still lets the bot push fixes. The pause stays after all lanes finish until @moterodiaz releases it by removing the label.
 
 ## 4. Who owns what
 

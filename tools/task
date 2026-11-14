@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Agent task queue on GitHub issues. Needs only `gh` (authenticated).
-# Usage: tools/task <next|claim|fill|help>
+# Usage: tools/task <next|claim|fill|areas|help>
+#
+# Priority lanes (AGENTS.md §3 rule 10): an open issue labelled `priority-lane` whose body has a
+# `## Lane` section (`Owner: @login`, `Order: N`) belongs to that owner. `next` returns the caller's
+# lowest-order open lane task (assigned or not) before anything else, and nobody claims another
+# owner's lane task. While any open issue carries `integration-paused`, only the lead may take
+# paused work, and a caller whose lane is finished or blocked waits instead of falling back.
 set -u
 [ "${1:-help}" = help ] && { echo "Usage: tools/task <next|claim N|fill|areas|help>"; exit 0; }
 
@@ -9,9 +15,39 @@ command -v gh >/dev/null 2>&1 || die "gh not found (https://cli.github.com), the
 gh auth status >/dev/null 2>&1 || die "gh not authenticated; run: gh auth login"
 REPO="${BOARD_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}" || die "cannot determine repo; set BOARD_REPO=owner/name"
 
+LEAD="${TASK_LEAD:-moterodiaz}"
+PAUSE_LABEL=integration-paused
+LANE_LABEL=priority-lane
+CONFIRM_LABEL=needs-owner-ok
+BOARD="${TASK_BOARD:-$(dirname "$0")/board}"
+
+decode() { printf '%s' "$1" | base64 --decode 2>/dev/null || printf '%s' "$1" | base64 -D; }
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+has_label() { case ",$1," in *",$2,"*) return 0 ;; esac; return 1; }
+
+LOGIN=""
+me() {
+  if [ -z "$LOGIN" ]; then
+    LOGIN="${TASK_LOGIN:-$(gh api user --jq .login 2>/dev/null)}"
+    LOGIN="${LOGIN#@}"
+  fi
+  [ -n "$LOGIN" ] && printf '%s\n' "$LOGIN"
+}
+is_exempt() { local l; l="$(me)" || return 1; [ "$(lower "$l")" = "$(lower "$LEAD")" ]; }
+
+# A failed read counts as paused, so a gh error never releases the pause.
+pause_active() {
+  local n
+  n="$(gh issue list -R "$REPO" --label "$PAUSE_LABEL" --state open --limit 1 --json number --jq length 2>/dev/null)" || return 0
+  [ "$n" != 0 ]
+}
+
 issues() {
-  gh issue list -R "$REPO" --label task --state open --search 'no:assignee -label:blocked -label:in-progress' --limit 1000 \
-    --json number,title,body,createdAt --jq 'sort_by(.createdAt)[] | [.number, (.title | @base64), (.body | @base64)] | @tsv'
+  local paused_filter=""
+  is_exempt || paused_filter=" and (any(.labels[]; .name == \"$PAUSE_LABEL\") | not)"
+  gh issue list -R "$REPO" --label task --state open --limit 1000 \
+    --json number,title,body,createdAt,labels,assignees \
+    --jq "[.[] | select((.assignees | length) == 0 and (any(.labels[]; .name == \"blocked\" or .name == \"in-progress\" or .name == \"$LANE_LABEL\") | not)$paused_filter)] | sort_by(.createdAt)[] | [.number, (.title | @base64), (.body | @base64)] | @tsv"
 }
 
 slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//' | cut -c1-30 | sed 's/-$//'; }
@@ -26,12 +62,40 @@ dependencies_open() {
   return 1
 }
 
+# Value of `Key:` inside the body's `## Lane` section, lowercased, without @ or backticks.
+lane_field() {
+  printf '%s\n' "$1" | awk -v k="$(lower "$2")" '
+    /^## Lane[[:space:]]*$/{f=1;next}
+    f&&/^## /{exit}
+    f{ low=tolower($0); if (index(low, k ":") == 1) { v=substr($0, length(k)+2); gsub(/[[:space:]@`]/, "", v); print tolower(v); exit } }
+  '
+}
+
+# Open lane tasks owned by $1, lowest order first: order, number, title64, body64, assignees, labels.
+# The two lists start with a comma so no field is empty: tab is IFS whitespace, so `read` would merge empty fields.
+my_lane() {
+  local who list number t b assignees labels body owner order
+  who="$(lower "$1")"
+  list="$(gh issue list -R "$REPO" --label "$LANE_LABEL" --state open --limit 200 \
+    --json number,title,body,labels,assignees \
+    --jq '.[] | [.number, (.title | @base64), (.body | @base64), ("," + ([.assignees[].login] | join(","))), ("," + ([.labels[].name] | join(",")))] | @tsv')" || return 1
+  while IFS=$'\t' read -r number t b assignees labels; do
+    [ -n "$number" ] || continue
+    body="$(decode "$b")"
+    owner="$(lane_field "$body" owner)"
+    [ "$owner" = "$who" ] || continue
+    order="$(lane_field "$body" order)"
+    [[ "$order" =~ ^[0-9]+$ ]] || order=999
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$order" "$number" "$t" "$b" "$assignees" "$labels"
+  done <<< "$list" | sort -t $'\t' -k1,1n -k2,2n
+}
+
 ready_tasks() {
   local max="${1:-0}" found=0 list number encoded_title encoded_body body
   list="$(issues)" || return 1
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
-    body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
+    body="$(decode "$encoded_body")"
     dependencies_open "$body" && continue
     printf '%s\t%s\t%s\n' "$number" "$encoded_title" "$encoded_body"
     found=$((found + 1))
@@ -44,8 +108,7 @@ ready_tasks() {
 my_areas() {
   local agents_file login
   agents_file="${TASK_AGENTS_FILE:-$(dirname "$0")/../AGENTS.md}"
-  login="${TASK_LOGIN:-$(gh api user --jq .login 2>/dev/null)}"
-  login="${login#@}"
+  login="$(me)" || login=""
   [ -f "$agents_file" ] || return 0
   [ -n "$login" ] || return 0
   awk -v login="$login" '
@@ -85,11 +148,51 @@ task_area() {
   '
 }
 
+prd_of() {
+  local prd
+  prd="$(printf '%s\n' "$1" | awk '/^## PRD section[[:space:]]*$/{f=1;next} f&&/^## /{exit} f&&NF{print;exit}')"
+  printf '%s\n' "${prd:-(missing: ask the author to cite one)}"
+}
+
+lane_next() {
+  local rows="$1" order number t b assignees labels title body task_slug open_count login
+  login="$(me)"
+  open_count="$(printf '%s\n' "$rows" | grep -c .)"
+  IFS=$'\t' read -r order number t b assignees labels <<< "$(printf '%s\n' "$rows" | head -n 1)"
+  assignees="${assignees#,}"
+  title="$(decode "$t")"; body="$(decode "$b")"; task_slug="$(slug "$title")"
+  printf '#%s  %s\nPRD: %s\nPriority lane: @%s, step %s (%s open lane task(s))\n' \
+    "$number" "$title" "$(prd_of "$body")" "$login" "$order" "$open_count"
+  if [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
+    printf 'Assigned to you. Continue: tools/wt %s-%s (reuse your worktree if it exists)\n' "$number" "$task_slug"
+  elif [ -n "$assignees" ]; then
+    printf 'Waiting: #%s is assigned to @%s. Do not take other work; ask @%s on the board.\n' "$number" "$assignees" "$LEAD"
+  elif has_label "$labels" blocked; then
+    printf 'Waiting: #%s is labelled blocked. Do not take other work; wait for the lead (tools/board wait).\n' "$number"
+  elif dependencies_open "$body"; then
+    printf 'Waiting: #%s has open (or unreadable) dependencies. Do not take other work; wait (tools/board wait).\n' "$number"
+  else
+    printf 'Next: tools/task claim %s   then   tools/wt %s-%s\n' "$number" "$number" "$task_slug"
+  fi
+  if has_label "$labels" "$CONFIRM_LABEL"; then
+    printf 'Before coding: ask your human to confirm the problem, architecture and solution in #%s and post their approval or corrections there. The %s label comes off once confirmed.\n' "$number" "$CONFIRM_LABEL"
+  fi
+  echo "Lane rule: work only this lane, in order. No integration backlog, no other owner's tasks (AGENTS.md §3 rule 10)."
+}
+
 cmd_next() {
-  local number encoded_title encoded_body title body prd task_slug list
+  local number encoded_title encoded_body title body task_slug list rows login
   local my_a area
   local first_num="" first_title="" first_body="" first_area=""
   local best_num="" best_title="" best_body="" best_area=""
+
+  login="$(me)" || die "could not determine current login"
+  rows="$(my_lane "$login")" || die "could not list priority-lane tasks from GitHub; retry later"
+  if [ -n "$rows" ]; then lane_next "$rows"; return 0; fi
+  if ! is_exempt && pause_active; then
+    echo "No open priority-lane task for @$login, and the integration backlog is paused by @$LEAD. Wait: do not claim, fill or file other work (tools/board wait). Only the lead releases the pause."
+    return 0
+  fi
 
   my_a="$(my_areas)"
   # Without an owned area the first ready task is the answer, so stop there.
@@ -101,8 +204,8 @@ cmd_next() {
 
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
-    title="$(printf '%s' "$encoded_title" | base64 --decode 2>/dev/null || printf '%s' "$encoded_title" | base64 -D)"
-    body="$(printf '%s' "$encoded_body" | base64 --decode 2>/dev/null || printf '%s' "$encoded_body" | base64 -D)"
+    title="$(decode "$encoded_title")"
+    body="$(decode "$encoded_body")"
     area="$(task_area "$body")"
     if [ -z "$first_num" ]; then
       first_num="$number"; first_title="$title"; first_body="$body"; first_area="$area"
@@ -129,35 +232,52 @@ cmd_next() {
     return 0
   fi
 
-  prd="$(printf '%s\n' "$use_body" | awk '/^## PRD section[[:space:]]*$/{f=1;next} f&&/^## /{exit} f&&NF{print;exit}')"
-  [ -n "$prd" ] || prd="(missing: ask the author to cite one)"
   task_slug="$(slug "$use_title")"
-
   printf '#%s  %s\nPRD: %s\nNext: tools/task claim %s   then   tools/wt %s-%s\nArea: %s %s\n' \
-    "$use_num" "$use_title" "$prd" "$use_num" "$use_num" "$task_slug" \
+    "$use_num" "$use_title" "$(prd_of "$use_body")" "$use_num" "$use_num" "$task_slug" \
     "${use_area:-(none)}" "$area_msg"
 }
 
 cmd_claim() {
-  local n="${1:-}" data state labelled assignees title login after task_slug blocked body
+  local n="${1:-}" data state labels assignees title login after task_slug body lane_owner rows first
   [[ "$n" =~ ^[0-9]+$ ]] || die "claim needs an issue number"
-  data="$(gh issue view "$n" -R "$REPO" --json state,labels,assignees,title,body --jq '[.state, any(.labels[]; .name == "task"), (.assignees | length), (.title | @base64), any(.labels[]; .name == "blocked"), (.body | @base64)] | @tsv')" || die "could not read issue #$n"
-  IFS=$'\t' read -r state labelled assignees title blocked body <<< "$data"
-  title="$(printf '%s' "$title" | base64 --decode 2>/dev/null || printf '%s' "$title" | base64 -D)"
-  body="$(printf '%s' "$body" | base64 --decode 2>/dev/null || printf '%s' "$body" | base64 -D)"
+  data="$(gh issue view "$n" -R "$REPO" --json state,labels,assignees,title,body --jq '[.state, ("," + ([.labels[].name] | join(","))), ("," + ([.assignees[].login] | join(","))), (.title | @base64), (.body | @base64)] | @tsv')" || die "could not read issue #$n"
+  IFS=$'\t' read -r state labels assignees title body <<< "$data"
+  assignees="${assignees#,}"
+  title="$(decode "$title")"
+  body="$(decode "$body")"
+  task_slug="$(slug "$title")"
+  login="$(me)" || die "could not determine current login"
   [ "$state" = OPEN ] || die "#$n is not open"
-  [ "$labelled" = true ] || die "#$n is not labelled task"
-  [ "$assignees" = 0 ] || die "#$n already has an assignee"
-  [ "$blocked" = false ] || die "#$n is labelled blocked"
+  has_label "$labels" task || die "#$n is not labelled task"
+
+  lane_owner=""
+  has_label "$labels" "$LANE_LABEL" && lane_owner="$(lane_field "$body" owner)"
+  if [ -n "$lane_owner" ]; then
+    [ "$lane_owner" = "$(lower "$login")" ] || die "#$n is @$lane_owner's priority-lane task; only that owner takes it (AGENTS.md §3 rule 10)"
+    if [ -n "$assignees" ] && has_label "$(lower "$assignees")" "$(lower "$login")"; then
+      printf '#%s is already yours. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
+      return 0
+    fi
+    rows="$(my_lane "$login")" || die "could not list priority-lane tasks from GitHub; retry later"
+    first="$(printf '%s\n' "$rows" | head -n 1 | cut -f2)"
+    [ -z "$first" ] || [ "$first" = "$n" ] || die "work your lane in order: #$first comes before #$n (tools/task next)"
+  elif ! is_exempt; then
+    has_label "$labels" "$PAUSE_LABEL" && die "#$n is in the paused integration backlog; only @$LEAD works it until the lead releases the pause (AGENTS.md §3 rule 10)"
+    rows="$(my_lane "$login")" || die "could not list priority-lane tasks from GitHub; retry later"
+    [ -z "$rows" ] || die "you have an open priority lane; work it first: tools/task next"
+    ! pause_active || die "the integration backlog is paused and your lane is finished: wait for @$LEAD to release it, do not take #$n"
+  fi
+
+  [ -z "$assignees" ] || die "#$n already has an assignee"
+  ! has_label "$labels" blocked || die "#$n is labelled blocked"
   ! dependencies_open "$body" || die "#$n has open (or unreadable) dependencies"
   printf '%s\n' "$body" | grep -qE 'REQ-[A-Z]+-[0-9]+' || die "#$n names no requirement id (REQ-...). Add one from docs/REQUIREMENTS.md under '## Requirement', then claim (AGENTS.md section 3 rule 7)"
   gh issue edit "$n" -R "$REPO" --add-assignee @me --add-label in-progress >/dev/null
-  login="$(gh api user --jq .login)" || die "could not determine current login"
   after="$(gh issue view "$n" -R "$REPO" --json assignees --jq '[(.assignees|length), (.assignees[0].login // "")] | @tsv')" || after=""
   if [ "$after" != $'1\t'"$login" ]; then gh issue edit "$n" -R "$REPO" --remove-assignee @me --remove-label in-progress >/dev/null; die "could not confirm claim of #$n (lost a race or gh error); run tools/task next"; fi
-  task_slug="$(slug "$title")"
   printf 'Claimed #%s. Next: tools/wt %s-%s\n' "$n" "$n" "$task_slug"
-  if ! "$(dirname "$0")/board" post "[$login's agent] claimed #$n: $title" >/dev/null; then
+  if ! "$BOARD" post "[$login's agent] claimed #$n: $title" >/dev/null; then
     echo "task: claim kept, but the board announcement failed. Retry: tools/board post \"[$login's agent] claimed #$n: $title\"" >&2
     exit 1
   fi
@@ -168,7 +288,17 @@ cmd_areas() {
 }
 
 cmd_fill() {
-  local count=0 number encoded_title encoded_body list
+  local count=0 number encoded_title encoded_body list login rows
+  login="$(me)" || die "could not determine current login"
+  rows="$(my_lane "$login")" || die "could not list priority-lane tasks from GitHub; retry later"
+  if [ -n "$rows" ]; then
+    echo "Priority lane open (#$(printf '%s\n' "$rows" | head -n 1 | cut -f2)): do not file or take other tasks. Run tools/task next."
+    return 0
+  fi
+  if ! is_exempt && pause_active; then
+    echo "Integration backlog paused by @$LEAD: do not file or take other tasks. Wait for the lead to release it (tools/board wait)."
+    return 0
+  fi
   list="$(ready_tasks)" || die "could not list tasks from GitHub; retry later"
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue
@@ -177,6 +307,9 @@ cmd_fill() {
   if [ "$count" -ge 3 ]; then echo "Queue ok: $count ready tasks."; return 0; fi
   echo "Queue low ($count ready < 3). Read Junction-Prep/metalab_prd.md. Pick PRD sections no open or closed task covers (lowest layer first: L0 before L1). File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
 }
+
+# Resolve the login once; me() runs in subshells, which cannot fill the cache for later calls.
+case "${1:-help}" in next|claim|fill|areas) LOGIN="$(me)" || LOGIN="" ;; esac
 
 case "${1:-help}" in
   next) cmd_next ;; claim) shift; cmd_claim "$@" ;; fill) cmd_fill ;; areas) cmd_areas ;;
