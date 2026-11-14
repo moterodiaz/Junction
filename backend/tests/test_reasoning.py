@@ -1,3 +1,4 @@
+import time
 import asyncio
 import io
 import json
@@ -20,6 +21,7 @@ from ai.reasoning import (
     ReasoningError,
     StubGeminiClient,
     parse_reasoning_json,
+    ground_passage,
     set_reasoning_client,
     think,
 )
@@ -456,6 +458,183 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         err_msg = str(ctx.exception)
         self.assertNotIn("SECRET", err_msg)
         self.assertEqual(err_msg, "Could not parse JSON from model output")
+
+
+
+    def test_session_candidate_books_helpers(self):
+        """REQ-INTENT-01: Session candidate books tracking and deduplication."""
+        session = BookSession("cand-1", book=BookInfo(title="Hamlet", author="William Shakespeare"))
+        self.assertEqual(len(session.candidate_books), 1)
+        self.assertEqual(session.candidate_books[0].title, "Hamlet")
+
+        # Add duplicate by case/whitespace
+        session.add_candidate_book(BookInfo(title="  hamlet  ", author="W. Shakespeare", location="Act 2"))
+        self.assertEqual(len(session.candidate_books), 1)
+        self.assertEqual(session.candidate_books[0].author, "W. Shakespeare")
+        self.assertEqual(session.book.author, "W. Shakespeare")
+
+        # Add second book
+        session.add_candidate_book(BookInfo(title="Macbeth", author="William Shakespeare"))
+        self.assertEqual(len(session.candidate_books), 2)
+
+        # Set active book to existing candidate
+        session.set_active_book("Macbeth", location="Act 1, Scene 3")
+        self.assertEqual(session.book.title, "Macbeth")
+        self.assertEqual(session.book.location, "Act 1, Scene 3")
+
+        # Set active book to new book
+        session.set_active_book("The Tempest", "Shakespeare", "Act 1, Scene 1")
+        self.assertEqual(len(session.candidate_books), 3)
+        self.assertEqual(session.book.title, "The Tempest")
+
+    def test_ground_passage_hamlet_millisecond_local_lookup(self):
+        """REQ-SRC-01: Local Hamlet grounding citations & millisecond local lookup."""
+        query = "To be, or not to be, that is the question:"
+        t0 = time.perf_counter()
+        match = ground_passage(query)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.play_title, "Hamlet")
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertEqual(match.line_start, 64)
+        self.assertIn("Act 3, Scene 1", match.location)
+        self.assertEqual(match.author, "William Shakespeare")
+        self.assertEqual(match.source["title"], "Hamlet, public-domain text")
+        self.assertEqual(match.source["url"], "https://www.gutenberg.org/ebooks/1524")
+        self.assertGreaterEqual(match.score, 0.90)
+        # Fast local in-memory lookup must complete in milliseconds
+        self.assertLess(elapsed_ms, 50.0, f"Local lookup took {elapsed_ms:.2f}ms, expected < 50ms")
+
+    async def test_think_wires_automatic_passage_grounding(self):
+        """REQ-SRC-01: think() automatically grounds visible Hamlet passage without guessing."""
+        session_id = "ground-test-1"
+        command = "Explain what Hamlet is struggling with"
+        passage = "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer"
+
+        answer = await think(command, passage, session_id, client=StubGeminiClient())
+
+        self.assertEqual(answer["book"]["title"], "Hamlet")
+        self.assertEqual(answer["book"]["author"], "William Shakespeare")
+        self.assertIn("Act 3, Scene 1", answer["book"]["location"])
+        self.assertTrue(len(answer["sources"]) > 0)
+        self.assertEqual(answer["sources"][0]["url"], "https://www.gutenberg.org/ebooks/1524")
+
+        session = default_session_store.get(session_id)
+        self.assertIsNotNone(session)
+        self.assertIn("Act 3, Scene 1", session.book.location)
+
+    async def test_unknown_book_explicit_no_source_text_path(self):
+        """REQ-SRC-01: When no local passage matches (e.g. unknown book), do not invent coordinates or fallback to Hamlet sources."""
+        session_id = "unknown-book-session"
+        store = SessionStore()
+        session = store.get_or_create(
+            session_id,
+            default_book=BookInfo(title="The Great Gatsby", author="F. Scott Fitzgerald", location="Chapter 1"),
+        )
+
+        unknown_passage = "In my younger and more vulnerable years my father gave me some advice"
+        command = "What advice did his father give?"
+
+        # Local grounding must return None for unknown text/book
+        match = ground_passage(unknown_passage, play="The Great Gatsby")
+        self.assertIsNone(match)
+
+        answer = await think(
+            command=command,
+            page_text=unknown_passage,
+            session_id=session_id,
+            client=StubGeminiClient(),
+            session_store=store,
+        )
+
+        self.assertEqual(answer["book"]["title"], "The Great Gatsby")
+        self.assertEqual(answer["book"]["author"], "F. Scott Fitzgerald")
+        # sources must be empty list - no fabricated Gutenberg Hamlet URL
+        self.assertEqual(answer["sources"], [])
+
+    def test_parse_reasoning_json_unknown_book_strips_fabricated_hamlet_sources(self):
+        """REQ-SRC-01: Model output for non-Hamlet book never retains silent DEFAULT_HAMLET_SOURCES fallback."""
+        session = BookSession("s-gatsby", book=BookInfo(title="The Great Gatsby", author="F. Scott Fitzgerald"))
+        payload_no_sources = {
+            "title": "The Great Gatsby, Chapter 1",
+            "caption": "Nick Carraway reflects on his father's advice.",
+            "speech_text": "Nick Carraway begins by recalling advice his father gave him.",
+            "book": {"title": "The Great Gatsby", "author": "F. Scott Fitzgerald", "location": "Chapter 1"},
+        }
+        parsed = parse_reasoning_json(json.dumps(payload_no_sources), session)
+        self.assertEqual(parsed["sources"], [])
+
+        # Even if model returned Gutenberg Hamlet URL by hallucination, it is stripped
+        payload_hallucinated = {
+            **payload_no_sources,
+            "sources": [{"title": "Hamlet", "url": "https://www.gutenberg.org/ebooks/1524"}],
+        }
+        parsed2 = parse_reasoning_json(json.dumps(payload_hallucinated), session)
+        self.assertEqual(parsed2["sources"], [])
+
+    def test_ground_passage_rejects_short_text(self):
+        """Thread 1 (PRRT_kwDOVtZPtc63ic67): short text must not trigger a book change."""
+        self.assertIsNone(ground_passage("He."))
+        self.assertIsNone(ground_passage("To be."))
+        self.assertIsNone(ground_passage("not to be"))  # 3 words
+        # Four words still below threshold
+        self.assertIsNone(ground_passage("To be or not"))
+        # Long enough passage still matches
+        self.assertIsNotNone(ground_passage("To be, or not to be, that is the question"))
+
+    def test_no_passage_match_forces_empty_sources(self):
+        """Thread 2 (PRRT_kwDOVtZPtc63ic6_): absence of passage_match forces sources==[] regardless of title/URL."""
+        # parse_reasoning_json with Hamlet book, no passage_match, model returned Hamlet URL
+        session = BookSession("s-thread2-parse")
+        payload = {
+            "title": "Hamlet, Act 3, Scene 1",
+            "caption": "Test caption.",
+            "speech_text": "Test speech.",
+            "image_prompt": "Test prompt, black background (#000000).",
+            "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+            "sources": [{"title": "Hamlet", "url": "https://www.gutenberg.org/ebooks/1524"}],
+        }
+        parsed = parse_reasoning_json(json.dumps(payload), session, passage_match=None)
+        self.assertEqual(parsed["sources"], [], "parse_reasoning_json must return [] when passage_match is None")
+
+    async def test_no_passage_match_forces_empty_sources_in_think(self):
+        """Thread 2 (PRRT_kwDOVtZPtc63ic6_): think() forces sources==[] when passage_match stays None."""
+        # Text that won't match any play (non-Shakespeare gibberish with enough words)
+        page = "xyzzy quux corge thud wibble wobble flob nope unrecognized filler text completely."
+        answer = await think("What is happening?", page, "sess-thread2-think",
+                             client=StubGeminiClient())
+        self.assertEqual(answer["sources"], [], "think must return sources=[] when no passage_match")
+
+    async def test_compat_fallback_uses_inspect_not_retry(self):
+        """Thread 3 (PRRT_kwDOVtZPtc63ic7D): think() uses inspect.signature, not try/except TypeError."""
+        class LegacyClient:
+            """Client whose generate_reasoning lacks passage_match parameter."""
+            async def generate_reasoning(self, command, page_text, session, model=DEFAULT_MODEL_REASON):
+                return {
+                    "title": "Hamlet, Act 3, Scene 1",
+                    "caption": "Legacy caption.",
+                    "speech_text": "Legacy speech.",
+                    "image_prompt": "Legacy prompt, black background (#000000).",
+                    "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+                    "sources": [],
+                }
+
+        # LegacyClient has no passage_match param; think() must call it without that arg, no retry
+        answer = await think("What happens?", "xyzzy quux corge thud wibble nope unrecognized here.",
+                             "sess-thread3-legacy", client=LegacyClient())
+        self.assertIn("title", answer)
+
+        class RaisesInternalTypeError:
+            """Client that raises TypeError inside the call body (not from wrong signature)."""
+            async def generate_reasoning(self, command, page_text, session,
+                                         model=DEFAULT_MODEL_REASON, passage_match=None):
+                raise TypeError("internal bug not signature mismatch")
+
+        with self.assertRaises(TypeError):
+            await think("test", "some text with enough words here now ok.", "sess-thread3-err",
+                        client=RaisesInternalTypeError())
 
 
 if __name__ == "__main__":
