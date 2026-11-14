@@ -16,7 +16,13 @@ for a in "$@"; do if [ "$a" = -d ]; then case "$*" in *+%s*) echo 0 ;; *) echo 2
 exec /bin/date "$@"
 SH
 printf '#!/usr/bin/env bash\necho "sleep $*" >> "$FAKE_GH_LOG"\n' > "$TMP/bin/sleep"
-chmod +x "$TMP/bin/date" "$TMP/bin/sleep"
+# git rev-parse HEAD reports $FAKE_GIT_HEAD (the runner's local fix commit); anything else is real git.
+cat > "$TMP/bin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "$1 $2" = "rev-parse HEAD" ] && [ -n "${FAKE_GIT_HEAD:-}" ]; then echo "$FAKE_GIT_HEAD"; exit 0; fi
+exec /usr/bin/git "$@"
+SH
+chmod +x "$TMP/bin/date" "$TMP/bin/sleep" "$TMP/bin/git"
 export PATH="$TMP/bin:$PATH" FAKE_GH_DB="$TMP/db.json" FAKE_GH_LOG="$TMP/log" REPO=o/r GITHUB_REPOSITORY=o/r \
   GITHUB_OUTPUT="$TMP/out" GITHUB_SERVER_URL=https://github.com GITHUB_RUN_ID=1 GH_TOKEN=x PYTHONDONTWRITEBYTECODE=1
 
@@ -138,6 +144,22 @@ reset true
 PR_NUMBER=8 BEFORE_SHA=earlier run_step "$CF" "Recheck head"
 out_has "moved=true" && ok || bad "recheck head: moved head should output moved=true"
 grep -qE "steps\.head\.outputs\.moved != 'true'" "$CF" && ok || bad "push steps must gate on steps.head.outputs.moved"
+
+# A discarded fix commit reopens the threads Claude marked "Fixed in <sha>", and only those.
+reset true
+db_set '.api.graphql.data.repository.pullRequest.reviewThreads.nodes = [
+  {id: "T1", isResolved: true, comments: {nodes: [{body: "Fixed in abc1234"}]}},
+  {id: "T2", isResolved: true, comments: {nodes: [{body: "Not changing: out of scope"}]}},
+  {id: "T3", isResolved: false, comments: {nodes: [{body: "Fixed in abc1234"}]}}]'
+FAKE_GIT_HEAD=abc1234567 PR_NUMBER=8 BEFORE_SHA=s run_step "$CF" "Reopen threads whose fix was not pushed"
+check "discarded fix: reopens its thread" 'unresolveReviewThread.* t=T1'
+check "discarded fix: says it was not pushed" 't=T1 -f b=Not pushed'
+check_not "discarded fix: leaves a rejected thread alone" 't=T2'
+check_not "discarded fix: leaves an open thread alone" 't=T3'
+reset true
+FAKE_GIT_HEAD=s PR_NUMBER=8 BEFORE_SHA=s run_step "$CF" "Reopen threads whose fix was not pushed"
+check_not "no local commit: reopens nothing" 'unresolveReviewThread'
+grep -qE "steps\.push\.outcome == 'failure'" "$CF" && ok || bad "reopen step must also run when the push fails"
 reset true
 db_resolved() { jq '.api.graphql.data.repository.pullRequest.reviewThreads.nodes = []' "$FAKE_GH_DB" > "$TMP/d" && mv "$TMP/d" "$FAKE_GH_DB"; }
 db_resolved

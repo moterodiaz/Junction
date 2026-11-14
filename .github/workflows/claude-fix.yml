@@ -274,12 +274,41 @@ jobs:
             echo "paused=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Push fixes
+        id: push
         if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.head.outputs.moved != 'true' && steps.recheck.outputs.paused != 'true'
         env:
           BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
         run: git push "https://x-access-token:${BOT_PUSH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
 
+      # Claude replies "Fixed in <sha>" and resolves threads before the workflow decides whether to push.
+      # When the commit is not pushed, those threads would stay resolved with no fix on the branch.
+      - name: Reopen threads whose fix was not pushed
+        if: >-
+          always() && steps.pr.outputs.proceed == 'true' &&
+          (steps.guard.outputs.push != 'true' || steps.head.outputs.moved == 'true' ||
+          steps.recheck.outputs.paused == 'true' || steps.push.outcome == 'failure')
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ steps.before.outputs.sha }}
+        run: |
+          set -euo pipefail
+          local_sha="$(git rev-parse HEAD)"
+          [ -n "$BEFORE_SHA" ] && [ "$local_sha" != "$BEFORE_SHA" ] || { echo "no local fix commit; nothing to reopen"; exit 0; }
+          short="${local_sha:0:7}"
+          # shellcheck disable=SC2016
+          ids="$(gh api graphql --paginate \
+            -f query='query($o:String!,$r:String!,$n:Int!,$endCursor:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{id isResolved comments(last:20){nodes{body}}}}}}}' \
+            -f o="${REPO%/*}" -f r="${REPO#*/}" -F n="$PR_NUMBER" \
+            --jq ".data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved) | select(any(.comments.nodes[]; .body | contains(\"$short\"))) | .id")"
+          for id in $ids; do
+            # shellcheck disable=SC2016
+            gh api graphql -f query='mutation($t:ID!){unresolveReviewThread(input:{threadId:$t}){thread{id}}}' -f t="$id" >/dev/null || true
+            # shellcheck disable=SC2016
+            gh api graphql -f query='mutation($t:ID!,$b:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$t,body:$b}){comment{id}}}' \
+              -f t="$id" -f b="Not pushed: claude-fix discarded its commit $short (the PR head moved, a protected path changed, the PR was paused, or the push failed). Reopened; the fix is not on the branch." >/dev/null || true
+            echo "reopened $id"
+          done
       # Pushes made with GITHUB_TOKEN do not trigger pull_request workflows, so the
       # required `ci` check would stay pending on the new head. Dispatch it explicitly.
       - name: Re-run ci on the fixed head
