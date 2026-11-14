@@ -246,8 +246,13 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
         else:
             raise ReasoningError(f"Could not parse JSON from model output: {text[:200]}")
 
+    if not isinstance(data, dict):
+        raise ReasoningError("Model output JSON is not an object")
+
     title = str(data.get("title") or f"{session.book.title}, {session.book.location}").strip()
     caption = str(data.get("caption") or "").strip()
+    if not caption:
+        raise ReasoningError("Model output is missing a caption")
     speech_text = str(data.get("speech_text") or caption).strip()
     image_prompt = str(data.get("image_prompt") or f"Illustration of {caption}").strip()
 
@@ -256,6 +261,8 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
         image_prompt = f"{image_prompt}, pure black background (#000000), high contrast luminous subject"
 
     raw_book = data.get("book") or {}
+    if not isinstance(raw_book, dict):
+        raise ReasoningError("Model output 'book' is not an object")
     book = {
         "title": str(raw_book.get("title") or session.book.title).strip(),
         "author": str(raw_book.get("author") or session.book.author).strip(),
@@ -314,7 +321,7 @@ async def think(
     Takes command, passage, and session_id. Maintains in-memory session history,
     calls Gemini with passage + prior Q&A context, and returns answer card payload.
     """
-    store = session_store or default_session_store
+    store = session_store if session_store is not None else default_session_store
     session = store.get_or_create(session_id)
 
     active_client = client or get_reasoning_client()

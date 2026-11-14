@@ -31,7 +31,7 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         command = "explain this passage"
         page_text = "To be, or not to be, that is the question..."
 
-        answer = await think(command, page_text, session_id)
+        answer = await think(command, page_text, session_id, client=StubGeminiClient())
 
         self.assertIn("title", answer)
         self.assertIn("caption", answer)
