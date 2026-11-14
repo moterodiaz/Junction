@@ -210,24 +210,32 @@ _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
-    history = default_session_store.get_or_create(invoke.session_id).history
+    session = default_session_store.get_or_create(invoke.session_id)
+    history = session.history
     lock = _SESSION_LOCKS.get(invoke.session_id)
     if lock is None:
         lock = _SESSION_LOCKS[invoke.session_id] = asyncio.Lock()
     before: list = []
+    before_clarifying = getattr(session, "awaiting_book_clarification", False)
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
             # One request per session at a time, so a cancel only ever undoes its own exchange.
             async with lock:
                 before = list(history)
+                before_clarifying = getattr(session, "awaiting_book_clarification", False)
                 return await _run(invoke, send_stage)
     except asyncio.CancelledError:
         # The phone hung up: forget what this request recorded (think saves before drawing), nothing else.
         for exchange in [e for e in history if not any(e is b for b in before)]:
             history.remove(exchange)
+        session.awaiting_book_clarification = before_clarifying
         raise
     except TimeoutError as exc:
+        session.awaiting_book_clarification = before_clarifying
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
+    except Exception:
+        session.awaiting_book_clarification = before_clarifying
+        raise
 
 
 _HTTPS_URL = re.compile(r"^https://[^\s/?#]+[^\s]*$")  # the contract's httpsUrl pattern
@@ -258,20 +266,7 @@ def _apply_book_clarification_reply(session: ai.session.BookSession, utterance: 
     if has_passage_match:
         return True
 
-    raw = utterance.strip()
-    lower = raw.lower()
-    candidates = sorted(
-        getattr(session, "candidate_books", ()),
-        key=lambda c: len(getattr(c, "title", "").strip()),
-        reverse=True,
-    )
-    for candidate in candidates:
-        title = getattr(candidate, "title", "").strip()
-        if title and title.lower() not in ("unknown", "unknown book") and title.lower() in lower:
-            session.set_active_book(title, candidate.author, candidate.location)
-            return True
-
-    cleaned = raw
+    cleaned = utterance.strip()
     for prefix in _CLARIFY_BOOK_PREFIXES:
         if cleaned.lower().startswith(prefix):
             cleaned = cleaned[len(prefix):].strip()
@@ -279,6 +274,13 @@ def _apply_book_clarification_reply(session: ai.session.BookSession, utterance: 
     cleaned = cleaned.strip(" \t\r\n\"'.,!?:;")
     if cleaned.lower() in _NON_BOOK_REPLIES or len(cleaned) > 120:
         return False
+
+    cleaned_lower = cleaned.lower()
+    for candidate in getattr(session, "candidate_books", ()):
+        title = getattr(candidate, "title", "").strip()
+        if title and title.lower() not in ("unknown", "unknown book") and title.lower() == cleaned_lower:
+            session.set_active_book(title, candidate.author, candidate.location)
+            return True
 
     session.set_active_book(cleaned)
     return True
@@ -379,7 +381,6 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             and ai.decision.should_clarify_book(decision, passage_score)
         ):
             clarify = True
-            session.awaiting_book_clarification = True
 
         client = ai.decision.get_decision_client()
         if os.environ.get("GEMINI_API_KEY", "").strip() or not isinstance(client, ai.decision.GeminiDecisionClient):
@@ -454,6 +455,8 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             discard_clip(speaking.result())
         raise
     audio_url = await speaking
+    if clarify:
+        session.awaiting_book_clarification = True
 
     models = {"read": _read_model, "reason": _reason_model,
               "image": _image_model() if image_url else "stub"}

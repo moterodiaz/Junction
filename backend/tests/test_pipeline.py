@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import unittest
 from unittest import mock
@@ -595,6 +596,89 @@ class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCas
         self.assertEqual(card2.book.title, "The Odyssey")
         self.assertEqual(card2.sources, [])
         self.assertEqual(len(self._stub_reason.calls), 1)
+
+    async def test_clarify_reply_longer_title_does_not_match_existing_substring(self):
+        """Greptile P1: 'I'm reading Hamlet's Mill' must add 'Hamlet's Mill', not select 'Hamlet'."""
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance="what is this?",
+            book_match="unknown",
+            book_match_confidence=0.35,
+            book_changed=False,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        turn1 = Invoke(
+            type="invoke", request_id="r-hm-1", session_id="s-hm-substr",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this?",
+        )
+        turn2 = Invoke(
+            type="invoke", request_id="r-hm-2", session_id="s-hm-substr",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="I'm reading Hamlet's Mill.",
+        )
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Archaic myth and precession notes"), \
+             mock.patch.object(pipeline, "draw", new_callable=mock.AsyncMock, return_value="https://example.com/hm.png"), \
+             mock.patch.object(pipeline, "speak", new_callable=mock.AsyncMock, return_value="https://example.com/hm.wav"):
+            card1 = await pipeline.run(turn1, _noop_send_stage)
+            self.assertEqual(card1.title, "Which book are you reading?")
+            card2 = await pipeline.run(turn2, _noop_send_stage)
+
+        session = default_session_store.get("s-hm-substr")
+        titles = [b.title for b in session.candidate_books]
+        self.assertIn("Hamlet's Mill", titles)
+        self.assertEqual(session.book.title, "Hamlet's Mill")
+        self.assertEqual(card2.book.title, "Hamlet's Mill")
+
+    async def test_cancelled_clarification_restores_pending_flag(self):
+        """Greptile P1: cancelling mid-clarification leaves awaiting_book_clarification False."""
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance="what is this?",
+            book_match="unknown",
+            book_match_confidence=0.35,
+            book_changed=False,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        async def _cancel_speak(*args, **kwargs):
+            raise asyncio.CancelledError()
+
+        turn1 = Invoke(
+            type="invoke", request_id="r-canc-1", session_id="s-canc-clr",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this?",
+        )
+        turn2 = Invoke(
+            type="invoke", request_id="r-canc-2", session_id="s-canc-clr",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Unrecognized excerpt here"), \
+             mock.patch.object(pipeline, "speak", new_callable=mock.AsyncMock, side_effect=_cancel_speak):
+            with self.assertRaises(asyncio.CancelledError):
+                await pipeline.run(turn1, _noop_send_stage)
+
+        session = default_session_store.get("s-canc-clr")
+        self.assertFalse(session.awaiting_book_clarification)
+
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Unrecognized excerpt here"), \
+             mock.patch.object(pipeline, "speak", new_callable=mock.AsyncMock, return_value=None):
+            await pipeline.run(turn2, _noop_send_stage)
+
+        self.assertNotEqual(session.book.title, "explain")
 
 
 if __name__ == "__main__":
