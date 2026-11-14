@@ -38,11 +38,18 @@ jobs:
       - name: Require Claude token
         env:
           TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
         run: |
           if [ -z "$TOKEN" ]; then
             gh api "repos/$REPO/issues/1/comments" \
               -f body="[Junction's claude-fix] @${{ github.repository_owner }} CLAUDE_CODE_OAUTH_TOKEN secret is missing; PR #$PR_NUMBER cannot be auto-fixed. Run: claude setup-token, then gh secret set CLAUDE_CODE_OAUTH_TOKEN" >/dev/null
             echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set"
+            exit 1
+          fi
+          if [ -z "$BOT_PUSH_TOKEN" ]; then
+            gh api "repos/$REPO/issues/1/comments" \
+              -f body="[Junction's claude-fix] @${{ github.repository_owner }} BOT_PUSH_TOKEN secret is missing; PR #$PR_NUMBER cannot be auto-fixed" >/dev/null
+            echo "::error::BOT_PUSH_TOKEN is not set"
             exit 1
           fi
 
@@ -60,7 +67,7 @@ jobs:
             exit 0
           fi
           claude_commits="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
-            --jq '[.[] | select(.author.login == "claude[bot]")] | length' | awk '{total += $1} END {print total + 0}')"
+            --jq '[.[] | select(.commit.message | startswith("fix: address greptile review"))] | length' | awk '{total += $1} END {print total + 0}')"
           if (( claude_commits >= 5 )); then
             author="$(jq -r '.user.login' <<<"$pr_json")"
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
@@ -78,6 +85,7 @@ jobs:
         with:
           ref: ${{ steps.pr.outputs.head-ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Record head before Claude
         id: before
@@ -113,8 +121,9 @@ jobs:
             the conflicts, and re-run tests before pushing.
 
             If changes are needed, create one commit named
-            `fix: address greptile review (#${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }})`,
-            then run `git push origin HEAD` without force.
+            `fix: address greptile review (#${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }})`.
+            Commit locally only. Do NOT push; the workflow pushes your commit
+            after you finish.
             Reply `Fixed in <sha>` on every fixed thread and resolve handled
             threads with the GraphQL resolveReviewThread mutation. Do not
             merge; the workflow enables auto-merge after you finish.
@@ -124,7 +133,7 @@ jobs:
             `needs human: <reason>` and leave it unresolved.
           claude_args: |
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh issue:*),Bash(head:*),Bash(tail:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(jq:*),Bash(wc:*),Bash(sort:*),Bash(bash -n:*),Bash(./tools/*),Bash(./test.sh:*)"
-            --disallowedTools "Bash(gh pr merge:*),Bash(gh pr review:*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push origin main:*),Bash(git reset --hard:*),Bash(git clean:*),Bash(rm:*),Bash(printenv:*),Bash(env:*)"
+            --disallowedTools "Bash(gh pr merge:*),Bash(gh pr review:*),Bash(git push:*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push origin main:*),Bash(git reset --hard:*),Bash(git clean:*),Bash(rm:*),Bash(printenv:*),Bash(env:*)"
 
       # A run can finish green while every tool call was denied (nothing pushed, nothing resolved).
       # Print only the denied calls from the action's saved log so allow-list gaps are visible.
@@ -137,6 +146,13 @@ jobs:
           else
             echo "no execution log at $f"
           fi
+
+      - name: Push fixes
+        if: steps.pr.outputs.proceed == 'true'
+        env:
+          BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
+          HEAD_REF: ${{ steps.pr.outputs.head-ref }}
+        run: git push "https://x-access-token:${BOT_PUSH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
 
       # Pushes made with GITHUB_TOKEN do not trigger pull_request workflows, so the
       # required `ci` check would stay pending on the new head. Dispatch it explicitly.
@@ -171,4 +187,21 @@ jobs:
               -f body="[Junction's claude-fix] @$author PR #$PR_NUMBER needs human: $open unresolved thread(s), no fix pushed" >/dev/null
           else
             echo "$open unresolved thread(s); not enabling auto-merge"
+          fi
+
+      - name: Flag held ci
+        if: always() && steps.pr.outputs.proceed == 'true'
+        env:
+          HEAD_REF: ${{ steps.pr.outputs.head-ref }}
+        run: |
+          head_sha="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)"
+          run_id="$(gh run list --repo "$REPO" --workflow ci.yml --branch "$HEAD_REF" \
+            --json headSha,conclusion,databaseId \
+            --jq "[.[] | select(.headSha == \"$head_sha\" and .conclusion == \"action_required\")][0].databaseId // empty")"
+          if [ -n "$run_id" ]; then
+            author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login)"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" \
+              --body "@$author needs human: ci is waiting for approval: $GITHUB_SERVER_URL/$REPO/actions/runs/$run_id"
+            gh api "repos/$REPO/issues/1/comments" \
+              -f body="[Junction's claude-fix] @$author PR #$PR_NUMBER needs human: ci held for approval" >/dev/null
           fi
