@@ -188,13 +188,17 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # One chain: a new run cancels the sleeping one, so chains never stack. sweep stays in its own group.
+    concurrency:
+      group: pr-sweeper-heartbeat
+      cancel-in-progress: true
     steps:
       - name: Heartbeat
         env:
           chain: ${{ inputs.chain || 0 }}
         shell: bash
         run: |
-          dirty="$(gh pr list -R "$REPO" --state open --json number,mergeStateStatus,isDraft \
+          dirty="$(gh pr list -R "$REPO" --state open --limit 200 --json number,mergeStateStatus,isDraft \
             --jq '[.[] | select(.isDraft | not) | select(.mergeStateStatus != "CLEAN")] | length' 2>/dev/null)" || dirty=0
           if [ "${dirty:-0}" -gt 0 ] && [ "${chain:-0}" -lt 36 ]; then
             sleep 600
