@@ -4,6 +4,7 @@ import asyncio
 import io
 import json
 import os
+import time
 import unittest
 import wave
 from pathlib import Path
@@ -132,6 +133,41 @@ class SessionClipsTest(SpeakBase):
             self.assertEqual(self.card()["type"], "error")
         self.assertEqual(len(stored), 1)  # a clip was made...
         self.assertIsNone(speak.get(stored[0]))  # ...and deleted with the failed request
+
+
+class ClipLifetimeTest(SpeakBase):
+    """Greptile on #171: expiry without audio traffic, and no clip from speech that outlives its session."""
+
+    def test_expired_clips_go_without_any_more_audio_requests(self):
+        now = [1000.0]
+        with mock.patch.object(speak, "clock", lambda: now[0]):
+            speak.store(b"old", "A")  # starts the sweeper thread if it is not running yet
+            now[0] += speak.CLIP_TTL_S + 1
+            speak._sweep_now.set()  # what SWEEP_EVERY_S does on its own, without waiting a minute
+            deadline = time.monotonic() + 2
+            while speak._clips and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(len(speak._clips), 0)  # read directly: get() would expire it itself
+
+    def test_speech_finishing_after_its_session_ended_is_dropped(self):
+        release = asyncio.Event()
+
+        class SlowSpeech:
+            async def synthesize(self, text):
+                await release.wait()
+                return b"\x01\x00" * 8
+
+        speak.set_speech_client(SlowSpeech())
+
+        async def go():
+            speaking = asyncio.create_task(speak.speak("hi", "A"))
+            await asyncio.sleep(0.01)
+            speak.cleanup_session("A")  # the session ends while speech is still being made
+            release.set()
+            return await speaking
+
+        self.assertIsNone(asyncio.run(go()))
+        self.assertEqual(len(speak._clips), 0)
 
 
 class GeminiResponseTest(unittest.TestCase):

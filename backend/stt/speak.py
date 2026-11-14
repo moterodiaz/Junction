@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 import wave
@@ -28,10 +29,15 @@ SAMPLE_RATE = 24000  # Gemini TTS returns 16-bit mono PCM at 24 kHz
 TTS_TIMEOUT_S = 20
 MAX_CLIPS = 50  # oldest clips are dropped first; nothing is written to disk
 CLIP_TTL_S = 3600.0  # same as generated images (ai/image.py _DEFAULT_SESSION_TTL)
+SWEEP_EVERY_S = 60.0  # expiry runs on its own, not only when more audio is requested
 clock = time.monotonic
 
 # clip id -> (session id, wav, stored at); oldest first
 _clips: OrderedDict[str, tuple[Optional[str], bytes, float]] = OrderedDict()
+_epochs: dict[str, int] = {}  # bumped when a session ends; speech started before is dropped
+_lock = threading.Lock()  # the sweeper thread and the event loop both touch _clips
+_sweeper: Optional[threading.Thread] = None
+_sweep_now = threading.Event()  # wakes the sweeper early (tests)
 _client: Any = None
 _gemini: Optional["GeminiSpeechClient"] = None
 
@@ -70,40 +76,64 @@ def set_speech_client(client: Any) -> None:
 
 def _expire() -> None:
     now = clock()
-    while _clips and (len(_clips) > MAX_CLIPS or now - next(iter(_clips.values()))[2] > CLIP_TTL_S):
-        _clips.popitem(last=False)
+    with _lock:
+        while _clips and (len(_clips) > MAX_CLIPS or now - next(iter(_clips.values()))[2] > CLIP_TTL_S):
+            _clips.popitem(last=False)
+
+
+def _sweep_forever() -> None:
+    while True:
+        _sweep_now.wait(SWEEP_EVERY_S)
+        _sweep_now.clear()
+        _expire()
+
+
+def _start_sweeper() -> None:
+    global _sweeper
+    with _lock:
+        if _sweeper is None:
+            _sweeper = threading.Thread(target=_sweep_forever, name="tts-clip-sweeper", daemon=True)
+            _sweeper.start()
 
 
 def store(wav: bytes, session_id: Optional[str] = None) -> str:
+    _start_sweeper()
     clip_id = uuid.uuid4().hex
-    _clips[clip_id] = (session_id, wav, clock())
+    with _lock:
+        _clips[clip_id] = (session_id, wav, clock())
     _expire()
     return clip_id
 
 
 def get(clip_id: str) -> Optional[bytes]:
     _expire()
-    clip = _clips.get(clip_id)
+    with _lock:
+        clip = _clips.get(clip_id)
     return clip[1] if clip else None
 
 
 def discard(url: Optional[str]) -> None:
     """Drop the clip behind an audio_url that will never reach the phone."""
     if url:
-        _clips.pop(url.rsplit("/", 1)[-1].removesuffix(".wav"), None)
+        with _lock:
+            _clips.pop(url.rsplit("/", 1)[-1].removesuffix(".wav"), None)
 
 
 def cleanup_session(session_id: str) -> int:
-    """Delete a session's clips (call when the session ends). Returns how many were deleted."""
+    """Delete a session's clips (call when the session ends), including speech still being
+    made for it. Returns how many stored clips were deleted."""
     _expire()
-    ids = [clip_id for clip_id, (sid, _, _) in _clips.items() if sid == session_id]
-    for clip_id in ids:
-        del _clips[clip_id]
+    with _lock:
+        _epochs[session_id] = _epochs.get(session_id, 0) + 1
+        ids = [clip_id for clip_id, (sid, _, _) in _clips.items() if sid == session_id]
+        for clip_id in ids:
+            del _clips[clip_id]
     return len(ids)
 
 
 def clear() -> None:
-    _clips.clear()
+    with _lock:
+        _clips.clear()
 
 
 def to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
@@ -123,12 +153,15 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     client = _client or _gemini_client()
     if client is None or not base.startswith("https://"):
         return None
+    epoch = _epochs.get(session_id, 0) if session_id is not None else None
     try:
         result = await asyncio.wait_for(client.synthesize(text), TTS_TIMEOUT_S)
     except Exception as exc:
         log.warning("speech synthesis failed, the phone will use its own voice: %s",
                     type(exc).__name__)
         return None
+    if session_id is not None and _epochs.get(session_id, 0) != epoch:
+        return None  # the session ended while this speech was being made
     pcm, rate = (result, SAMPLE_RATE) if isinstance(result, bytes) else result
     return f"{base}/audio/{store(to_wav(pcm, rate), session_id)}.wav"
 
