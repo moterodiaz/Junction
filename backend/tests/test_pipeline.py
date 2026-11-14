@@ -683,10 +683,6 @@ class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCas
         self.assertNotEqual(session.book.title, "explain")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class _ModelLikeReasoningClient:
     """Answers like a model that guesses Hamlet coordinates and a citation for every page, then
     applies the production parser, so these tests see what a live card would carry."""
@@ -747,7 +743,9 @@ class PipelineCitationReferenceTest(unittest.IsolatedAsyncioTestCase):
             type="invoke", request_id=f"r-{session_id}", session_id=session_id,
             frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
         )
-        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=page):
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=page), \
+             mock.patch.object(pipeline, "draw", new_callable=mock.AsyncMock, return_value=None), \
+             mock.patch.object(pipeline, "speak", new_callable=mock.AsyncMock, return_value=None):
             return await pipeline.run(invoke, _noop_send_stage)
 
     async def test_reference_passages_cite_act_scene_line_and_source_text(self):
@@ -768,3 +766,7 @@ class PipelineCitationReferenceTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(card.sources, [])
                 self.assertEqual(card.book.location, pipeline.NO_SOURCE_TEXT)
                 self.assertNotRegex(card.title, r"Act \d|Scene \d|line \d")
+
+
+if __name__ == "__main__":
+    unittest.main()
