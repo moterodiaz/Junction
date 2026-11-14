@@ -1,0 +1,325 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 63;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		F10000000000000000000011 /* MetaLabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000001 /* MetaLabApp.swift */; };
+		F10000000000000000000012 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000002 /* AppModel.swift */; };
+		F10000000000000000000013 /* GlassesBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000003 /* GlassesBridge.swift */; };
+		F10000000000000000000014 /* BackendSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000004 /* BackendSocket.swift */; };
+		F10000000000000000000015 /* AnswerSpeaker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000005 /* AnswerSpeaker.swift */; };
+		F10000000000000000000016 /* LensLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000006 /* LensLayout.swift */; };
+		F10000000000000000000017 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000007 /* RootView.swift */; };
+		F10000000000000000000018 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000008 /* Assets.xcassets */; };
+		F10000000000000000000061 /* MetaLabCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000051 /* MetaLabCore */; };
+		F10000000000000000000062 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000052 /* MWDATCore */; };
+		F10000000000000000000063 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000053 /* MWDATCamera */; };
+		F10000000000000000000064 /* MWDATDisplay in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000054 /* MWDATDisplay */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1000000000000000000000C /* MetaLab.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetaLab.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000000000000000000001 /* MetaLabApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetaLabApp.swift; sourceTree = "<group>"; };
+		F10000000000000000000002 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		F10000000000000000000003 /* GlassesBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassesBridge.swift; sourceTree = "<group>"; };
+		F10000000000000000000004 /* BackendSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendSocket.swift; sourceTree = "<group>"; };
+		F10000000000000000000005 /* AnswerSpeaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnswerSpeaker.swift; sourceTree = "<group>"; };
+		F10000000000000000000006 /* LensLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LensLayout.swift; sourceTree = "<group>"; };
+		F10000000000000000000007 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		F10000000000000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F10000000000000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000000000000000000061 /* MetaLabCore in Frameworks */,
+				F10000000000000000000062 /* MWDATCore in Frameworks */,
+				F10000000000000000000063 /* MWDATCamera in Frameworks */,
+				F10000000000000000000064 /* MWDATDisplay in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000031 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000030 /* MetaLab */,
+				A10000000000000000000032 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000030 /* MetaLab */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000001 /* MetaLabApp.swift */,
+				F10000000000000000000002 /* AppModel.swift */,
+				F10000000000000000000003 /* GlassesBridge.swift */,
+				F10000000000000000000004 /* BackendSocket.swift */,
+				F10000000000000000000005 /* AnswerSpeaker.swift */,
+				F10000000000000000000006 /* LensLayout.swift */,
+				F10000000000000000000007 /* RootView.swift */,
+				F10000000000000000000008 /* Assets.xcassets */,
+				F10000000000000000000009 /* Info.plist */,
+			);
+			path = MetaLab;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000032 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1000000000000000000000C /* MetaLab.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000002 /* MetaLab */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000007 /* Build configuration list for PBXNativeTarget "MetaLab" */;
+			buildPhases = (
+				A10000000000000000000003 /* Sources */,
+				A10000000000000000000005 /* Frameworks */,
+				A10000000000000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MetaLab;
+			packageProductDependencies = (
+				A10000000000000000000051 /* MetaLabCore */,
+				A10000000000000000000052 /* MWDATCore */,
+				A10000000000000000000053 /* MWDATCamera */,
+				A10000000000000000000054 /* MWDATDisplay */,
+			);
+			productName = MetaLab;
+			productReference = A1000000000000000000000C /* MetaLab.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					A10000000000000000000002 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+				};
+			};
+			buildConfigurationList = A10000000000000000000006 /* Build configuration list for PBXProject "MetaLab" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000031;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A10000000000000000000040 /* XCLocalSwiftPackageReference "MetaLabCore" */,
+				A10000000000000000000041 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+			);
+			productRefGroup = A10000000000000000000032 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000002 /* MetaLab */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000000000000000000018 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F10000000000000000000011 /* MetaLabApp.swift in Sources */,
+				F10000000000000000000012 /* AppModel.swift in Sources */,
+				F10000000000000000000013 /* GlassesBridge.swift in Sources */,
+				F10000000000000000000014 /* BackendSocket.swift in Sources */,
+				F10000000000000000000015 /* AnswerSpeaker.swift in Sources */,
+				F10000000000000000000016 /* LensLayout.swift in Sources */,
+				F10000000000000000000017 /* RootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000008 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A10000000000000000000009 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A1000000000000000000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLIENT_TOKEN = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MetaLab/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				META_APP_ID = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.junction.metalab;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A1000000000000000000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLIENT_TOKEN = "";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MetaLab/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				META_APP_ID = "";
+				PRODUCT_BUNDLE_IDENTIFIER = com.junction.metalab;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A10000000000000000000006 /* Build configuration list for PBXProject "MetaLab" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000008 /* Debug */,
+				A10000000000000000000009 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000007 /* Build configuration list for PBXNativeTarget "MetaLab" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000000A /* Debug */,
+				A1000000000000000000000B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A10000000000000000000040 /* XCLocalSwiftPackageReference "MetaLabCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MetaLabCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A10000000000000000000041 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/meta/meta-wearables-dat-ios";
+			requirement = {
+				kind = exactVersion;
+				version = 1.0.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000051 /* MetaLabCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000040 /* XCLocalSwiftPackageReference "MetaLabCore" */;
+			productName = MetaLabCore;
+		};
+		A10000000000000000000052 /* MWDATCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000041 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCore;
+		};
+		A10000000000000000000053 /* MWDATCamera */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000041 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATCamera;
+		};
+		A10000000000000000000054 /* MWDATDisplay */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000041 /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
+			productName = MWDATDisplay;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}
