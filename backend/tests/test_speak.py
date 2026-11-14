@@ -35,7 +35,9 @@ def interactions_from(models):
         out = await models.generate_content(model=model, contents=input[0]["content"][0]["text"], config=None)
         part = next(p for p in out.candidates[0].content.parts if p.inline_data)
         data = part.inline_data.data
-        return SimpleNamespace(output_audio=SimpleNamespace(data=base64.b64encode(data).decode(), sample_rate=None))
+        mime = getattr(part.inline_data, "mime_type", "") or ""
+        rate = int(mime.split("rate=")[1]) if "rate=" in mime else None
+        return SimpleNamespace(output_audio=SimpleNamespace(data=base64.b64encode(data).decode(), sample_rate=rate))
     return SimpleNamespace(create=create)
 
 
@@ -511,10 +513,10 @@ class GeminiResponseTest(unittest.TestCase):
         with mock.patch("google.genai.Client", fake_client):
             pcm, rate = asyncio.run(client.synthesize("one"))
             asyncio.run(client.synthesize("two"))
-        self.assertEqual((pcm, rate), (b"\x01\x00" * 8, speak.SAMPLE_RATE))
+        self.assertEqual((pcm, rate), (b"\x01\x00" * 8, 16000))
         self.assertEqual(made, ["key"])
         with wave.open(io.BytesIO(speak.to_wav(pcm, rate))) as wav:
-            self.assertEqual(wav.getframerate(), speak.SAMPLE_RATE)
+            self.assertEqual(wav.getframerate(), 16000)
 
 
 class InteractionsRequestTest(unittest.TestCase):
