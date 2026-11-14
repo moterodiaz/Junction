@@ -2,13 +2,27 @@
 
 Requirements: REQ-INT-01, REQ-BASE-01. PRD §§7, 12.2, 14.1.
 
-**Not yet validated.** After the v5 redeploy (2026-11-14, `5d1a6ee`), the strict
-success check passes on stages, the illustration, book grounding and the source
-citation, for both typed and spoken requests. It still fails on spoken output:
-`audio_url` is null because Gemini speech synthesis returns a client error (see
-"Live rerun after redeploy"). An unknown book gets no invented citation, but the card
+**Not yet validated.** From the v5 redeploy (2026-11-14, `5d1a6ee`) through v7
+(`9d10e28`), the strict success check passes on stages, the illustration, book
+grounding and the source citation, for both typed and spoken requests. It still fails
+on spoken output: `audio_url` is null because Gemini speech synthesis fails (v5/v6: a
+rejected request shape; v7: model not found for this key; see "Live reruns after v6
+and v7"). An unknown book gets no invented citation, but the card
 names it as Hamlet. The iOS round trip on hardware has not run.
 
+## Live reruns after v6 and v7, 2026-11-14/15 (authorized by the lead, no glasses)
+
+Same inputs, expected values and command as "Live rerun after redeploy" below. Inputs lived only in `/tmp` and were deleted after each run.
+
+| Deploy | Commit | Strict run | Server log for speech (`metalab.speak`) |
+|---|---|---|---|
+| v6 | `53b35ff` (#230: log the failure reason, fall back on a missing model id) | 40 tests, **2 failures**, each only `audio_url` null. Typed card in 21.1 s, spoken card in 25.0 s. Grounding, stages and image pass | `ClientError code=400 status=INVALID_ARGUMENT reason=Invalid JSON payload received. Unknown name "speechConfig" at 'generation_config'` |
+| v7 | `9d10e28` (#234: speech through the Gemini Interactions API) | 40 tests in 80.6 s, **2 failures**, each only `audio_url` null. Grounding, stages and image pass | `NotFoundError reason=Error code: 404 - … Model 'gemini-3.8-flash-tts' not found` |
+
+What this shows:
+- v6's logging found the first cause: `generateContent` rejected the request shape. #234 moved the call to the Interactions API.
+- On v7 the Interactions call reaches the API, but this key gets 404 for `gemini-3.8-flash-tts`. The 404 fallback in `backend/stt/speak.py` did not run: the Interactions client's `NotFoundError` carries `status_code = 404`, and the code checks only `code` and `status`. So the log never listed the TTS models the key can use. Reported on #226 (@Ahm3d-KA).
+- Spoken output is still **not validated**.
 ## Live rerun after redeploy, 2026-11-14 (authorized by the lead, no glasses)
 
 | Item | Value |
