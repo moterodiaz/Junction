@@ -8,9 +8,11 @@ import asyncio
 import base64
 import binascii
 import logging
+import os
 from typing import Awaitable, Callable
 
 import stt
+from ai import page_reader
 
 from .messages import Book, Card, ErrorCode, Invoke, Media, Stage
 
@@ -52,7 +54,11 @@ def command_from(utterance: str) -> stt.Command:
 
 
 async def read_page(frame: Media) -> str:
-    return "To be, or not to be, that is the question."
+    # Offline/test path: preserve deterministic contract fixtures without an API key.
+    if not os.environ.get("NVIDIA_API_KEY", "").strip():
+        return "To be, or not to be, that is the question."
+
+    return await page_reader.read_page(frame)
 
 
 async def think(command: str, page_text: str, session_id: str) -> dict:
@@ -90,6 +96,12 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
             if not reading.done():  # any early exit: do not leave the page read running
                 reading.cancel()
 
+    _read_model = (
+        page_reader._resolve_config()[2]
+        if os.environ.get("NVIDIA_API_KEY", "").strip()
+        else "stub"
+    )
+
     await send_stage("thinking")
     answer = await think(command, page_text, invoke.session_id)
 
@@ -104,5 +116,5 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
         sources=[],
-        models={"read": "stub", "reason": "stub", "image": "stub"},
+        models={"read": _read_model, "reason": "stub", "image": "stub"},
     )

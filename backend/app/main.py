@@ -8,6 +8,8 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from ai.page_reader import PageReadError
+
 from . import pipeline
 from .messages import Error, Invoke, Stage, Status
 
@@ -70,6 +72,16 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         log.info("request %s failed: %s", invoke.request_id, exc.code)
         await send(websocket, Error(request_id=invoke.request_id, code=exc.code,
                                     message=exc.message, retryable=exc.retryable))
+        return
+    except PageReadError as exc:
+        log.exception("page reading failed for %s", invoke.request_id)
+        messages = {
+            "no_text_found": "No readable text was found on the page.",
+            "model_timeout": "Page reading timed out. Try again.",
+            "internal": "Page reading failed. Try again.",
+        }
+        await send(websocket, Error(request_id=invoke.request_id, code=exc.code,
+                                    message=messages[exc.code], retryable=exc.retryable))
         return
     except Exception:
         log.exception("pipeline failed for %s", invoke.request_id)
