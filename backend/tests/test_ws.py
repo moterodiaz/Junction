@@ -38,6 +38,12 @@ class WsTest(unittest.TestCase):
         self.assertEqual(card["book"]["title"], "Hamlet")
         self.assertIsNone(card["audio_url"])
 
+    def test_binary_frame_invoke_is_accepted(self):
+        with TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_bytes(json.dumps(invoke()).encode())
+            replies = [ws.receive_json() for _ in range(4)]
+        self.assertEqual(replies[3]["type"], "card")
+
     def test_audio_command_adds_transcribing_stage(self):
         replies = exchange(invoke(text=None, audio={"mime": "audio/wav", "b64": "AAAA"}), 5)
         self.assertEqual([r.get("stage") for r in replies[:4]],

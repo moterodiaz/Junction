@@ -26,13 +26,20 @@ async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         while True:
-            raw = await websocket.receive_text()
+            event = await websocket.receive()
+            if event["type"] == "websocket.disconnect":
+                break
+            raw = event.get("text")
+            if raw is None:
+                raw = event.get("bytes")  # the iPhone client sends JSON as binary frames
+            if raw is None:
+                continue
             await handle(websocket, raw)
     except WebSocketDisconnect:
         pass
 
 
-async def handle(websocket: WebSocket, raw: str) -> None:
+async def handle(websocket: WebSocket, raw: str | bytes) -> None:
     request_id = None
     try:
         data = json.loads(raw)
