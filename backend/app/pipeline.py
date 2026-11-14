@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import threading
+import time
 import traceback
 import weakref
 from concurrent.futures import ThreadPoolExecutor
@@ -261,6 +262,43 @@ def _is_dynamic_routing_active() -> bool:
 
 _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
+# A book session that no one has touched for this long is ended (#139, REQ-PRIV-03).
+SESSION_IDLE_TTL_S = float(os.environ.get("SESSION_IDLE_TTL_S", "3600"))
+
+
+_SESSION_SEEN: dict[str, float] = {}  # session id -> last time a request touched it (monotonic)
+
+
+def _touch(session_id: str) -> None:
+    _SESSION_SEEN[session_id] = time.monotonic()
+
+
+def end_session(session_id: str) -> None:
+    """End a session: forget its book, history and reading horizon, and delete its spoken clips
+    and generated images. Called on expiry; the one place that knows every per-session store."""
+    import ai.image as image_module
+    import stt.speak as speak_module
+
+    default_session_store.delete(session_id)
+    speak_module.cleanup_session(session_id)
+    image_module.cleanup_session(session_id)
+    pass
+    _SESSION_SEEN.pop(session_id, None)
+
+
+def sweep_expired(now: float | None = None) -> list[str]:
+    """Expire every session idle past SESSION_IDLE_TTL_S. A session with a request in flight is
+    never expired, so a slow answer cannot be wiped mid-request. Returns the ended session ids."""
+    now = time.monotonic() if now is None else now
+    expired = []
+    for session_id, seen in list(_SESSION_SEEN.items()):
+        lock = _SESSION_LOCKS.get(session_id)
+        if now - seen > SESSION_IDLE_TTL_S and not (lock is not None and lock.locked()):
+            expired.append(session_id)
+    for session_id in expired:
+        end_session(session_id)
+    return expired
+
 
 # The anti-spoiler reading horizon (#197): a failed request must not advance it either.
 _HORIZON_FIELDS = ("max_position", "seen_passages", "_horizon_by_book")
@@ -291,6 +329,8 @@ def _restore_session_state(session, state: tuple) -> None:
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
+    sweep_expired()
+    _touch(invoke.session_id)
     session = default_session_store.get_or_create(invoke.session_id)
     lock = _SESSION_LOCKS.get(invoke.session_id)
     if lock is None:
