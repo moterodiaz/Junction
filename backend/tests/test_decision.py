@@ -35,6 +35,7 @@ from ai.decision import (
     get_decision_client,
     get_effective_timeout,
     get_question_spec,
+    is_spoiler_check_enabled,
     register_question_spec,
     reset_question_specs,
     resolve_model_for_tier,
@@ -57,6 +58,8 @@ class DecisionRegistryTest(unittest.TestCase):
         self.assertIn("task_tier", specs)
         self.assertIn("needs_image", specs)
         self.assertIn("speak_only", specs)
+        self.assertIn("style_preset", specs)
+        self.assertIn("spoiler_risk", specs)
 
         action_spec = get_question_spec("action")
         self.assertIsNotNone(action_spec)
@@ -64,6 +67,18 @@ class DecisionRegistryTest(unittest.TestCase):
         self.assertIn("explain", action_spec.criteria)
         self.assertIn("draw", action_spec.criteria)
         self.assertIn("who_is_this", action_spec.criteria)
+
+        style_spec = get_question_spec("style_preset")
+        self.assertIsNotNone(style_spec)
+        self.assertEqual(style_spec.question_type, "choice")
+        for st in ("ink_woodcut", "gothic_oil", "watercolor_botanical", "noir_sketch", "classical_etching", "default"):
+            self.assertIn(st, style_spec.criteria)
+        self.assertEqual(style_spec.default, "default")
+
+        spoiler_spec = get_question_spec("spoiler_risk")
+        self.assertIsNotNone(spoiler_spec)
+        self.assertEqual(spoiler_spec.question_type, "noul")
+        self.assertFalse(spoiler_spec.default)
 
     def test_custom_spec_registration_and_reset(self) -> None:
         custom = DecisionQuestionSpec(
@@ -103,6 +118,12 @@ class DecisionResultAndTierTest(unittest.TestCase):
         self.assertFalse(d["fallback_used"])
         self.assertEqual(d["raw_utterance"], "explain line 5")
         self.assertEqual(d["extra_answers"], {"topic": "ghost"})
+        self.assertEqual(res.style_preset, "default")
+        self.assertFalse(res.spoiler_risk)
+        self.assertTrue(res.answerable_from_seen)
+        self.assertEqual(d["style_preset"], "default")
+        self.assertFalse(d["spoiler_risk"])
+        self.assertTrue(d["answerable_from_seen"])
 
     def test_resolve_model_for_tier_defaults(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -592,6 +613,209 @@ class CandidateBooksAndClarifyTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(res.book_match, "Macbeth")
             self.assertEqual(res.book_match_confidence, 0.88)
             self.assertTrue(res.book_changed)
+
+
+class StylePresetAndSpoilerRiskTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        reset_question_specs()
+
+    def tearDown(self) -> None:
+        reset_question_specs()
+        set_decision_client(None)
+
+    def test_is_spoiler_check_enabled_helper(self) -> None:
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "false"}):
+            self.assertFalse(is_spoiler_check_enabled())
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "0"}):
+            self.assertFalse(is_spoiler_check_enabled())
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(is_spoiler_check_enabled())
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "true"}):
+            self.assertTrue(is_spoiler_check_enabled())
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "1"}):
+            self.assertTrue(is_spoiler_check_enabled())
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "yes"}):
+            self.assertTrue(is_spoiler_check_enabled())
+
+    def test_decision_result_extra_answers_population(self) -> None:
+        res = DecisionResult(
+            action="explain",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.9,
+            fallback_used=False,
+            raw_utterance="explain",
+            extra_answers={"style_preset": "gothic_oil", "spoiler_risk": True},
+        )
+        self.assertEqual(res.style_preset, "gothic_oil")
+        self.assertTrue(res.spoiler_risk)
+        self.assertFalse(res.answerable_from_seen)
+
+    async def test_style_preset_single_pass_parsing(self) -> None:
+        client = GeminiDecisionClient(api_key="test-api-key")
+
+        mock_ans_action = mock.Mock()
+        mock_ans_action.choice = "draw"
+        mock_ans_action.confidence = 0.95
+
+        mock_ans_tier = mock.Mock()
+        mock_ans_tier.choice = "fast"
+        mock_ans_tier.confidence = 0.95
+
+        mock_ans_img = mock.Mock()
+        mock_ans_img.noul = 1.0
+        mock_ans_img.confidence = 0.95
+
+        mock_ans_spk = mock.Mock()
+        mock_ans_spk.noul = 0.0
+        mock_ans_spk.confidence = 0.95
+
+        mock_ans_style = mock.Mock()
+        mock_ans_style.choice = "ink_woodcut"
+        mock_ans_style.confidence = 0.91
+
+        mock_response = mock.Mock()
+        mock_response.answers = {
+            "action": mock_ans_action,
+            "task_tier": mock_ans_tier,
+            "needs_image": mock_ans_img,
+            "speak_only": mock_ans_spk,
+            "style_preset": mock_ans_style,
+        }
+
+        mock_create = mock.AsyncMock(return_value=mock_response)
+        mock_aio = mock.Mock()
+        mock_aio.create = mock_create
+        mock_genai_client = mock.Mock()
+        mock_genai_client.aio.decisions = mock_aio
+
+        with mock.patch("google.genai.Client", return_value=mock_genai_client):
+            res = await client.decide(
+                utterance="draw an illustration of the castle",
+                page_text="Elsinore Castle",
+            )
+            mock_create.assert_awaited_once()
+            _, kwargs = mock_create.call_args
+            questions = kwargs["questions"]
+            self.assertIn("style_preset", questions)
+            self.assertEqual(questions["style_preset"]["type"], "choice")
+            self.assertIn("ink_woodcut", questions["style_preset"]["criteria"])
+
+            self.assertEqual(res.style_preset, "ink_woodcut")
+            self.assertEqual(res.extra_answers.get("style_preset"), "ink_woodcut")
+
+    async def test_spoiler_check_toggle_off_excludes_question(self) -> None:
+        client = GeminiDecisionClient(api_key="test-api-key")
+
+        mock_response = mock.Mock()
+        mock_response.answers = {
+            "action": mock.Mock(choice="explain", confidence=0.9),
+            "task_tier": mock.Mock(choice="balanced", confidence=0.9),
+            "needs_image": mock.Mock(noul=0.0, confidence=0.9),
+            "speak_only": mock.Mock(noul=0.0, confidence=0.9),
+        }
+        mock_create = mock.AsyncMock(return_value=mock_response)
+        mock_aio = mock.Mock(create=mock_create)
+        mock_genai_client = mock.Mock()
+        mock_genai_client.aio.decisions = mock_aio
+
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "false"}):
+            with mock.patch("google.genai.Client", return_value=mock_genai_client):
+                res = await client.decide("what happens next?")
+                mock_create.assert_awaited_once()
+                _, kwargs = mock_create.call_args
+                self.assertNotIn("spoiler_risk", kwargs["questions"])
+                self.assertFalse(res.spoiler_risk)
+                self.assertTrue(res.answerable_from_seen)
+
+    async def test_spoiler_check_toggle_on_includes_question_and_reading_horizon(self) -> None:
+        client = GeminiDecisionClient(api_key="test-api-key")
+
+        mock_response = mock.Mock()
+        mock_response.answers = {
+            "action": mock.Mock(choice="explain", confidence=0.9),
+            "task_tier": mock.Mock(choice="balanced", confidence=0.9),
+            "needs_image": mock.Mock(noul=0.0, confidence=0.9),
+            "speak_only": mock.Mock(noul=0.0, confidence=0.9),
+            "spoiler_risk": mock.Mock(noul=1.0, confidence=0.93),
+        }
+        mock_create = mock.AsyncMock(return_value=mock_response)
+        mock_aio = mock.Mock(create=mock_create)
+        mock_genai_client = mock.Mock()
+        mock_genai_client.aio.decisions = mock_aio
+
+        session = mock.Mock()
+        session.book = BookInfo(title="Hamlet", author="Shakespeare")
+        session.get_reading_horizon_summary = mock.Mock(return_value="Act 2, Scene 2, line 45")
+        session.candidate_books = None
+
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "true"}):
+            with mock.patch("google.genai.Client", return_value=mock_genai_client):
+                res = await client.decide("does Ophelia die in the end?", session=session)
+                mock_create.assert_awaited_once()
+                _, kwargs = mock_create.call_args
+                self.assertIn("spoiler_risk", kwargs["questions"])
+                self.assertEqual(kwargs["questions"]["spoiler_risk"]["type"], "noul")
+                self.assertIn("Reading Horizon: Act 2, Scene 2, line 45", kwargs["input"])
+
+                self.assertTrue(res.spoiler_risk)
+                self.assertFalse(res.answerable_from_seen)
+
+    async def test_explicit_enabled_checks_with_spoiler_risk(self) -> None:
+        client = GeminiDecisionClient(api_key="test-api-key")
+
+        mock_response = mock.Mock()
+        mock_response.answers = {
+            "action": mock.Mock(choice="question", confidence=0.9),
+            "task_tier": mock.Mock(choice="fast", confidence=0.9),
+            "needs_image": mock.Mock(noul=0.0, confidence=0.9),
+            "speak_only": mock.Mock(noul=0.0, confidence=0.9),
+            "spoiler_risk": mock.Mock(noul=0.0, confidence=0.94),
+        }
+        mock_create = mock.AsyncMock(return_value=mock_response)
+        mock_aio = mock.Mock(create=mock_create)
+        mock_genai_client = mock.Mock()
+        mock_genai_client.aio.decisions = mock_aio
+
+        with mock.patch.dict(os.environ, {"DECISION_ENABLE_SPOILER_CHECK": "false"}):
+            with mock.patch("google.genai.Client", return_value=mock_genai_client):
+                res = await client.decide(
+                    "who is Polonius talking to?",
+                    enabled_checks=["action", "task_tier", "needs_image", "speak_only", "spoiler_risk"],
+                )
+                mock_create.assert_awaited_once()
+                _, kwargs = mock_create.call_args
+                self.assertIn("spoiler_risk", kwargs["questions"])
+                self.assertNotIn("style_preset", kwargs["questions"])
+                self.assertFalse(res.spoiler_risk)
+                self.assertTrue(res.answerable_from_seen)
+
+    async def test_stub_decision_client_style_and_spoiler(self) -> None:
+        stub = StubDecisionClient(style_preset="noir_sketch", spoiler_risk=True)
+        set_decision_client(stub)
+
+        res = await decide("draw the detective scene")
+        self.assertEqual(res.style_preset, "noir_sketch")
+        self.assertTrue(res.spoiler_risk)
+        self.assertFalse(res.answerable_from_seen)
+
+    def test_fallback_decide_style_and_spoiler(self) -> None:
+        res_woodcut = fallback_decide("please draw an ink woodcut of Hamlet")
+        self.assertEqual(res_woodcut.style_preset, "ink_woodcut")
+        self.assertFalse(res_woodcut.spoiler_risk)
+        self.assertTrue(res_woodcut.answerable_from_seen)
+
+        res_gothic = fallback_decide("show me a gothic oil painting")
+        self.assertEqual(res_gothic.style_preset, "gothic_oil")
+
+        res_botanical = fallback_decide("show a botanical watercolor of rue and rosemary")
+        self.assertEqual(res_botanical.style_preset, "watercolor_botanical")
+
+        res_spoiler = fallback_decide("who dies in the ending?")
+        self.assertTrue(res_spoiler.spoiler_risk)
+        self.assertFalse(res_spoiler.answerable_from_seen)
 
 if __name__ == "__main__":
     unittest.main()

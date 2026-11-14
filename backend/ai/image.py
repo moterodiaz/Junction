@@ -47,6 +47,15 @@ DEFAULT_MODEL_IMAGE = "gemini-nano-banana-2.1"
 MAX_STORED_IMAGES = 200
 _DEFAULT_SESSION_TTL = 3600.0
 
+STYLE_PRESETS: dict[str, str] = {
+    "default": "",
+    "ink_woodcut": "ink woodcut",
+    "gothic_oil": "gothic oil",
+    "watercolor_botanical": "watercolor botanical",
+    "noir_sketch": "noir sketch",
+    "classical_etching": "classical etching",
+}
+
 
 @dataclass
 class StoredImage:
@@ -199,19 +208,50 @@ def set_image_client(client: Optional[Any]) -> None:
     _client_override = client
 
 
-def format_display_prompt(prompt: str) -> str:
+def resolve_style_cue(style_preset: Optional[str]) -> str:
+    """Resolve a style preset name into a soft style cue string.
+
+    Supports known presets in STYLE_PRESETS (e.g. 'ink_woodcut', 'gothic_oil',
+    'watercolor_botanical', 'noir_sketch', 'classical_etching', 'default').
+    For 'default' or empty/None values, returns an empty string.
+    Gracefully treats unknown non-empty styles as soft cues by formatting them cleanly.
+    """
+    if not style_preset:
+        return ""
+    cleaned = style_preset.strip()
+    if not cleaned:
+        return ""
+    normalized_key = cleaned.lower().replace("-", "_").replace(" ", "_")
+    if normalized_key == "default":
+        return ""
+    if normalized_key in STYLE_PRESETS:
+        return STYLE_PRESETS[normalized_key]
+    # Gracefully treat unknown non-empty styles as soft cues
+    return cleaned.replace("_", " ").strip()
+
+
+def format_display_prompt(prompt: str, style_preset: Optional[str] = None) -> str:
     """Format prompt for the Ray-Ban Display additive optical lens (600x600).
     
     The lens is additive: dark pixels disappear (stay transparent) while bright
     pixels illuminate. Generated illustrations require a pure black background
     and high-contrast, luminous subjects.
+
+    When style_preset is provided, applies a soft stylistic suggestion without
+    overriding scene composition or compromising optical background requirements.
     """
     prefix = (
         "Illustration optimized for an additive optical AR display (600x600 square). "
         "Pure solid black background (#000000) so unlit pixels remain transparent on the lens. "
         "Vivid, high-contrast, brightly lit subject in sharp focus: "
     )
-    return f"{prefix}{prompt.strip()}"
+    cleaned = prompt.strip()
+    cue = resolve_style_cue(style_preset)
+    if not cue:
+        return f"{prefix}{cleaned}"
+
+    separator = " " if cleaned.endswith((".", "!", "?")) else ". "
+    return f"{prefix}{cleaned}{separator}Stylistic suggestion: subtle {cue} aesthetic."
 
 
 class BillingNotEnabledError(RuntimeError):
@@ -355,6 +395,7 @@ async def draw(
     session_id: Optional[str] = None,
     base_url: Optional[str] = None,
     client: Optional[Any] = None,
+    style_preset: Optional[str] = None,
 ) -> Optional[str]:
     """Generate an illustration for the card and return its HTTPS URL.
     
@@ -397,7 +438,7 @@ async def draw(
         return None
 
     # 2. Format prompt for Ray-Ban Display additive lens
-    conditioned_prompt = format_display_prompt(image_prompt)
+    conditioned_prompt = format_display_prompt(image_prompt, style_preset=style_preset)
 
     # 3. Model selection
     try:
