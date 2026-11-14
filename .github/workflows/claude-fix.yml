@@ -216,3 +216,20 @@ jobs:
             gh api "repos/$REPO/issues/1/comments" \
               -f body="[Junction's claude-fix] @$author PR #$PR_NUMBER needs human: ci held for approval" >/dev/null
           fi
+
+      - name: Alert on failure
+        if: failure()
+        shell: bash
+        run: |
+          author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login || true)"
+          [ -z "$author" ] && author="${{ github.repository_owner }}"
+          run_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID"
+          existing="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
+            | jq --arg rid "actions/runs/$GITHUB_RUN_ID" \
+                 '[.comments[].body | select(contains($rid))] | length' \
+            || echo 0)"
+          [ "$existing" != "0" ] && exit 0
+          gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "@$author needs human: claude-fix failed: $run_url" || true
+          gh api "repos/$REPO/issues/1/comments" \
+            -f body="[Junction's claude-fix] @$author PR #$PR_NUMBER needs human: claude-fix run failed ($run_url)" >/dev/null || true

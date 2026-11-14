@@ -14,6 +14,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  actions: write
 
 env:
   GH_TOKEN: ${{ github.token }}
@@ -96,6 +97,65 @@ jobs:
           if [[ "$count" =~ ^[0-9]+$ ]] && (( count < 3 )) && ! seen "task queue low"; then
             board "task queue low ($count ready). Run tools/task fill and file tasks from Junction-Prep/metalab_prd.md."
           fi
+
+      - name: Retry stuck claude-fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          board() { gh api "repos/$REPO/issues/1/comments" -f body="[Junction's sweeper] $1" >/dev/null; }
+
+          now_epoch="$(date -u +%s)"
+          prs="$(gh pr list -R "$REPO" --state open \
+            --json number,isDraft,author,headRefName,updatedAt,commits --limit 100)"
+
+          jq -c '.[] | select(.isDraft | not)' <<<"$prs" | while IFS= read -r row; do
+            n="$(jq -r .number <<<"$row")"
+            author="$(jq -r .author.login <<<"$row")"
+
+            # (a) count unresolved review threads
+            # shellcheck disable=SC2016
+            count="$(gh api graphql --paginate \
+              -f query='query($o:String!,$r:String!,$n:Int!,$endCursor:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}' \
+              -f o="${REPO%/*}" -f r="${REPO#*/}" -F n="$n" \
+              --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length' \
+              | awk '{s+=$1} END {print s+0}')" || continue
+            [ "$count" -gt 0 ] || continue
+
+            # (b) skip if already has a giveup comment
+            pr_comments="$(gh pr view "$n" --repo "$REPO" --json comments \
+              --jq '[.comments[].body] | join("\n")')" || continue
+            echo "$pr_comments" | grep -qF "needs human: claude-fix could not resolve" && continue
+            echo "$pr_comments" | grep -qF "needs human: sweeper gave up" && continue
+
+            # (c) last activity check (20 min threshold)
+            last_activity="$(jq -r '(.commits[-1].committedDate // .updatedAt)' <<<"$row")"
+            latest_bot="$(gh api --paginate "repos/$REPO/issues/$n/comments" \
+              --jq '[.[] | select(.user.login == "claude[bot]" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty')" || continue
+            latest_review="$(gh api --paginate "repos/$REPO/pulls/$n/comments" \
+              --jq '[.[] | select(.user.login == "claude[bot]" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty')" || continue
+            for ts in "$latest_bot" "$latest_review"; do
+              [ -z "$ts" ] && continue
+              [[ "$ts" > "$last_activity" ]] && last_activity="$ts"
+            done
+            [ -z "$last_activity" ] && continue
+            activity_epoch="$(date -u -d "$last_activity" +%s)" || continue
+            age=$(( now_epoch - activity_epoch ))
+            [ "$age" -lt 1200 ] && continue
+
+            # (d) retry or give up
+            retries="$(gh pr view "$n" --repo "$REPO" --json comments \
+              --jq '[.comments[].body | select(contains("[sweeper] claude-fix retry"))] | length')" || continue
+
+            if [ "$retries" -lt 2 ]; then
+              gh workflow run claude-fix.yml -R "$REPO" -f pr_number="$n" || continue
+              gh pr comment "$n" --repo "$REPO" \
+                --body "[sweeper] claude-fix retry $((retries+1))/2: $count unresolved thread(s), no activity for 20+ minutes" || continue
+            else
+              gh pr comment "$n" --repo "$REPO" \
+                --body "@$author needs human: sweeper gave up: $count thread(s) still open after 2 claude-fix retries" || continue
+              board "@$author PR #$n needs human: sweeper gave up: $count thread(s) still open after 2 claude-fix retries" || true
+            fi
+          done
 
   merged:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
