@@ -1,0 +1,14 @@
+{
+  "type": "invoke",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "660e8400-e29b-41d4-a716-446655440001",
+  "frame": {
+    "mime": "image/jpeg",
+    "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/"
+  },
+  "audio": {
+    "mime": "audio/wav",
+    "b64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA="
+  },
+  "text": null
+}
