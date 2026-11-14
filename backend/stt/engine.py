@@ -10,9 +10,12 @@ An alternative engine is gemini-3.5-transcribe, selected via STT_ENGINE=gemini.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import threading
 from typing import Any, Callable
+
+_log = logging.getLogger("metalab")
 
 Engine = Callable[[bytes], str]
 
@@ -26,7 +29,8 @@ SHAKESPEARE_VOCABULARY_PROMPT = (
     "Bias vocabulary recognition toward Shakespearean terms, Elizabethan and early modern English, "
     "literary terminology, and character names from Shakespeare plays (such as Hamlet, Horatio, "
     "Ophelia, Claudius, Gertrude, Polonius, Macbeth, Othello, Romeo, Juliet, thou, thee, thine, thy). "
-    "Output only the exact transcribed speech text without commentary, explanation, or timestamps."
+    "Output only the exact transcribed speech text without commentary, explanation, or timestamps. "
+    "Return an empty string if there is no clear speech in the audio."
 )
 
 _engine: Engine | None = None
@@ -35,6 +39,19 @@ _gemini_client: Any = None
 _fallback_engine: Engine | None = None
 _fallback_lock = threading.Lock()
 GEMINI_TIMEOUT_MS = 15_000  # below the 25 s stage deadline, leaving time for the Whisper fallback
+
+
+def _get_gemini_timeout_ms() -> int:
+    """Read GEMINI_TIMEOUT_MS from env; fall back to the module default if unset or invalid."""
+    raw = os.environ.get("GEMINI_TIMEOUT_MS", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return GEMINI_TIMEOUT_MS
 
 
 def _whisper_fallback() -> Engine:
@@ -132,11 +149,12 @@ def _gemini_engine(
         if resolved_client is None:
             resolved_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "").strip()
             if not resolved_key:
+                _log.debug("taking whisper fallback: GEMINI_API_KEY is not set")
                 if fallback_to_whisper:
                     try:
                         return _whisper_fallback()(audio)
-                    except Exception:
-                        pass
+                    except Exception as fb_exc:
+                        _log.debug("whisper fallback also failed: %s: %s", type(fb_exc).__name__, fb_exc)
                 raise RuntimeError("GEMINI_API_KEY is not set for Gemini transcription")
             if not owned:
                 from google import genai
@@ -145,18 +163,19 @@ def _gemini_engine(
                 owned.append(
                     genai.Client(
                         api_key=resolved_key,
-                        http_options=genai_types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+                        http_options=genai_types.HttpOptions(timeout=_get_gemini_timeout_ms()),
                     )
                 )
             resolved_client = owned[0]
 
         mime = _detect_mime_type(audio)
         if mime is None:
+            _log.debug("taking whisper fallback: unsupported audio format for Gemini")
             if fallback_to_whisper:
                 try:
                     return _whisper_fallback()(audio)
-                except Exception:
-                    pass
+                except Exception as fb_exc:
+                    _log.debug("whisper fallback also failed: %s: %s", type(fb_exc).__name__, fb_exc)
             raise ValueError("Unsupported audio format for Gemini transcription")
 
         try:
@@ -167,23 +186,33 @@ def _gemini_engine(
                 model=target_model,
                 contents=[SHAKESPEARE_VOCABULARY_PROMPT, audio_part],
             )
-            text = ""
-            if hasattr(response, "text") and response.text:
-                text = response.text
-            elif getattr(response, "candidates", None):
-                for candidate in response.candidates:
-                    if getattr(candidate, "content", None) and getattr(candidate.content, "parts", None):
-                        for part in candidate.content.parts:
-                            if getattr(part, "text", None):
-                                text += part.text
-            return text.strip()
         except Exception as exc:
+            _log.debug("taking whisper fallback: Gemini call failed: %s: %s", type(exc).__name__, exc)
             if fallback_to_whisper:
                 try:
                     return _whisper_fallback()(audio)
-                except Exception:
-                    pass
+                except Exception as fb_exc:
+                    _log.debug("whisper fallback also failed: %s: %s", type(fb_exc).__name__, fb_exc)
             # REQ-PRIV-02: Never log or echo audio bytes or user speech in the exception message
             raise RuntimeError(f"Gemini transcription failed: {type(exc).__name__}") from exc
+
+        text = ""
+        if hasattr(response, "text") and response.text:
+            text = response.text
+        elif getattr(response, "candidates", None):
+            for candidate in response.candidates:
+                if getattr(candidate, "content", None) and getattr(candidate.content, "parts", None):
+                    for part in candidate.content.parts:
+                        if getattr(part, "text", None):
+                            text += part.text
+        if not text.strip():
+            _log.debug("taking whisper fallback: Gemini returned empty/blocked response")
+            if fallback_to_whisper:
+                try:
+                    return _whisper_fallback()(audio)
+                except Exception as fb_exc:
+                    _log.debug("whisper fallback after empty response failed: %s: %s", type(fb_exc).__name__, fb_exc)
+            raise RuntimeError("Gemini transcription returned no speech")
+        return text.strip()
 
     return run

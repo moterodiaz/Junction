@@ -292,6 +292,9 @@ class GeminiSTTEngineTest(unittest.TestCase):
                 eng = engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True)
                 self.assertEqual(eng(b"RIFF audio"), "fallback to whisper")
 
+        # Reset cached _fallback_engine so scenario 2 builds a fresh one via the new mock.
+        stt.set_engine(None)
+
         # 2. Descriptive error when fallback fails / unavailable without leaking audio (REQ-PRIV-02)
         with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}, clear=False):
             with mock.patch.object(engine, "_faster_whisper", side_effect=ImportError("no whisper")):
@@ -342,6 +345,76 @@ class GeminiSTTEngineTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             eng(b"   ")
         self.assertIn("Empty or invalid audio clip", str(ctx.exception))
+
+
+class GeminiSTTBehaviorTest(unittest.TestCase):
+    """Offline tests for items (a)-(d): debug logging, timeout env, config validation, empty response."""
+
+    def setUp(self):
+        stt.set_engine(None)
+        engine.set_gemini_client(None)
+        self.addCleanup(stt.set_engine, None)
+        self.addCleanup(engine.set_gemini_client, None)
+
+    def test_fallback_emits_debug_log_explaining_reason(self):
+        """(a) When whisper fallback is taken, a DEBUG log records why (not bare except/pass)."""
+        class FailingModels:
+            def generate_content(self, model, contents, **kwargs):
+                raise ConnectionError("network down")
+
+        stub_client = mock.Mock()
+        stub_client.models = FailingModels()
+
+        with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "whisper result"):
+            eng = engine._gemini_engine(client=stub_client, fallback_to_whisper=True)
+            with self.assertLogs("metalab", "DEBUG") as logs:
+                result = eng(b"RIFF audio")
+        self.assertEqual(result, "whisper result")
+        self.assertTrue(any("fallback" in m.lower() for m in logs.output))
+
+    def test_gemini_timeout_ms_env_override_and_config_validation(self):
+        """(b) GEMINI_TIMEOUT_MS is read from env by the engine and validated by config_problems."""
+        from app.config import config_problems
+
+        self.assertTrue(any("GEMINI_TIMEOUT_MS" in p for p in config_problems({"GEMINI_TIMEOUT_MS": "not-a-number"})))
+        self.assertTrue(any("GEMINI_TIMEOUT_MS" in p for p in config_problems({"GEMINI_TIMEOUT_MS": "0"})))
+        self.assertTrue(any("GEMINI_TIMEOUT_MS" in p for p in config_problems({"GEMINI_TIMEOUT_MS": "-1"})))
+        self.assertFalse(any("GEMINI_TIMEOUT_MS" in p for p in config_problems({"GEMINI_TIMEOUT_MS": "5000"})))
+        self.assertFalse(any("GEMINI_TIMEOUT_MS" in p for p in config_problems({})))
+
+        with mock.patch.dict(os.environ, {"GEMINI_TIMEOUT_MS": "7000"}, clear=False):
+            self.assertEqual(engine._get_gemini_timeout_ms(), 7000)
+        with mock.patch.dict(os.environ, {"GEMINI_TIMEOUT_MS": ""}, clear=False):
+            self.assertEqual(engine._get_gemini_timeout_ms(), engine.GEMINI_TIMEOUT_MS)
+
+    def test_stt_engine_unrecognised_reported_in_config_problems(self):
+        """(c) An unrecognised STT_ENGINE value is reported in config_problems; unset is silent."""
+        from app.config import config_problems
+
+        self.assertTrue(any("STT_ENGINE" in p for p in config_problems({"STT_ENGINE": "flac"})))
+        self.assertFalse(any("STT_ENGINE" in p for p in config_problems({"STT_ENGINE": "whisper"})))
+        self.assertFalse(any("STT_ENGINE" in p for p in config_problems({"STT_ENGINE": "gemini"})))
+        self.assertFalse(any("STT_ENGINE" in p for p in config_problems({})))
+
+    def test_empty_gemini_response_falls_back_to_whisper(self):
+        """(d) Empty or blocked Gemini response falls back to whisper; no fallback raises RuntimeError."""
+        from types import SimpleNamespace
+
+        class StubModelsEmpty:
+            def generate_content(self, model, contents, **kwargs):
+                return SimpleNamespace(text="", candidates=None)
+
+        stub_client = mock.Mock()
+        stub_client.models = StubModelsEmpty()
+
+        with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "whisper fallback"):
+            eng = engine._gemini_engine(client=stub_client, fallback_to_whisper=True)
+            self.assertEqual(eng(b"RIFF audio"), "whisper fallback")
+
+        eng_no_fallback = engine._gemini_engine(client=stub_client, fallback_to_whisper=False)
+        with self.assertRaises(RuntimeError) as ctx:
+            eng_no_fallback(b"RIFF audio")
+        self.assertIn("no speech", str(ctx.exception).lower())
 
 
 if __name__ == "__main__":
