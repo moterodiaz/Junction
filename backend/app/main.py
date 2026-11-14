@@ -36,8 +36,8 @@ async def handle(websocket: WebSocket, raw: str) -> None:
     request_id = None
     try:
         data = json.loads(raw)
-        if isinstance(data, dict):
-            request_id = data.get("request_id")
+        if isinstance(data, dict) and isinstance(data.get("request_id"), str):
+            request_id = data["request_id"]
         invoke = Invoke.model_validate(data)
     except (ValueError, ValidationError) as exc:
         await send(websocket, Error(request_id=request_id, code="internal",

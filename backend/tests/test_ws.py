@@ -63,6 +63,15 @@ class WsTest(unittest.TestCase):
             ws.send_json(invoke())
             self.assertEqual(ws.receive_json()["type"], "status")
 
+    def test_non_string_request_id_is_rejected_without_closing(self):
+        with TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_json(invoke(request_id={}))
+            reply = ws.receive_json()
+            self.assertEqual(reply["type"], "error")
+            self.assertIsNone(reply["request_id"])
+            ws.send_json(invoke())
+            self.assertEqual(ws.receive_json()["type"], "status")
+
     def test_stage_failure_returns_retryable_error(self):
         with mock.patch.object(pipeline, "read_page", side_effect=RuntimeError("boom")):
             replies = exchange(invoke(), 2)
