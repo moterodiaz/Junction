@@ -1,0 +1,24 @@
+{
+  "description": "PROPOSED handshake decision table, NOT a runtime auth test. Credentials are abstract states, never actual header values.",
+  "cases": [
+    {"name":"default-off-legacy","tls":true,"ios_verified":false,"credential":"missing","upgrade":true},
+    {"name":"default-off-v2","tls":true,"ios_verified":false,"credential":"missing","offered":["metalab.v2"],"selected":"metalab.v2","upgrade":true,"controls":true},
+    {"name":"auth-off-is-not-identity","tls":true,"credential":"invalid","upgrade":true},
+    {"name":"enable-before-ios-proof","enabled":true,"tls":true,"credential":"valid","ios_verified":false,"upgrade":false},
+    {"name":"enable-before-owner-rollout","enabled":true,"tls":true,"credential":"valid","ios_verified":true,"rollout_agreed":false,"upgrade":false},
+    {"name":"enabled-missing-legacy","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"missing","upgrade":false,"http":401},
+    {"name":"enabled-invalid","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"invalid","upgrade":false,"http":401},
+    {"name":"enabled-malformed","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"malformed","upgrade":false,"http":401},
+    {"name":"enabled-expired","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"expired","upgrade":false,"http":401},
+    {"name":"enabled-valid-legacy","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"valid","upgrade":true},
+    {"name":"enabled-valid-v2","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"valid","offered":["metalab.v2"],"selected":"metalab.v2","upgrade":true,"controls":true},
+    {"name":"valid-but-no-selection","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"valid","offered":["metalab.v2"],"upgrade":true},
+    {"name":"failed-upgrade-does-not-negotiate","tls":true,"credential":"missing","offered":["metalab.v2"],"selected":"metalab.v2","handshake_ok":false,"upgrade":false},
+    {"name":"unsolicited-selection","tls":true,"credential":"missing","selected":"metalab.v2","upgrade":false},
+    {"name":"unsupported-selection","tls":true,"credential":"missing","offered":["metalab.v3"],"selected":"metalab.v3","upgrade":false},
+    {"name":"auth-enabled-requires-wss","enabled":true,"tls":false,"ios_verified":true,"rollout_agreed":true,"credential":"valid","upgrade":false},
+    {"name":"verifier-unavailable-fails-closed","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"valid","verifier_ready":false,"upgrade":false},
+    {"name":"missing-server-config-fails-closed","enabled":true,"tls":true,"ios_verified":true,"rollout_agreed":true,"credential":"valid","configured":false,"upgrade":false}
+  ],
+  "forbidden_credential_locations": ["json","query","path","subprotocol","log"]
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://junction.local/contracts/ws-lifecycle.schema.json",
+  "title": "Proposed metalab.v2 lifecycle messages",
+  "description": "REQ-WS-04 / REQ-PRIV-03. Only after successful metalab.v2 subprotocol negotiation. This separate schema does not change legacy messages or implement runtime behavior. See LIFECYCLE.md for direction, ordering, expiry and auth.",
+  "oneOf": [
+    { "$ref": "#/$defs/cancel" },
+    { "$ref": "#/$defs/cancelled" },
+    { "$ref": "#/$defs/sessionEnd" },
+    { "$ref": "#/$defs/sessionEnded" },
+    { "$ref": "#/$defs/lifecycleError" }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "cancel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id"],
+      "properties": {
+        "type": { "const": "cancel" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "cancelled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id"],
+      "properties": {
+        "type": { "const": "cancelled" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "sessionEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id"],
+      "properties": {
+        "type": { "const": "session_end" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "sessionEnded": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id", "cleanup"],
+      "properties": {
+        "type": { "const": "session_ended" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "cleanup": { "const": "complete" }
+      }
+    },
+    "lifecycleError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id", "code"],
+      "properties": {
+        "type": { "const": "lifecycle_error" },
+        "request_id": { "$ref": "#/$defs/id" },
+        "session_id": { "$ref": "#/$defs/id" },
+        "code": {
+          "enum": ["unknown_request", "session_unavailable", "session_mismatch", "duplicate_request"]
+        }
+      }
+    }
+  }
+}
