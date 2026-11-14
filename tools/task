@@ -85,8 +85,13 @@ cmd_next() {
   local first_num="" first_title="" first_body="" first_area=""
   local best_num="" best_title="" best_body="" best_area=""
 
-  list="$(ready_tasks)" || die "could not list tasks from GitHub; retry later"
   my_a="$(my_areas)"
+  # Without an owned area the first ready task is the answer, so stop there.
+  if [ -n "$my_a" ]; then
+    list="$(ready_tasks)" || die "could not list tasks from GitHub; retry later"
+  else
+    list="$(ready_tasks 1)" || die "could not list tasks from GitHub; retry later"
+  fi
 
   while IFS=$'\t' read -r number encoded_title encoded_body; do
     [ -n "$number" ] || continue

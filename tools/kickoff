@@ -48,7 +48,7 @@ cmd_assign() {
   local known_areas
   known_areas="$(extract_areas)"
   [ -n "$known_areas" ] || die "could not parse area table from AGENTS.md"
-  printf '%s\n' "$known_areas" | grep -qx "$area" || \
+  printf '%s\n' "$known_areas" | grep -Fxq -- "$area" || \
     die "unknown area '$area'. Known: $(printf '%s\n' "$known_areas" | tr '\n' ' ' | sed 's/ $//')"
 
   local tmp
