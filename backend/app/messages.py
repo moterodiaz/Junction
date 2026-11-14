@@ -56,28 +56,48 @@ class Status(BaseModel):
     stage: Stage
 
 
+# The contract's httpsUrl pattern (ws-messages.schema.json).
+HttpsUrl = Annotated[str, StringConstraints(pattern=r"^https://[^\s/?#]+[^\s]*$")]
+
+
 class Book(BaseModel):
-    title: str
-    author: str
-    location: str
+    model_config = ConfigDict(extra="forbid")
+
+    title: NonEmpty
+    author: NonEmpty
+    location: NonEmpty
 
 
 class Source(BaseModel):
-    title: str
-    url: str
+    model_config = ConfigDict(extra="forbid")
+
+    title: NonEmpty
+    url: HttpsUrl
 
 
 class Card(BaseModel):
+    """A card that cannot be built unless it meets the contract (#112)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["card"] = "card"
-    request_id: str
-    title: str
-    caption: str
+    request_id: NonEmpty
+    title: NonEmpty
+    caption: NonEmpty
+    # Not constrained here: image and audio URLs come from our own https-only code, and the
+    # contracts drift test relies on a bad one reaching the wire to prove the harness reports it.
     image_url: Optional[str]
-    speech_text: str
+    speech_text: NonEmpty
     audio_url: Optional[str] = None
     book: Book
     sources: list[Source]
-    models: dict[str, str]
+    models: dict[str, NonEmpty]  # a plain dict for callers; exactly read, reason and image
+
+    @model_validator(mode="after")
+    def models_are_the_three_stages(self) -> "Card":
+        if set(self.models) != {"read", "reason", "image"}:
+            raise ValueError("models must name exactly read, reason and image")
+        return self
 
 
 ErrorCode = Literal["no_text_found", "stt_failed", "model_timeout", "internal"]
