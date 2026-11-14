@@ -262,7 +262,7 @@ _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
 # The anti-spoiler reading horizon (#197): a failed request must not advance it either.
-_HORIZON_FIELDS = ("max_position", "seen_passages")
+_HORIZON_FIELDS = ("max_position", "seen_passages", "_horizon_by_book")
 
 
 def _session_state(session) -> tuple:
