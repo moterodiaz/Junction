@@ -126,6 +126,42 @@ class DisconnectTest(unittest.TestCase):
         self.assertEqual(finals, [("card", "r1"), ("card", "r2")])
         self.assertEqual(len(history(session)), 2)
 
+    def test_disconnect_with_a_queued_request_still_cancels(self):
+        session = f"queued-dc-{time.monotonic_ns()}"
+
+        async def go(url):
+            async with websockets.connect(url) as ws:
+                await ws.send(json.dumps(invoke("r1", session)))
+                await replies_until(ws, 1, until_stage="thinking")
+                await ws.send(json.dumps(invoke("r2", session)))
+                await asyncio.sleep(0.2)
+
+        with real_server() as url:
+            asyncio.run(go(url))
+            self.assertTrue(self.model.cancelled.wait(2), "a queued message hid the disconnect")
+        self.assertEqual(history(session), [])
+
+    def test_disconnect_while_drawing_forgets_the_exchange(self):
+        session = f"drawing-dc-{time.monotonic_ns()}"
+        drawing = threading.Event()
+
+        async def hold(*args, **kwargs):
+            drawing.set()
+            await asyncio.sleep(30)
+
+        async def go(url):
+            async with websockets.connect(url) as ws:
+                await ws.send(json.dumps(invoke(session_id=session)))
+                await replies_until(ws, 1, until_stage="drawing")
+                await asyncio.sleep(0.2)
+
+        self.model.release.set()
+        with mock.patch("app.pipeline.draw", hold), real_server() as url:
+            asyncio.run(go(url))
+            self.assertTrue(drawing.wait(2))
+            time.sleep(0.3)
+        self.assertEqual(history(session), [])
+
     def test_reconnecting_works_and_other_sessions_are_untouched(self):
         kept, dropped = f"kept-{time.monotonic_ns()}", f"dropped-{time.monotonic_ns()}"
 

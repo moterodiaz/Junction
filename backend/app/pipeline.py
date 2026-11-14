@@ -19,7 +19,7 @@ import stt
 from stt.speak import speak
 from ai import image
 from ai import page_reader
-from ai.reasoning import resolve_reason_model
+from ai.reasoning import default_session_store, resolve_reason_model
 from ai import think as _ai_think
 
 from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
@@ -158,9 +158,16 @@ def _image_model() -> str:
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
+    history = default_session_store.get_or_create(invoke.session_id).history
+    before = list(history)
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
             return await _run(invoke, send_stage)
+    except asyncio.CancelledError:
+        # The phone hung up: forget what this request recorded (think saves before drawing), nothing else.
+        for exchange in [e for e in history if not any(e is b for b in before)]:
+            history.remove(exchange)
+        raise
     except TimeoutError as exc:
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
 

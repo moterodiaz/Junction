@@ -53,32 +53,38 @@ async def ws(websocket: WebSocket) -> None:
     that arrives meanwhile is handled next (#111)."""
     await websocket.accept()
     receiving: asyncio.Task | None = None
+    handling: asyncio.Task | None = None
+    queued: list[str | bytes] = []
     try:
         while True:
+            if handling is None and queued:
+                handling = asyncio.create_task(handle(websocket, queued.pop(0)))
             receiving = receiving or asyncio.create_task(websocket.receive())
-            event = await receiving
+            waiting = {receiving} if handling is None else {receiving, handling}
+            await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+            if handling is not None and handling.done():
+                await handling
+                handling = None
+            if not receiving.done():
+                continue
+            event = receiving.result()
             receiving = None
             if event["type"] == "websocket.disconnect":
                 break
             raw = event.get("text")
             if raw is None:
                 raw = event.get("bytes")  # the iPhone client sends JSON as binary frames
-            if raw is None:
-                continue
-            handling = asyncio.create_task(handle(websocket, raw))
-            receiving = asyncio.create_task(websocket.receive())
-            await asyncio.wait({handling, receiving}, return_when=asyncio.FIRST_COMPLETED)
-            if receiving.done() and receiving.result()["type"] == "websocket.disconnect":
-                handling.cancel()
-                with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect):
-                    await handling
-                break
-            await handling  # a new message (if any) waits in `receiving` for the next turn
+            if raw is not None:
+                queued.append(raw)  # handled in order; reading continues so a disconnect is seen
     except WebSocketDisconnect:
         pass
     finally:
-        if receiving is not None and not receiving.done():
-            receiving.cancel()
+        tasks = [t for t in (receiving, handling) if t is not None]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 async def handle(websocket: WebSocket, raw: str | bytes) -> None:
