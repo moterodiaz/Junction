@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import logging
 import os
 import threading
@@ -55,10 +54,7 @@ UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this
 
 
 async def transcribe(audio: Media) -> str:
-    try:
-        clip = base64.b64decode(audio.b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise PipelineError("stt_failed", "The audio clip could not be decoded.", True) from exc
+    clip = base64.b64decode(audio.b64)  # Invoke validation (#85) guarantees valid base64
     # Take a slot before queueing so a stuck engine cannot pile up decoded clips; the slot is
     # released only when the worker really finishes, not when the request times out.
     if not _STT_SLOTS.acquire(blocking=False):
