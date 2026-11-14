@@ -34,6 +34,8 @@ from test_conformance import BACKEND_DIR, COMPARED, encode_like_ios, flow_proble
 DEFAULT_TIMEOUT_S = 300.0
 CONNECT_TIMEOUT_S = 15.0
 EXTRA_REPLY_WAIT_S = 0.5
+MAX_REPLIES_PER_SEND = 50
+MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 
 def remote_timeout() -> float:
@@ -54,11 +56,14 @@ def drive_remote(url: str, exchange: dict, timeout: float) -> list[dict]:
     error, plus any extra reply that arrives shortly after. Raises TimeoutError when a receive
     waits longer than `timeout`, and ValueError on a reply that is not a JSON object."""
     replies: list[dict] = []
-    with connect(url, open_timeout=min(timeout, CONNECT_TIMEOUT_S), max_size=None) as ws:
+    max_replies = MAX_REPLIES_PER_SEND * len(exchange["send"])
+    with connect(url, open_timeout=min(timeout, CONNECT_TIMEOUT_S), max_size=MAX_MESSAGE_BYTES) as ws:
         for frame in exchange["send"]:
             send_remote(ws, frame)
         done = 0
         while done < len(exchange["send"]):
+            if len(replies) >= max_replies:
+                raise ValueError(f"{len(replies)} replies without a card or error for every send")
             reply = parse(ws.recv(timeout=timeout))
             replies.append(reply)
             done += reply.get("type") in ("card", "error")
@@ -154,8 +159,10 @@ class LocalServerRemoteModeTests(unittest.TestCase):
             except OSError:
                 pass
             if cls.server.poll() is not None or time.monotonic() > deadline:
+                cls.log.seek(0)
+                output = cls.log.read().decode(errors="replace")[-4000:]
                 cls.tearDownClass()
-                raise RuntimeError("local uvicorn did not become healthy within 30 s")
+                raise RuntimeError(f"local uvicorn did not become healthy within 30 s:\n{output}")
             time.sleep(0.2)
 
     @classmethod
