@@ -6,4 +6,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 [ -x .venv/bin/python ] || python3 -m venv .venv
 .venv/bin/python -m pip install -q --disable-pip-version-check -r requirements.txt
-timeout 300 .venv/bin/python -m unittest discover -s . -t . -p 'test_*.py' -v
+if command -v timeout >/dev/null 2>&1; then
+  run_with_deadline() { timeout 300 "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then
+  run_with_deadline() { gtimeout 300 "$@"; }
+else
+  run_with_deadline() { "$@"; }
+fi
+run_with_deadline .venv/bin/python -m unittest discover -s . -t . -p 'test_*.py' -v
