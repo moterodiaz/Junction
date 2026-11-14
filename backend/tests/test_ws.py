@@ -6,6 +6,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+import stt
 from ai.page_reader import DEFAULT_MODEL_READ, NoTextFoundError, PageReadTimeoutError, StubNemotronClient
 from app import pipeline
 from app.main import app
@@ -104,6 +105,8 @@ class WsTest(unittest.TestCase):
         self.assertEqual(reply["message"], "Invalid request.")
 
     def test_audio_command_adds_transcribing_stage(self):
+        stt.set_engine(lambda audio: "explain")
+        self.addCleanup(stt.set_engine, None)
         replies = exchange(invoke(text=None, audio={"mime": "audio/wav", "b64": "AAAA"}), 5)
         self.assertEqual([r.get("stage") for r in replies[:4]],
                          ["transcribing", "reading", "thinking", "drawing"])
