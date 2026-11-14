@@ -8,6 +8,7 @@ Secrets never live in the repo.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -32,8 +33,95 @@ DEFAULTS = {
 }
 
 
+# The phone gives up after 30 s without a message and 90 s in total (PRD section 7).
+PHONE_IDLE_LIMIT_S = 30.0
+PHONE_TOTAL_LIMIT_S = 90.0
+DEFAULT_MAX_CONNECTIONS = 20  # matches @modal.concurrent(max_inputs=20) in modal_app.py
+ON, OFF = ("on", "1", "true", "yes"), ("", "off", "0", "false", "no")
+
+
 class ConfigError(RuntimeError):
-    """A required environment variable is missing or empty."""
+    """A required environment variable is missing, empty or invalid."""
+
+
+@dataclass(frozen=True)
+class AuthConfig:
+    """Optional bearer auth on the /ws handshake (contracts/LIFECYCLE.md, "Optional auth handoff").
+
+    Off by default. Enable (WS_AUTH=on) only after the iOS client is shown to send the
+    Authorization header over WSS and the owners agree the rollout. `ready` is False when auth
+    is on but cannot verify (no token, unknown WS_AUTH value): every handshake then fails closed.
+    """
+
+    enabled: bool
+    ready: bool
+    token: str = field(repr=False, default="")
+
+
+def auth_config(env: Mapping[str, str] | None = None) -> AuthConfig:
+    env = os.environ if env is None else env
+    mode = env.get("WS_AUTH", "").strip().lower()
+    token = env.get("WS_AUTH_TOKEN", "").strip()
+    if mode in OFF:
+        return AuthConfig(enabled=False, ready=True)
+    return AuthConfig(enabled=True, ready=mode in ON and bool(token), token=token)
+
+
+def trust_forwarded_proto(env: Mapping[str, str] | None = None) -> bool:
+    """Whether X-Forwarded-Proto may prove TLS. Turn on only where every request reaches the app
+    through a proxy that sets it (Modal); off, only the server's own connection scheme counts."""
+    env = os.environ if env is None else env
+    return env.get("WS_TRUST_FORWARDED_PROTO", "").strip().lower() in ON
+
+
+def max_connections(env: Mapping[str, str] | None = None) -> int:
+    env = os.environ if env is None else env
+    try:
+        value = int(env.get("WS_MAX_CONNECTIONS", "").strip() or DEFAULT_MAX_CONNECTIONS)
+    except ValueError:
+        return DEFAULT_MAX_CONNECTIONS
+    return value if value >= 1 else DEFAULT_MAX_CONNECTIONS
+
+
+def config_problems(env: Mapping[str, str]) -> list[str]:
+    """Deployed-config mistakes that would break the phone's deadlines or the auth contract.
+    Messages name the variable, never a secret value."""
+    problems = []
+
+    def seconds(name: str, default: float) -> float | None:
+        raw = env.get(name, "").strip()
+        try:
+            value = float(raw) if raw else default
+        except ValueError:
+            problems.append(f"{name} must be a number of seconds")
+            return None
+        if not math.isfinite(value) or value <= 0:
+            problems.append(f"{name} must be a finite number above 0")
+            return None
+        return value
+
+    stage = seconds("STAGE_TIMEOUT_S", 25.0)
+    request = seconds("REQUEST_TIMEOUT_S", 85.0)
+    if stage is not None and stage >= PHONE_IDLE_LIMIT_S:
+        problems.append(f"STAGE_TIMEOUT_S must be below the phone's {PHONE_IDLE_LIMIT_S:g} s idle limit")
+    if request is not None and request >= PHONE_TOTAL_LIMIT_S:
+        problems.append(f"REQUEST_TIMEOUT_S must be below the phone's {PHONE_TOTAL_LIMIT_S:g} s limit")
+    if stage is not None and request is not None and stage > request:
+        problems.append("STAGE_TIMEOUT_S must not exceed REQUEST_TIMEOUT_S")
+
+    mode = env.get("WS_AUTH", "").strip().lower()
+    if mode not in ON + OFF:
+        problems.append("WS_AUTH must be on or off")
+    elif mode in ON and not env.get("WS_AUTH_TOKEN", "").strip():
+        problems.append("WS_AUTH is on but WS_AUTH_TOKEN is empty")
+
+    if env.get("WS_TRUST_FORWARDED_PROTO", "").strip().lower() not in ON + OFF:
+        problems.append("WS_TRUST_FORWARDED_PROTO must be on or off")
+
+    raw = env.get("WS_MAX_CONNECTIONS", "").strip()
+    if raw and (not raw.isdigit() or int(raw) < 1):
+        problems.append("WS_MAX_CONNECTIONS must be a whole number of at least 1")
+    return problems
 
 
 @dataclass(frozen=True)
@@ -52,7 +140,8 @@ class Settings:
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
-    """Build Settings from env (default os.environ); raise ConfigError listing every missing variable."""
+    """Build Settings from env (default os.environ); raise ConfigError listing every missing
+    variable, then every invalid one (config_problems)."""
     env = os.environ if env is None else env
 
     def get(name: str) -> str:
@@ -66,6 +155,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             "locally, export them in your shell (see backend/.env.example for the names); "
             "this module does not read .env files."
         )
+    problems = config_problems(env)
+    if problems:
+        raise ConfigError("Invalid configuration: " + "; ".join(problems) + ".")
 
     return Settings(
         nvidia_api_key=get("NVIDIA_API_KEY"),

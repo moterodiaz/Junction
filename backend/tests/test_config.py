@@ -1,6 +1,6 @@
 import unittest
 
-from app.config import DEFAULTS, ConfigError, Settings, load_settings
+from app.config import DEFAULTS, ConfigError, Settings, auth_config, load_settings, max_connections
 
 KEYS = {"NVIDIA_API_KEY": "nv-secret", "GEMINI_API_KEY": "gm-secret"}
 
@@ -64,6 +64,76 @@ class LoadSettingsTest(unittest.TestCase):
         r = repr(load_settings(KEYS))
         self.assertNotIn("nv-secret", r)
         self.assertNotIn("gm-secret", r)
+
+
+class DeployValidationTest(unittest.TestCase):
+    """A deploy fails at startup, naming each problem, on config that would break the phone's
+    deadlines or the auth contract (#133). Secret values never appear in the message."""
+
+    def problems(self, **env):
+        with self.assertRaises(ConfigError) as ctx:
+            load_settings({**KEYS, **env})
+        return str(ctx.exception)
+
+    def test_valid_overrides_pass(self):
+        load_settings({**KEYS, "STAGE_TIMEOUT_S": "20", "REQUEST_TIMEOUT_S": "80", "WS_AUTH": "off",
+                       "WS_MAX_CONNECTIONS": "5"})
+        load_settings({**KEYS, "WS_AUTH": "on", "WS_AUTH_TOKEN": "s3cret"})
+
+    def test_timeouts_must_fit_inside_the_phone_limits(self):
+        self.assertIn("STAGE_TIMEOUT_S must be below the phone's 30 s idle limit", self.problems(STAGE_TIMEOUT_S="30"))
+        self.assertIn("REQUEST_TIMEOUT_S must be below the phone's 90 s limit", self.problems(REQUEST_TIMEOUT_S="95"))
+        self.assertIn("STAGE_TIMEOUT_S must not exceed REQUEST_TIMEOUT_S",
+                      self.problems(STAGE_TIMEOUT_S="25", REQUEST_TIMEOUT_S="20"))
+
+    def test_timeouts_must_be_positive_numbers(self):
+        self.assertIn("STAGE_TIMEOUT_S must be a number of seconds", self.problems(STAGE_TIMEOUT_S="soon"))
+        self.assertIn("REQUEST_TIMEOUT_S must be a finite number above 0", self.problems(REQUEST_TIMEOUT_S="0"))
+        for name in ("STAGE_TIMEOUT_S", "REQUEST_TIMEOUT_S"):
+            for value in ("nan", "inf", "-inf"):
+                with self.subTest(name=name, value=value):
+                    self.assertIn(f"{name} must be a finite number above 0", self.problems(**{name: value}))
+
+    def test_every_problem_is_named_at_once(self):
+        msg = self.problems(STAGE_TIMEOUT_S="40", WS_AUTH="on", WS_MAX_CONNECTIONS="0")
+        for part in ("STAGE_TIMEOUT_S", "WS_AUTH is on but WS_AUTH_TOKEN is empty", "WS_MAX_CONNECTIONS"):
+            self.assertIn(part, msg)
+
+    def test_auth_mode_must_be_on_or_off(self):
+        self.assertIn("WS_AUTH must be on or off", self.problems(WS_AUTH="maybe", WS_AUTH_TOKEN="s3cret"))
+
+    def test_forwarded_proto_trust_must_be_on_or_off(self):
+        self.assertIn("WS_TRUST_FORWARDED_PROTO must be on or off", self.problems(WS_TRUST_FORWARDED_PROTO="yes please"))
+        load_settings({**KEYS, "WS_TRUST_FORWARDED_PROTO": "on"})
+
+    def test_messages_never_contain_secret_values(self):
+        msg = self.problems(WS_AUTH="maybe", WS_AUTH_TOKEN="s3cret", STAGE_TIMEOUT_S="99")
+        for secret in ("s3cret", "nv-secret", "gm-secret"):
+            self.assertNotIn(secret, msg)
+
+
+class AuthConfigTest(unittest.TestCase):
+    def test_off_unless_turned_on(self):
+        for mode in ("", "off", "0", "false", "no", "OFF"):
+            self.assertFalse(auth_config({"WS_AUTH": mode, "WS_AUTH_TOKEN": "t"}).enabled)
+
+    def test_on_needs_a_token_to_be_ready(self):
+        self.assertTrue(auth_config({"WS_AUTH": "on", "WS_AUTH_TOKEN": "t"}).ready)
+        self.assertFalse(auth_config({"WS_AUTH": "on"}).ready)
+
+    def test_unknown_mode_is_enabled_but_not_ready(self):
+        auth = auth_config({"WS_AUTH": "maybe", "WS_AUTH_TOKEN": "t"})
+        self.assertTrue(auth.enabled)
+        self.assertFalse(auth.ready)
+
+    def test_repr_hides_the_token(self):
+        self.assertNotIn("s3cret", repr(auth_config({"WS_AUTH": "on", "WS_AUTH_TOKEN": "s3cret"})))
+
+    def test_connection_cap_defaults_to_modal_concurrency(self):
+        self.assertEqual(max_connections({}), 20)
+        self.assertEqual(max_connections({"WS_MAX_CONNECTIONS": "3"}), 3)
+        self.assertEqual(max_connections({"WS_MAX_CONNECTIONS": "lots"}), 20)
+        self.assertEqual(max_connections({"WS_MAX_CONNECTIONS": "0"}), 20)
 
 
 if __name__ == "__main__":
