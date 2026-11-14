@@ -1,8 +1,14 @@
 name: trust
 
+# DISABLED (2026-11-14): removed from the required checks and the workflow disabled because of GitHub API
+# rate limits, not because the gate fails or cannot work. Evaluating PRs exhausted the Actions installation
+# quota, so runs failed closed and blocked merges. The gate logic (tools/metrics --gate,
+# tools/tests/trust_gate.test.sh) is unchanged and correct. To re-enable: `gh workflow enable trust.yml`,
+# then add `trust` back to the main-protect ruleset required checks, once quota use is understood.
+#
 # Posts the commit status `trust` on each open PR's head (REQ-PROC-02, #186). It fails while the PR touches an
 # area with an open `escape` issue and neither that area's owner nor the lead has approved the head commit
-# (tools/metrics --gate). Required in the main-protect ruleset, it holds auto-merge, claude-fix's included.
+# (tools/metrics --gate). NOT currently required in the main-protect ruleset (see DISABLED note above); it holds auto-merge, claude-fix's included.
 # The job is not named `trust`: a job's own check run would carry that name and pass even when the status fails.
 # Single serial group: at most one run writes `trust` at a time, preventing a stale success from overwriting a
 # failure. pull_request events also cover open PRs with no trust status yet so a dropped queued run cannot
