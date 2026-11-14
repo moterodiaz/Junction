@@ -85,6 +85,40 @@ class SpeakTest(SpeakBase):
         with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": ""}):
             self.assertIsNone(self.card()["audio_url"])
 
+    def test_http_base_is_upgraded_to_https(self):
+        speak.set_speech_client(StubSpeech())
+        with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": "http://metalab.example"}):
+            card = self.card()
+            self.assertIsNotNone(card["audio_url"])
+            self.assertTrue(card["audio_url"].startswith(BASE + "/audio/"))
+
+    def test_bare_host_base_is_upgraded_to_https(self):
+        speak.set_speech_client(StubSpeech())
+        with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": "metalab.example"}):
+            card = self.card()
+            self.assertIsNotNone(card["audio_url"])
+            self.assertTrue(card["audio_url"].startswith(BASE + "/audio/"))
+
+    def test_logging_never_echoes_speech_text_on_failure(self):
+        secret_user_speech = "SUPER_SECRET_USER_WORDS_12345"
+        speak.set_speech_client(StubSpeech(error=RuntimeError("upstream tts quota error")))
+        with self.assertLogs("metalab.speak", level="INFO") as captured:
+            url = asyncio.run(speak.speak(secret_user_speech, "s1"))
+        self.assertIsNone(url)
+        log_text = " ".join(captured.output)
+        self.assertNotIn(secret_user_speech, log_text)
+        self.assertIn("RuntimeError", log_text)
+
+    def test_logging_never_echoes_speech_text_when_skipped(self):
+        secret_user_speech = "SUPER_SECRET_USER_WORDS_67890"
+        speak.set_speech_client(None)
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            with self.assertLogs("metalab.speak", level="INFO") as captured:
+                url = asyncio.run(speak.speak(secret_user_speech, "s1"))
+            self.assertIsNone(url)
+            log_text = " ".join(captured.output)
+            self.assertNotIn(secret_user_speech, log_text)
+
     def test_unknown_clip_is_404(self):
         self.assertEqual(TestClient(app).get("/audio/nope.wav").status_code, 404)
 
