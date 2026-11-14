@@ -4,7 +4,7 @@ Requirement: REQ-HOST-01. PRD §12.12. Owner: Mateo (@moterodiaz, lead).
 
 This file keeps one state per challenge, and records separately what ran live, what is only configured, and what is missing (credentials, forms, sponsor confirmation). **No track is submitted, and none is marked submission-ready.** The drafts in section 3 are not sent anywhere. Sending them needs the lead's separate decision.
 
-Sources: `docs/evidence/base-live.md` (live runs v1 to v5; v6 is in `TRUST.md`; v7 is not yet recorded), `backend/ai/DELIVERY_EVIDENCE.md` (configured models), `backend/app/DELIVERY_EVIDENCE.md`, `ios/DELIVERY_EVIDENCE.md`. Revision: `main` at `9d10e28`, 2026-11-15.
+Sources: `docs/evidence/base-live.md` (live runs v1 to v7; v6 and v7 in "Live reruns after v6 and v7"), `backend/ai/DELIVERY_EVIDENCE.md` (configured models), `backend/app/DELIVERY_EVIDENCE.md`, `ios/DELIVERY_EVIDENCE.md`. Revision: `main` at `9d10e28`, 2026-11-15.
 
 ## 1. Per-challenge state
 
@@ -14,7 +14,7 @@ Sources: `docs/evidence/base-live.md` (live runs v1 to v5; v6 is in `TRUST.md`; 
 | Gemini (tech 48) | implementation present, partly validated | 2026-11-14/15, v5 to v7: cards report reasoning `gemini-4-hydrogen` and image `gemini-nano-banana-2.1`. The illustration was fetched over HTTPS (HTTP 200, `image/png`). Grounded Hamlet citation correct | Speech (`gemini-3.8-flash-tts`) fails live on every deploy so far (#226). `models.reason` is the requested name, not one the provider confirmed. Billing and quota not checked |
 | Modal (tech 40) | implementation present, partly validated | App `metalab` deployed v5 `5d1a6ee`, v6 `53b35ff` and v7 `9d10e28` by the lead. Public endpoint `wss://junction26-vision--metalab-web.us-east.modal.run/ws`, `/health` 200. Whisper `small.en` runs on Modal: synthesized speech was transcribed live (`transcribing` stage, then a correct card) | A human voice has not been tested. No load test. GPU not used; the CPU image only |
 | Nemotron (tech 46) | implementation present, live contribution seen | The metadata probes on the first live build and on v5 reported read model `nemotron-3.5-super-vl`, so the Gemini reading fallback was not used on those requests. The strict runs on v6 and v7 do not print `models` | The model-use note (draft in section 3) is not submitted. A per-request share of Nemotron vs fallback over many requests is not measured |
-| Verda (tech 56) | candidate | Nothing. The configured reader endpoint is NVIDIA's hosted API (`integrate.api.nvidia.com`). Nothing in the repo points at Verda | The deployed `NVIDIA_BASE_URL` host (@Marcus228, host only); Verda's written confirmation of eligibility; a dated Nemotron request through a Verda endpoint. The Discord summary is drafted only (section 3). No move off Modal |
+| Verda (tech 56) | candidate | No recorded Verda request. The repo default reader endpoint is NVIDIA's hosted API (`integrate.api.nvidia.com`), but the deployed secret can override `NVIDIA_BASE_URL`, so the live host is unverified | The deployed `NVIDIA_BASE_URL` host (@Marcus228, host only); Verda's written confirmation of eligibility; a dated Nemotron request through a Verda endpoint. The Discord summary is drafted only (section 3). No move off Modal |
 
 ## 2. Endpoint and model ledger
 
@@ -25,7 +25,7 @@ Sources: `docs/evidence/base-live.md` (live runs v1 to v5; v6 is in `TRUST.md`; 
 | Reading fallback | `gemini-4-hydrogen` | not seen live | `backend/ai/page_reader.py` |
 | Reasoning | `gemini-4-argon` (default) | `gemini-4-hydrogen` | Differs from the default; the secret probably overrides `MODEL_REASON`. Not checked |
 | Image | `gemini-nano-banana-2.1` | `gemini-nano-banana-2.1` | `backend/ai/image.py` |
-| Speech out | `gemini-3.8-flash-tts` | none (`audio_url` null) | Not yet recorded in a cited file: the v7 run (404 "model not found" on the Interactions API, #226) is the lead's report; its date, command and error text are still to be added to `base-live.md`. Recorded: v6 `400 INVALID_ARGUMENT` in `TRUST.md` |
+| Speech out | `gemini-3.8-flash-tts` | none (`audio_url` null) | v6: `400 INVALID_ARGUMENT` ("Unknown name speechConfig"); v7: Interactions API `404` "Model 'gemini-3.8-flash-tts' not found" (`base-live.md`, "Live reruns after v6 and v7"; #226) |
 | Speech in | faster-whisper `small.en` on Modal | used (spoken case reached a card) | `backend/stt/` |
 
 No keys, prompts, page text or responses are recorded here.
