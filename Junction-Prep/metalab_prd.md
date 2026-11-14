@@ -80,12 +80,23 @@ Agents working in `ios/` should read `https://wearables.developer.meta.com/llms.
 | Step | Model | Notes |
 |---|---|---|
 | Read the page | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Preserve the existing reader chain, including Gemini fallback (#99); do not revive dropped benchmark plan 006. Configured NVIDIA-compatible endpoint and actual deployment must be recorded separately. `card.models.read` names the reader that actually succeeded, never the intended sponsor. Text output only; thinking off in the established configuration. |
-| Reason | `gemini-4-argon` to start | `gemini-4-carbon` is stronger and slower, `gemini-4-hydrogen` is faster. 1M-token context, which is what makes whole-book memory cheap to build. |
-| Draw | `gemini-nano-banana-2.1` | `gemini-3.1-flash-lite-image` is the faster, cheaper fallback. Image models need pay-as-you-go billing. |
-| Speech to text | faster-whisper on Modal | `gemini-3.5-transcribe` is the alternative if the GPU cold start hurts. |
-| Spoken answer | `gemini-3.8-flash-tts` | Existing base provider. Optional ElevenLabs uses the same answer text and `audio_url`; provider failure retains the base/system-voice fallback. |
+| Decision routing | `gemini-decision-1` | Paid Tier 3 single-pass routing via `v1beta` `decisions.create` (`MODEL_DECISION`, default: `gemini-decision-1`). Evaluates structured questions (`action`, `task_tier`, `needs_image`, `speak_only`, plus dynamic `book_match`/`book_changed`, optional `style_preset`, and optional `spoiler_risk`). Bounded timeout (≤2.0s), with clean fallback to heuristic routing on error, timeout, low confidence (<0.50), or missing key. Never logs user text (REQ-PRIV-02). |
+| Reason | `gemini-4-argon` (balanced tier default) | `MODEL_REASON` is kept as a single string (`gemini-4-argon`). Fast tier: `gemini-3.5-flash-lite` (`MODEL_REASON_FAST`). Deep tier: `gemini-4-carbon` (`MODEL_REASON_DEEP`). Enabled when `DYNAMIC_MODEL_ROUTING=true` or via decision routing, falling back cleanly to `MODEL_REASON`. 1M-token context for whole-book memory. |
+| Draw | `gemini-nano-banana-2.1` | `MODEL_IMAGE` (default: `gemini-nano-banana-2.1`) soft-style fallback image gen with soft stylistic suggestions per book/style preset, preserving strict `#000000` black background and bright luminous contrast for Meta Ray-Ban Display additive optics. Faster/cheaper fallback: `gemini-3.1-flash-lite-image`. Image models need pay-as-you-go billing. |
+| Speech to text | faster-whisper on Modal | `STT_ENGINE=whisper|gemini` (default: `whisper`). Optional `gemini-3.5-transcribe` provides vocabulary-biased Shakespeare speech recognition with clean fallback to faster-whisper. |
+| Spoken answer | `gemini-3.8-flash-tts` | Existing base provider (`MODEL_TTS`, default: `gemini-3.8-flash-tts`). 16-bit mono PCM at 24 kHz via `Kore` voice, served as WAV at `card.audio_url`. Optional ElevenLabs uses the same answer text and `audio_url`; provider failure retains the base/system-voice fallback. |
 
 Do not use `gemini-2.5-flash`, `gemini-2.5-flash-image` or Imagen. They are deprecated or shut down.
+
+#### Paid Tier 3 Gemini Stack & Priority Architecture
+
+- **Single-Pass Decision Routing (`gemini-decision-1`):** A bounded Gemini Decisions API call evaluates student utterance and context in a single pass via `v1beta` `client.aio.decisions.create`. It resolves structured questions (`action`, `task_tier`, `needs_image`, `speak_only`, and candidate book matching) within `DECISION_TIMEOUT_S <= 2.0s`. Any timeout, error, low confidence (< 0.50), or missing key falls back gracefully to deterministic heuristic routing (`fallback_decide`) without logging user utterances (REQ-PRIV-02).
+- **Dynamic Tiered Reasoning (`gemini-3.5-flash-lite` / `gemini-4-argon` / `gemini-4-carbon`):** `MODEL_REASON` remains backward-compatible as a single string (`gemini-4-argon`). When `DYNAMIC_MODEL_ROUTING=true` or decision routing is active, the engine selects between `MODEL_REASON_FAST` (`gemini-3.5-flash-lite`), `MODEL_REASON` balanced tier (`gemini-4-argon`), and `MODEL_REASON_DEEP` (`gemini-4-carbon`), optimizing latency and depth.
+- **Spoken Output (`gemini-3.8-flash-tts`):** Generates natural spoken responses in-memory using `Kore` voice at 24 kHz mono PCM, exposed at `card.audio_url`. Failure or missing keys fall back to `audio_url: null` with system voice on the client, never blocking card delivery.
+- **Soft-Style Fallback Image Generation (`gemini-nano-banana-2.1`):** Soft stylistic suggestions (e.g. dramatic lighting, ink crosshatch) are applied via prompt formatting, while strictly maintaining pure `#000000` black backgrounds and luminous subject contrast for Meta Ray-Ban Display additive optical displays (REQ-IMG-01).
+- **Modular DecisionQuestionSpec & Anti-Spoiler Horizon:** A modular question spec registry (`DecisionQuestionSpec`) allows extensible structured criteria. The `DECISION_ENABLE_SPOILER_CHECK` toggle activates `spoiler_risk` / `answerable_from_seen` evaluation against `BookSession.max_position` and `seen_passages` to prevent future plot reveals.
+- **Local Hamlet Grounding & Mid-Session Book Switching:** Hamlet text is grounded locally by Act/Scene/Line in milliseconds via `backend/ai/source_loader.py` `find_passage`. Dynamic `candidate_books` classification detects mid-session book switches. The `should_clarify_book` gate triggers `action="clarify"` only under the rare dual condition of `passage_score < 0.65` and `book_match_confidence < 0.70`, never triggering clarification when local grounding succeeds (>= 0.65) or book confidence is high.
+- **Zero-Contract-Change Status Earcons:** Auditory progress feedback (earcons) is handled client-side keyed to existing WebSocket `status` stages (`transcribing`, `reading`, `thinking`, `drawing`), requiring zero modifications to `contracts/ws-messages.schema.json`.
 
 Secrets live server-side in Modal secrets, never in the repo or phone. Existing required names and model defaults are in `backend/app/config.py` and `backend/.env.example`; optional-provider credentials must not become base startup requirements. Model IDs above describe configured choices, not successful usage evidence.
 
@@ -346,10 +357,22 @@ The lead paused the integration backlog (issues labelled `integration-paused`; r
 | Owner | Lane | Requirement |
 |---|---|---|
 | B / Maksym, @maksymmatviievskyi | LANE-B1 #184: get MetaLab working with the Meta web app SDK | REQ-IOS-03 |
-| C / Marcus, @Marcus228 | LANE-C1 #185: Gemini voice feedback and output, with a decision model in the workflow; then LANE-C2–C7 #194–#199 (Hamlet grounding and mid-session book, style classification, DeepMind docs sync, reading horizon, model-choice counters, optional Gemini transcription) | REQ-VOICE-02, REQ-SRC-01, REQ-INTENT-01, REQ-IMG-01, REQ-LAT-01, REQ-STT-01 |
+| C / Marcus, @Marcus228 | DeepMind priority lane (Order 1–7): #185 (`LANE-C1`), #194 (`LANE-C2`), #195 (`LANE-C3`), #196 (`LANE-C4`), #197 (`LANE-C5`), #198 (`LANE-C6`), #199 (`LANE-C7`) (Hamlet grounding and mid-session book, style classification, DeepMind docs sync, reading horizon, model-choice counters, optional Gemini transcription) | REQ-VOICE-02, REQ-SRC-01, REQ-INTENT-01, REQ-IMG-01, REQ-PROC-01, REQ-REASON-01, REQ-OBS-01, REQ-LAT-01, REQ-STT-01 |
 | A / Ahmed, @Ahm3d-KA | #182 (PR #183) escapes and per-area trust, then LANE-A2 #186: pipeline enforcement and Tieto presentation evidence (both done), then LANE-A3 #200: draft Gemini pitch deck and submission text (drafts only, done), then BASE-A2 #133: /ws transport hardening and optional auth (handed back from the backlog; `pipeline.py` changes wait for #194 and #129), then LANE-A5 #207: video scripts for both tracks and the Tieto submission text (drafts only) | REQ-PROC-01, REQ-PROC-02, REQ-HOST-01, REQ-WS-04, REQ-DEPLOY-01 |
 
 **Backlog ownership (lead decision, 2026-11-14).** Every open `integration-paused` issue is assigned to the lead, @moterodiaz. That changes who does the work, not who owns which area: the area owners in AGENTS.md §4 stay. Before editing another owner's folders, the lead agrees a handoff with that owner on the board. Paused work also waits behind overlapping priority-lane work: #129, and #139 after it, wait for Marcus's #194, which wires `backend/app/pipeline.py` grounding first. The lead handed #133 back to Ahmed as a lane task (2026-11-14); #139 still depends on it. The lead still respects every `blocked` label, `## Depends on` and evidence gate.
+
+**DeepMind Priority Lane Sequence (@Marcus228, Order 1–7):**
+1. **#185 (`LANE-C1`, Order 1):** Gemini voice feedback and output with a decision model in the workflow (`REQ-VOICE-02`).
+2. **#194 (`LANE-C2`, Order 2):** Ground Hamlet locally and classify active book mid-session (`REQ-SRC-01`, `REQ-INTENT-01`).
+3. **#195 (`LANE-C3`, Order 3):** Classify book visual style via Gemini Decisions with soft style conditioning (`REQ-IMG-01`, `REQ-VOICE-02`).
+4. **#196 (`LANE-C4`, Order 4):** Sync requirements, PRD, execution plan, and backend docs for DeepMind priority lane (`REQ-PROC-01`, `REQ-VOICE-02`).
+5. **#197 (`LANE-C5`, Order 5):** Modular DecisionQuestionSpec toggle for anti-spoiler reading horizon (`REQ-REASON-01`, `REQ-VOICE-02`).
+6. **#198 (`LANE-C6`, Order 6):** Track model-choice distribution counters safely without user content (`REQ-OBS-01`, `REQ-LAT-01`, `REQ-PRIV-02`).
+7. **#199 (`LANE-C7`, Order 7):** Optional Gemini transcription (`gemini-3.5-transcribe`) & status earcon polish (`REQ-VOICE-02`, `REQ-STT-01`).
+
+**Cross-Area Takeover Override:**
+By explicit lead agreement (@moterodiaz, 2026-11-14), @Marcus228 has cross-area takeover authority for priority-lane issues #185 and #194–#199 across `backend/ai/`, `backend/app/pipeline.py`, `backend/stt/`, client status earcons, and documentation, ensuring seamless end-to-end delivery of the DeepMind priority lane without blocked handoff delays.
 
 Each lane needs its owner's confirmation of problem, architecture and solution before code. LANE-B1 conflicts with §4 as written (web apps cannot use the camera or microphone): §4 stays authoritative and the iOS DAT client stays the shipped path until the owner confirms the exact SDK, platform and flow and §4 is changed by PR. Lane work keeps PRD §§6–7 and existing gates; it does not close or bypass any G0–G3 gate.
 
