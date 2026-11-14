@@ -15,9 +15,11 @@ on:
     types: [labeled]
 
 jobs:
-  # Adding the no-auto-merge label holds the PR at once, even if auto-merge was already enabled.
+  # Adding no-auto-merge or integration-paused holds the PR at once, even if auto-merge was already enabled.
   hold:
-    if: github.event_name == 'pull_request' && github.event.label.name == 'no-auto-merge'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.label.name == 'no-auto-merge' || github.event.label.name == 'integration-paused')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -26,12 +28,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ github.event.pull_request.number }}
+      LABEL: ${{ github.event.label.name }}
     steps:
       - name: Disable auto-merge
         run: |
           if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
             gh pr merge --disable-auto "$PR" --repo "$GITHUB_REPOSITORY"
-            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Held: \`no-auto-merge\` label added, so auto-merge is off. The owner merges (AGENTS.md §3 rule 9)."
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Held: \`$LABEL\` label added, so auto-merge is off. The owner merges (AGENTS.md §3 rules 9 and 10)."
           fi
 
   fix:
@@ -55,8 +58,17 @@ jobs:
       REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
     steps:
+      - name: Check integration-paused
+        id: pause
+        run: |
+          if out="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '[.labels[].name] | index("integration-paused") != null' 2>/dev/null)"; then
+            echo "paused=$out" >> "$GITHUB_OUTPUT"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
       # A missing secret otherwise passes green while doing nothing, stalling the PR silently.
       - name: Require Claude token
+        if: steps.pause.outputs.paused != 'true'
         env:
           TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
@@ -84,6 +96,13 @@ jobs:
           head_repo="$(jq -r '.head.repo.full_name' <<<"$pr_json")"
           if [[ "$head_repo" != "$REPO" ]]; then
             echo "Fork PR; refusing to push."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Checked at run time, so a fix queued before the pause also stops here (AGENTS.md §3 rule 10).
+          if jq -e '[.labels[].name] | index("integration-paused") != null' <<<"$pr_json" >/dev/null; then
+            echo "PR is labelled integration-paused; claude-fix does not run until the lead releases it."
+            gh pr merge --disable-auto "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -201,8 +220,25 @@ jobs:
           else
             echo "push=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Push fixes
+      - name: Recheck integration-paused
+        id: recheck
         if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if labels_out="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels --jq '[.labels[].name] | index("integration-paused") != null')"; then
+            if [ "$labels_out" = "true" ]; then
+              echo "integration-paused label detected on recheck; skipping push."
+              echo "paused=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "paused=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "::warning::label recheck failed; treating as paused (fail-closed)."
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Push fixes
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
         env:
           BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
@@ -211,7 +247,7 @@ jobs:
       # Pushes made with GITHUB_TOKEN do not trigger pull_request workflows, so the
       # required `ci` check would stay pending on the new head. Dispatch it explicitly.
       - name: Re-run ci on the fixed head
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
         env:
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
         run: gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
@@ -219,7 +255,7 @@ jobs:
       # Done in the workflow, not by the model (its tool list denies `gh pr merge`). AGENTS.md §3 rule 9:
       # auto-merge only when no protected path changed; GitHub still waits for the required checks.
       - name: Enable auto-merge when review threads are resolved
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
         shell: bash  # pipefail: a failed graphql call must fail the step, not read as 0 open threads
         env:
           BEFORE_SHA: ${{ steps.before.outputs.sha }}
@@ -235,11 +271,11 @@ jobs:
           # Match in jq on the raw JSON names, old and new, so renames and odd filenames cannot slip past.
           protected="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
             --jq '[.[] | .filename, (.previous_filename // empty) | select(test("^(\\.github|\\.claude|\\.agents|contracts)/"))] | join(" ")' | tr '\n' ' ' | sed 's/^ *//; s/ *$//')"
-          no_auto="$(gh api "repos/$REPO/issues/$PR_NUMBER" --jq '[.labels[].name] | index("no-auto-merge") != null')"
+          no_auto="$(gh api "repos/$REPO/issues/$PR_NUMBER" --jq '[.labels[].name] | (index("no-auto-merge") != null or index("integration-paused") != null)')"
           if [ -n "$protected" ] || [ "$no_auto" = true ]; then
             reason="touches protected paths ($protected)"
             if [ "$no_auto" = true ]; then
-              reason="is labelled no-auto-merge"
+              reason="is labelled no-auto-merge or integration-paused"
               # A hold also cancels an auto-merge someone enabled earlier.
               gh pr merge --disable-auto "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true
             fi
@@ -289,7 +325,7 @@ jobs:
           fi
 
       - name: Alert on failure
-        if: failure()
+        if: failure() && steps.pause.outputs.paused != 'true'
         shell: bash
         run: |
           author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login || true)"

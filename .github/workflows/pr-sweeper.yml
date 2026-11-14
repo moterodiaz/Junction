@@ -49,8 +49,8 @@ jobs:
           seen() { grep -qF -- "$1" <<<"$recent"; }
 
           gh pr list -R "$REPO" --state open --limit 200 \
-            --json number,author,isDraft,createdAt,mergeStateStatus,reviews,comments,statusCheckRollup \
-            --jq '.[] | select(.isDraft | not) | @base64' |
+            --json number,author,isDraft,createdAt,mergeStateStatus,reviews,comments,statusCheckRollup,labels \
+            --jq '.[] | select(.isDraft | not) | select(any(.labels[]; .name == "integration-paused") | not) | @base64' |
           while read -r row; do
             j="$(base64 -d <<<"$row")"
             n="$(jq -r .number <<<"$j")"
@@ -95,9 +95,15 @@ jobs:
             gh issue edit "$n" -R "$REPO" --remove-label in-progress || true
           done <<<"$closed"
 
+          # While the integration backlog is paused, "task queue low" would send lane owners back to it (AGENTS.md §3 rule 10).
+          paused="$(gh issue list -R "$REPO" --label integration-paused --state open --limit 1 --json number --jq length)" || paused=1
+          if [ "$paused" != 0 ]; then
+            echo "integration backlog paused; skipping the task-queue check"
+            exit 0
+          fi
           count=0
           tasks="$(gh issue list -R "$REPO" --label task --state open \
-            --search 'no:assignee -label:blocked -label:in-progress' \
+            --search 'no:assignee -label:blocked -label:in-progress -label:priority-lane' \
             --limit 100 --json number,body \
             --jq '.[] | [.number, (.body | @base64)] | @tsv')"
           while IFS=$'\t' read -r _ b64body; do
@@ -125,9 +131,10 @@ jobs:
           now_epoch="$(date -u +%s)"
           # No commits field here: it multiplies into a GraphQL query over GitHub's 500,000-node limit.
           prs="$(gh pr list -R "$REPO" --state open \
-            --json number,isDraft,author,headRefName,updatedAt --limit 100)"
+            --json number,isDraft,author,headRefName,updatedAt,labels --limit 100)"
 
-          jq -c '.[] | select(.isDraft | not)' <<<"$prs" | while IFS= read -r row; do
+          # A paused PR gets no claude-fix retries until the lead releases it (AGENTS.md §3 rule 10).
+          jq -c '.[] | select(.isDraft | not) | select(any(.labels[]; .name == "integration-paused") | not)' <<<"$prs" | while IFS= read -r row; do
             n="$(jq -r .number <<<"$row")"
             author="$(jq -r .author.login <<<"$row")"
 
@@ -201,8 +208,8 @@ jobs:
           chain: ${{ inputs.chain || 0 }}
         shell: bash
         run: |
-          dirty="$(gh pr list -R "$REPO" --state open --limit 200 --json number,mergeStateStatus,isDraft \
-            --jq '[.[] | select(.isDraft | not) | select(.mergeStateStatus != "CLEAN")] | length' 2>/dev/null)" || dirty=0
+          dirty="$(gh pr list -R "$REPO" --state open --limit 200 --json number,mergeStateStatus,isDraft,labels \
+            --jq '[.[] | select(.isDraft | not) | select(any(.labels[]; .name == "integration-paused") | not) | select(.mergeStateStatus != "CLEAN")] | length' 2>/dev/null)" || dirty=0
           if [ "${dirty:-0}" -gt 0 ] && [ "${chain:-0}" -lt 36 ]; then
             sleep 600
             gh workflow run pr-sweeper.yml -R "$REPO" -f chain="$((chain+1))" || true

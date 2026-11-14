@@ -339,6 +339,18 @@ All modules inherit §§6–7 privacy, cancellation, isolation, deadline and con
 
 **Gate:** preserve reader chain and truthful per-request model attribution. Require visible Nemotron contribution if entering that track. Record Gemini reasoning/real image evidence, Meta hardware and Modal compute separately. Verda requires actual eligible inference usage, sponsor confirmation and its short summary/submission-link requirement. This pass sends no sponsor forms or messages.
 
+### 12.13 Priority lanes (lead override, 2026-11-14)
+
+The lead paused the integration backlog (issues labelled `integration-paused`; rules in AGENTS.md §3 rule 10). Until he releases it, three owners work only these lanes, in order; the lead alone keeps working the backlog:
+
+| Owner | Lane | Requirement |
+|---|---|---|
+| B / Maksym, @maksymmatviievskyi | LANE-B1 #184: get MetaLab working with the Meta web app SDK | REQ-IOS-03 |
+| C / Marcus, @Marcus228 | LANE-C1 #185: Gemini voice feedback and output, with a decision model in the workflow | REQ-VOICE-02 |
+| A / Ahmed, @Ahm3d-KA | #182 (PR #183) escapes and per-area trust, then LANE-A2 #186: pipeline enforcement and Tieto presentation evidence | REQ-PROC-01, REQ-PROC-02 |
+
+Each lane needs its owner's confirmation of problem, architecture and solution before code. LANE-B1 conflicts with §4 as written (web apps cannot use the camera or microphone): §4 stays authoritative and the iOS DAT client stays the shipped path until the owner confirms the exact SDK, platform and flow and §4 is changed by PR. Lane work keeps PRD §§6–7 and existing gates; it does not close or bypass any G0–G3 gate.
+
 ## 13. Four delivery streams
 
 | Stream / canonical area | Responsible owner | Task map and handoff |

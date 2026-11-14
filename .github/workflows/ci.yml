@@ -22,6 +22,10 @@ jobs:
           if [ -x ".claude/hooks/bash-guard.test.sh" ]; then
             .claude/hooks/bash-guard.test.sh
           fi
+      - name: Queue and pause policy tests
+        run: |
+          tools/tests/task.test.sh
+          tools/tests/pause_automation.test.sh
       - name: Areas have tests
         run: |
           for d in ios backend contracts; do

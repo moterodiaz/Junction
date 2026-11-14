@@ -6,6 +6,8 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 
 ## Execution rules
 
+- **Priority override (2026-11-14, PRD §12.13):** every task below is paused (`integration-paused`) until the lead releases it. Ahmed, Maksym and Marcus work only their priority lanes (#182 → #186, #184, #185); only the lead works paused tasks, and their dependencies and `blocked` labels still apply. The stream order below resumes after the release. Assignees, branches and unfinished work are preserved.
+
 - Exactly four canonical areas: A `backend-app` Ahmed @Ahm3d-KA; B `ios` Maksym @maksymmatviievskyi; C `backend-ai` Marcus @Marcus228; D `contracts` Mateo @moterodiaz. Lead-owned docs/CI/evidence tasks belong to D. One responsible owner and bounded file list per task; shared test/evidence files require sequential owner coordination.
 - Existing issue assignees/claims stay unchanged. A named responsible owner below does not reassign an existing issue. Preserve #29 (Marcus loader), #81 (live integration) and #108–112. The lead-approved grounding/hardening pipeline handoff belongs to Ahmed.
 - Reuse merged #24–28, #30–38, #69, #72, #76, #83, #89–91, #95, #97, #101–103 and image fix PR #105. Implementation present is not live verification. #29 stays open as found even though loader PR #80 exists; its owner resolves remaining evidence. #82 is conditional latency optimization, not a new gate or revived benchmark. Preserve #113 removal and #114 README/LICENSE work; no duplicate tasks.
