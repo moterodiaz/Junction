@@ -36,7 +36,7 @@ The angle: Cluely showed that people want an AI that sees what they see and help
 **On the slide:** four steps, each with the time it took on the live server **[E1]**.
 
 1. **You:** look at the page and say "draw this". The glasses take one photo.
-2. **Read:** Nemotron reads the page, in 0.3 s **[E1, E4]**.
+2. **Read:** NVIDIA Nemotron reads the page, in 0.3 s **[E1, E4]**.
 3. **Think:** Gemini works out what the passage means, using what you asked earlier, in 10.1 s **[E1, E6]**.
 4. **Draw:** Gemini paints the scene for the lens, with a two-line explanation, in 13.5 s **[E1, E5]**.
 
@@ -50,10 +50,10 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 
 - **Thinks about this passage, not passages in general.** Gemini reasons over the page and the whole book session, so a follow-up builds on what came before. The tenth answer can use the first nine **[E6]**.
 - **Draws pictures made for glass.** The lens adds light, so black is see-through. We ask Gemini's image model (`gemini-nano-banana-2.1`) for a bright scene on pure black, so it floats over the page **[E5, E1]**.
-- **Reads when Nemotron is slow.** If the page reader misses its 8-second budget, Gemini reads the same photo, and the card names whichever model actually read it **[E4]**.
+- **Reads when Nemotron is slow.** If Nemotron misses its 8-second budget, Gemini reads the same photo, and the card names whichever model actually read it **[E4]**.
 - ***Planned:* speaks the answer.** Gemini TTS is wired in **[E7]**, but the live card had no audio, so the phone's own voice reads it for now **[E1, E7]**. Gemini voice feedback and a decision model that routes requests are Marcus's open lane, *planned* **[E13]**.
 
-**Models, from the live card:** reasoning `gemini-4-hydrogen`, image `gemini-nano-banana-2.1` **[E1]**. The code's reasoning default is `gemini-4-argon`, and the deploy overrides it **[E8]**. Say which one the demo build uses on the day.
+**Models, from the live card:** reasoning `gemini-4-hydrogen`, image `gemini-nano-banana-2.1` **[E1]**. The code's reasoning default is `gemini-4-argon` **[E8]**. Why the live card differs (a deploy setting or an older build) is not confirmed yet. Check which one the demo build uses on the day.
 
 ## 6. The numbers
 
@@ -64,7 +64,7 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 - 1 photo per question, not stored by default (the backend never writes it to disk) **[E9]**.
 - 8 s before Gemini takes over reading **[E4]**.
 
-**Say:** this is a single measurement, not an average. Every stage has a 25 s limit inside the phone's 30 s, so the user sees an error they can retry, never a silent hang **[E10]**.
+**Say:** the breakdown comes from one measured request. A later live run gave a card in 22.4 s with the server warm, and 44.2 s from a cold start **[E17]**. So say "about 25 seconds once warm", not an average. Every stage has a 25 s limit inside the phone's 30 s, so the user sees an error they can retry, never a silent hang **[E10]**.
 
 ## 7. Privacy, the other way round
 
@@ -82,10 +82,10 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 
 ## 9. Limits, said out loud
 
-- Spoken questions with real speech have not been run on the live server yet **[E3]**.
-- Gemini speech returned no audio on the live card **[E1, E7]**.
+- Spoken questions: a synthesized voice clip was transcribed live; a human voice, with room noise and accent, is not tested yet **[E17]**.
+- Gemini speech returned no audio on any live card so far **[E1, E7, E17]**.
 - Citing act, scene and line from the play's text is *planned* (#129) **[E14]**.
-- The strict live success checks are not validated yet **[E12]**.
+- The strict live success checks ran and failed on grounding (wrong scene, generic sources) and audio **[E17]**.
 
 ## 10. Close
 

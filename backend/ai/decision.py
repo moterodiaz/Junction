@@ -63,6 +63,9 @@ class DecisionResult:
     fallback_used: bool
     raw_utterance: str
     extra_answers: Dict[str, Any] = field(default_factory=dict)
+    book_match: Optional[str] = None
+    book_match_confidence: float = 1.0
+    book_changed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -75,7 +78,19 @@ class DecisionResult:
             "fallback_used": self.fallback_used,
             "raw_utterance": self.raw_utterance,
             "extra_answers": dict(self.extra_answers),
+            "book_match": self.book_match,
+            "book_match_confidence": self.book_match_confidence,
+            "book_changed": self.book_changed,
         }
+
+
+def should_clarify_book(decision: DecisionResult, passage_score: float) -> bool:
+    """Return True ONLY when passage_score < 0.65 and decision.book_match_confidence < 0.70.
+
+    Never trigger clarify when local passage grounding succeeded with >= 0.65
+    or book_match_confidence >= 0.70.
+    """
+    return bool(passage_score < 0.65 and decision.book_match_confidence < 0.70)
 
 
 def _create_default_specs() -> Dict[str, DecisionQuestionSpec]:
@@ -168,7 +183,10 @@ def get_effective_timeout(timeout_s: Optional[float] = None) -> float:
     return max(0.01, min(t, 2.0))
 
 
-def fallback_decide(utterance: str) -> DecisionResult:
+def fallback_decide(
+    utterance: str,
+    session: Optional[BookSession] = None,
+) -> DecisionResult:
     """Heuristic fallback using match_command and safe keywords.
     
     Safe fallback: NEVER raises and NEVER logs utterance text.
@@ -227,8 +245,29 @@ def fallback_decide(utterance: str) -> DecisionResult:
 
     extra: Dict[str, Any] = {}
     for name, spec in get_all_question_specs().items():
-        if name not in ("action", "task_tier", "needs_image", "speak_only"):
+        if name not in ("action", "task_tier", "needs_image", "speak_only", "book_match", "book_changed"):
             extra[name] = spec.default
+
+    book_match: Optional[str] = None
+    book_match_confidence: float = 1.0
+    book_changed: bool = False
+
+    if session and getattr(session, "candidate_books", None):
+        active_title = getattr(session.book, "title", "Hamlet") if getattr(session, "book", None) else "Hamlet"
+        text_lower = (utterance or "").strip().lower()
+        matched = None
+        for b in session.candidate_books:
+            if getattr(b, "title", "").strip().lower() in text_lower:
+                matched = b.title
+                break
+        if matched:
+            book_match = matched
+            book_changed = bool(matched.strip().lower() != active_title.strip().lower())
+            book_match_confidence = 0.85
+        else:
+            book_match = active_title
+            book_changed = False
+            book_match_confidence = 0.75
 
     return DecisionResult(
         action=action,
@@ -240,6 +279,9 @@ def fallback_decide(utterance: str) -> DecisionResult:
         fallback_used=True,
         raw_utterance=utterance,
         extra_answers=extra,
+        book_match=book_match,
+        book_match_confidence=book_match_confidence,
+        book_changed=book_changed,
     )
 
 
@@ -303,10 +345,24 @@ def _parse_decision_response(
     spk_spec = specs.get("speak_only", DecisionQuestionSpec("speak_only", "noul", "", default=False))
     speak_val, speak_conf = _get_val_and_conf(answers.get("speak_only"), spk_spec.question_type, spk_spec.default)
 
+    # book_match
+    book_match: Optional[str] = None
+    book_match_confidence: float = 1.0
+    if "book_match" in answers:
+        bm_val, bm_conf = _get_val_and_conf(answers.get("book_match"), "choice", None)
+        book_match = str(bm_val) if bm_val is not None else None
+        book_match_confidence = float(bm_conf)
+
+    # book_changed
+    book_changed: bool = False
+    if "book_changed" in answers:
+        bc_val, _ = _get_val_and_conf(answers.get("book_changed"), "noul", False)
+        book_changed = bool(bc_val)
+
     extra: Dict[str, Any] = {}
     extra_confs: List[float] = []
     for name in active_names:
-        if name in ("action", "task_tier", "needs_image", "speak_only"):
+        if name in ("action", "task_tier", "needs_image", "speak_only", "book_match", "book_changed"):
             continue
         spec = specs.get(name)
         q_type = spec.question_type if spec else "choice"
@@ -329,6 +385,9 @@ def _parse_decision_response(
         fallback_used=False,
         raw_utterance=utterance,
         extra_answers=extra,
+        book_match=book_match,
+        book_match_confidence=book_match_confidence,
+        book_changed=book_changed,
     )
 
 
@@ -366,6 +425,7 @@ class GeminiDecisionClient:
         model: Optional[str] = None,
         timeout_s: float = 2.0,
         enabled_checks: Optional[List[str]] = None,
+        passage_score: float = 0.0,
     ) -> DecisionResult:
         key = self.api_key or os.environ.get("GEMINI_API_KEY", "")
         if not key:
@@ -423,6 +483,42 @@ class GeminiDecisionClient:
                     "instructions": spec.instructions,
                 }
 
+        # Dynamic mid-book session classification over session.candidate_books
+        if session and getattr(session, "candidate_books", None):
+            candidate_titles = []
+            seen = set()
+            for b in session.candidate_books:
+                t = getattr(b, "title", "").strip()
+                if t and t.lower() not in seen:
+                    seen.add(t.lower())
+                    candidate_titles.append(t)
+            if candidate_titles:
+                match_criteria = {t: f"Passage or question belongs to {t}" for t in candidate_titles}
+                match_criteria["unknown"] = "Passage or question does not match any candidate book"
+                questions_payload["book_match"] = {
+                    "type": "choice",
+                    "instructions": (
+                        f"Identify which book from candidate books {candidate_titles} matches the visible page text "
+                        "and student utterance, or 'unknown'."
+                    ),
+                    "criteria": match_criteria,
+                }
+                active_book_title = (
+                    getattr(session.book, "title", "current book")
+                    if getattr(session, "book", None)
+                    else "current book"
+                )
+                questions_payload["book_changed"] = {
+                    "type": "noul",
+                    "instructions": (
+                        f"Does the visible page or student utterance indicate switching away from the active book '{active_book_title}'?"
+                    ),
+                }
+                if "book_match" not in active_names:
+                    active_names.append("book_match")
+                if "book_changed" not in active_names:
+                    active_names.append("book_changed")
+
         model_name = model or self.default_model
         model_target = model_name if model_name.startswith("models/") else f"models/{model_name}"
 
@@ -455,12 +551,18 @@ class StubDecisionClient:
         fail: bool = False,
         timeout: bool = False,
         latency_s: float = 0.0,
+        book_match: Optional[str] = None,
+        book_match_confidence: float = 1.0,
+        book_changed: bool = False,
     ) -> None:
         self.default_result = default_result
         self.default_answers = default_answers
         self.fail = fail
         self.timeout = timeout
         self.latency_s = latency_s
+        self.book_match = book_match
+        self.book_match_confidence = book_match_confidence
+        self.book_changed = book_changed
         self.calls: List[Dict[str, Any]] = []
 
     async def decide(
@@ -471,6 +573,7 @@ class StubDecisionClient:
         model: Optional[str] = None,
         timeout_s: float = 2.0,
         enabled_checks: Optional[List[str]] = None,
+        passage_score: float = 0.0,
     ) -> DecisionResult:
         self.calls.append({
             "utterance": utterance,
@@ -479,6 +582,7 @@ class StubDecisionClient:
             "model": model,
             "timeout_s": timeout_s,
             "enabled_checks": list(enabled_checks) if enabled_checks else None,
+            "passage_score": passage_score,
         })
         if self.latency_s > 0:
             await asyncio.sleep(self.latency_s)
@@ -495,6 +599,9 @@ class StubDecisionClient:
                 if enabled_checks is not None
                 else list(all_specs.keys())
             )
+            for k in self.default_answers:
+                if k not in active_names:
+                    active_names.append(k)
             return _parse_decision_response(
                 {"answers": self.default_answers},
                 utterance=utterance,
@@ -524,6 +631,27 @@ class StubDecisionClient:
             needs_image = False
             speak_only = False
 
+        book_match = self.book_match
+        book_match_confidence = self.book_match_confidence
+        book_changed = self.book_changed
+
+        if book_match is None and session and getattr(session, "candidate_books", None):
+            active_title = getattr(session.book, "title", "Hamlet") if getattr(session, "book", None) else "Hamlet"
+            text_to_check = (utterance + " " + page_text).lower()
+            matched = None
+            for b in session.candidate_books:
+                if getattr(b, "title", "").strip().lower() in text_to_check:
+                    matched = b.title
+                    break
+            if matched:
+                book_match = matched
+                book_changed = bool(matched.strip().lower() != active_title.strip().lower())
+                book_match_confidence = 0.95
+            else:
+                book_match = active_title
+                book_changed = False
+                book_match_confidence = 0.90
+
         rec_model = resolve_model_for_tier(task_tier)
         return DecisionResult(
             action=action,
@@ -534,6 +662,9 @@ class StubDecisionClient:
             confidence=0.95,
             fallback_used=False,
             raw_utterance=utterance,
+            book_match=book_match,
+            book_match_confidence=book_match_confidence,
+            book_changed=book_changed,
         )
 
 
@@ -562,6 +693,7 @@ async def decide(
     model: Optional[str] = None,
     timeout_s: float = 2.0,
     enabled_checks: Optional[List[str]] = None,
+    passage_score: float = 0.0,
 ) -> DecisionResult:
     """Evaluate decision for utterance with single-pass Decisions API and graceful fallback.
 
@@ -575,30 +707,67 @@ async def decide(
     # Fast path: if real Gemini client is active but GEMINI_API_KEY is not set, fall back immediately
     if isinstance(client, GeminiDecisionClient) and not (client.api_key or os.environ.get("GEMINI_API_KEY")):
         log.debug("GEMINI_API_KEY unset, using heuristic decision fallback")
-        return fallback_decide(utterance)
+        fb = fallback_decide(utterance, session=session)
+        if not (utterance or "").strip():
+            fb.action = "clarify"
+        elif should_clarify_book(fb, passage_score):
+            fb.action = "clarify"
+        return fb
 
     try:
-        result = await asyncio.wait_for(
-            client.decide(
-                utterance=utterance,
-                page_text=page_text,
-                session=session,
-                model=model,
-                timeout_s=effective_timeout,
-                enabled_checks=enabled_checks,
-            ),
-            timeout=effective_timeout,
-        )
+        try:
+            raw_result = await asyncio.wait_for(
+                client.decide(
+                    utterance=utterance,
+                    page_text=page_text,
+                    session=session,
+                    model=model,
+                    timeout_s=effective_timeout,
+                    enabled_checks=enabled_checks,
+                    passage_score=passage_score,
+                ),
+                timeout=effective_timeout,
+            )
+        except TypeError:
+            raw_result = await asyncio.wait_for(
+                client.decide(
+                    utterance=utterance,
+                    page_text=page_text,
+                    session=session,
+                    model=model,
+                    timeout_s=effective_timeout,
+                    enabled_checks=enabled_checks,
+                ),
+                timeout=effective_timeout,
+            )
 
-        if result.confidence < MIN_CONFIDENCE_THRESHOLD:
+        if raw_result.confidence < MIN_CONFIDENCE_THRESHOLD:
             log.warning("Decision confidence below threshold (%.2f < %.2f), falling back",
-                        result.confidence, MIN_CONFIDENCE_THRESHOLD)
-            return fallback_decide(utterance)
+                        raw_result.confidence, MIN_CONFIDENCE_THRESHOLD)
+            result = fallback_decide(utterance, session=session)
+            if raw_result.book_match is not None:
+                result.book_match = raw_result.book_match
+                result.book_match_confidence = raw_result.book_match_confidence
+                result.book_changed = raw_result.book_changed
+        else:
+            result = raw_result
 
-        return result
     except asyncio.TimeoutError:
         log.warning("Decision evaluation timed out (limit=%.2fs), falling back", effective_timeout)
-        return fallback_decide(utterance)
+        result = fallback_decide(utterance, session=session)
     except Exception as exc:
         log.warning("Decision evaluation failed (%s), falling back", type(exc).__name__)
-        return fallback_decide(utterance)
+        result = fallback_decide(utterance, session=session)
+
+    # Clarification gate per REQ-INTENT-01:
+    # returns True ONLY when passage_score < 0.65 and book_match_confidence < 0.70.
+    # Update action = "clarify" only under that low-confidence condition (or when utterance is empty).
+    if not (utterance or "").strip():
+        result.action = "clarify"
+    elif should_clarify_book(result, passage_score):
+        result.action = "clarify"
+    elif result.action == "clarify":
+        # Do NOT trigger clarify if local passage grounding succeeded (>= 0.65) or book_match_confidence >= 0.70
+        result.action = "explain"
+
+    return result
