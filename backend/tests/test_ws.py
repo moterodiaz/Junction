@@ -4,6 +4,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
+from ai.page_reader import NoTextFoundError, PageReadTimeoutError, StubNemotronClient
 from app import pipeline
 from app.main import app
 
@@ -85,6 +86,46 @@ class WsTest(unittest.TestCase):
         self.assertEqual(replies[1]["code"], "internal")
         self.assertTrue(replies[1]["retryable"])
         self.assertNotIn("boom", json.dumps(replies[1]))
+
+    def test_real_page_reader_text_reaches_card(self):
+        reader = StubNemotronClient(default_response="Text read by Nemotron")
+
+        async def think_with_page_text(command, page_text, session_id):
+            return {
+                "title": "Read page",
+                "caption": page_text,
+                "speech_text": page_text,
+                "image_prompt": "page",
+                "book": {"title": "Book", "author": "Author", "location": "Page"},
+            }
+
+        with mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"}), \
+                mock.patch("ai.page_reader.NemotronClient", return_value=reader), \
+                mock.patch.object(pipeline, "think", side_effect=think_with_page_text):
+            replies = exchange(invoke(), 4)
+        self.assertEqual(replies[3]["caption"], "Text read by Nemotron")
+        self.assertEqual(len(reader.calls), 1)
+
+    def test_no_text_error_keeps_socket_open(self):
+        with mock.patch.object(pipeline, "read_page", side_effect=[NoTextFoundError(), "page text"]):
+            with TestClient(app).websocket_connect("/ws") as ws:
+                ws.send_json(invoke())
+                self.assertEqual(ws.receive_json()["stage"], "reading")
+                error = ws.receive_json()
+                self.assertEqual(error["code"], "no_text_found")
+                self.assertTrue(error["retryable"])
+
+                ws.send_json(invoke(request_id="r2"))
+                replies = [ws.receive_json() for _ in range(4)]
+        self.assertEqual(replies[3]["type"], "card")
+        self.assertEqual(replies[3]["request_id"], "r2")
+
+    def test_page_reader_timeout_returns_model_timeout(self):
+        with mock.patch.object(pipeline, "read_page", side_effect=PageReadTimeoutError()):
+            replies = exchange(invoke(), 2)
+        self.assertEqual(replies[1]["type"], "error")
+        self.assertEqual(replies[1]["code"], "model_timeout")
+        self.assertTrue(replies[1]["retryable"])
 
     def test_health(self):
         self.assertEqual(TestClient(app).get("/health").json(), {"ok": True})

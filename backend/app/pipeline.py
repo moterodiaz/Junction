@@ -4,7 +4,10 @@ transcribe -> #27 (backend/stt/), read_page -> #28, think -> #30, draw -> #31.
 
 from __future__ import annotations
 
+import os
 from typing import Awaitable, Callable
+
+from ai import page_reader
 
 from .messages import Book, Card, Invoke, Media, Stage
 
@@ -16,7 +19,11 @@ async def transcribe(audio: Media) -> str:
 
 
 async def read_page(frame: Media) -> str:
-    return "To be, or not to be, that is the question."
+    # Offline/test path: preserve deterministic contract fixtures without an API key.
+    if not os.environ.get("NVIDIA_API_KEY", "").strip():
+        return "To be, or not to be, that is the question."
+
+    return await page_reader.read_page(frame)
 
 
 async def think(command: str, page_text: str, session_id: str) -> dict:
