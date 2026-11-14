@@ -13,9 +13,15 @@ extract_areas() {
     n = split($0, cols, "|")
     if (n < 5) next
     if (index(cols[4], "`") == 0) next
-    folders = cols[4]
-    gsub(/[ \t`\/]/, "", folders)
-    if (folders != "") print folders
+    cell = cols[4]
+    if (match(cell, /`[^`]+`/)) {
+      first = substr(cell, RSTART+1, RLENGTH-2)
+      key = tolower(first)
+      gsub(/\//, "-", key)
+      sub(/^-+/, "", key)
+      sub(/-+$/, "", key)
+      if (key != "") print key
+    }
   }' "$AGENTS_FILE"
 }
 
@@ -24,11 +30,17 @@ cmd_show() {
     n = split($0, cols, "|")
     if (n < 5) next
     if (index(cols[4], "`") == 0) next
-    folders = cols[4]
+    cell = cols[4]
     owner = cols[3]
-    gsub(/[ \t`\/]/, "", folders)
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", owner)
-    if (folders != "") printf "%-15s %s\n", folders, owner
+    if (match(cell, /`[^`]+`/)) {
+      first = substr(cell, RSTART+1, RLENGTH-2)
+      key = tolower(first)
+      gsub(/\//, "-", key)
+      sub(/^-+/, "", key)
+      sub(/-+$/, "", key)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", owner)
+      if (key != "") printf "%-15s %s\n", key, owner
+    }
   }' "$AGENTS_FILE"
 }
 
@@ -68,9 +80,16 @@ cmd_assign() {
     /^\|/ && !/^\|---/ {
       n = split($0, cols, "|")
       if (n >= 5 && index(cols[4], "`") > 0) {
-        folders = cols[4]
-        gsub(/[ \t`\/]/, "", folders)
-        if (tolower(folders) == tolower(area)) {
+        cell = cols[4]
+        key = ""
+        if (match(cell, /`[^`]+`/)) {
+          first = substr(cell, RSTART+1, RLENGTH-2)
+          key = tolower(first)
+          gsub(/\//, "-", key)
+          sub(/^-+/, "", key)
+          sub(/-+$/, "", key)
+        }
+        if (tolower(key) == tolower(area)) {
           owner = cols[3]
           if (add + 0) {
             if (!owner_has_login(owner, login)) {
