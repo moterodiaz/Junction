@@ -148,11 +148,11 @@ def resolve_model_for_tier(task_tier: str) -> str:
     """Map task tier to recommended model using environment variables with defaults."""
     tier = (task_tier or "").lower().strip()
     if tier == "fast":
-        return os.environ.get("MODEL_REASON_FAST", DEFAULT_MODEL_FAST)
+        return os.environ.get("MODEL_REASON_FAST", "").strip() or DEFAULT_MODEL_FAST
     elif tier == "deep":
-        return os.environ.get("MODEL_REASON_DEEP", DEFAULT_MODEL_DEEP)
+        return os.environ.get("MODEL_REASON_DEEP", "").strip() or DEFAULT_MODEL_DEEP
     else:
-        return os.environ.get("MODEL_REASON", DEFAULT_MODEL_BALANCED)
+        return os.environ.get("MODEL_REASON", "").strip() or DEFAULT_MODEL_BALANCED
 
 
 def get_effective_timeout(timeout_s: Optional[float] = None) -> float:
@@ -544,7 +544,8 @@ def get_decision_client() -> DecisionClient:
     """Return the configured decision client or lazily instantiate GeminiDecisionClient."""
     global _decision_client
     if _decision_client is None:
-        _decision_client = GeminiDecisionClient()
+        model = os.environ.get("MODEL_DECISION", "").strip() or DEFAULT_MODEL_DECISION
+        _decision_client = GeminiDecisionClient(default_model=model)
     return _decision_client
 
 

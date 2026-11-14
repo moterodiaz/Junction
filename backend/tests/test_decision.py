@@ -121,6 +121,24 @@ class DecisionResultAndTierTest(unittest.TestCase):
             self.assertEqual(resolve_model_for_tier("balanced"), "custom-balanced")
             self.assertEqual(resolve_model_for_tier("deep"), "custom-deep")
 
+    def test_resolve_model_for_tier_blank_falls_back(self) -> None:
+        env = {"MODEL_REASON_FAST": "  ", "MODEL_REASON": "", "MODEL_REASON_DEEP": " "}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(resolve_model_for_tier("fast"), DEFAULT_MODEL_FAST)
+            self.assertEqual(resolve_model_for_tier("balanced"), DEFAULT_MODEL_BALANCED)
+            self.assertEqual(resolve_model_for_tier("deep"), DEFAULT_MODEL_DEEP)
+
+    def test_get_decision_client_reads_model_decision(self) -> None:
+        from ai.decision import get_decision_client, set_decision_client
+
+        set_decision_client(None)
+        try:
+            with mock.patch.dict(os.environ, {"MODEL_DECISION": "custom-decision"}):
+                client = get_decision_client()
+            self.assertEqual(client.default_model, "custom-decision")
+        finally:
+            set_decision_client(None)
+
     def test_effective_timeout(self) -> None:
         # Respect upper bound <= 2.0s
         self.assertEqual(get_effective_timeout(1.5), 1.5)
