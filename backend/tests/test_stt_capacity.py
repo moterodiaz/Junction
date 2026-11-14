@@ -43,9 +43,14 @@ class SlotTest(unittest.TestCase):
             self.assertFalse(third.done())  # waiting, not failed
             self.assertEqual(len(self.calls), 2)  # the cap still holds
             self.permits.release()  # one busy request finishes and frees its slot
+            for _ in range(100):  # the third call must start promptly, not after a timeout
+                if len(self.calls) == 3:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(len(self.calls), 3)
+            self.permits.release()
+            self.permits.release()
             text = await third
-            self.permits.release()
-            self.permits.release()
             await asyncio.gather(*busy)
             return text
 

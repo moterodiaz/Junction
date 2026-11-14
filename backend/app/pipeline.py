@@ -68,14 +68,15 @@ UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this
 
 
 async def transcribe(audio: Media) -> str:
-    clip = base64.b64decode(audio.b64)  # Invoke validation (#85) guarantees valid base64
-    # Take a slot before queueing so a stuck engine cannot pile up decoded clips; the slot is
-    # released only when the worker really finishes, not when the request times out. With both
-    # slots busy, wait for one: timed() bounds the wait, and polling (rather than blocking a
-    # thread on the semaphore) means a cancelled waiter never takes a slot (#110).
+    # Take a slot before decoding or queueing so a stuck engine or a burst of waiters cannot pile
+    # up decoded clips; the slot is released only when the worker really finishes, not when the
+    # request times out. With both slots busy, wait for one: timed() bounds the wait, and polling
+    # (rather than blocking a thread on the semaphore) means a cancelled waiter never takes a
+    # slot (#110).
     while not _STT_SLOTS.acquire(blocking=False):
         await asyncio.sleep(STT_SLOT_POLL_S)
     try:
+        clip = base64.b64decode(audio.b64)  # Invoke validation (#85) guarantees valid base64
         future = _STT_THREADS.submit(_transcribe_in_slot, clip)
     except BaseException:
         _STT_SLOTS.release()
