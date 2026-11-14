@@ -1,4 +1,23 @@
-@@PART1@@
+# Hack Junction 2026: Challenge Strategy for MetaLab
+
+**Event:** Junction 2026, *European Tech Renaissance* (`eventId: 45`)
+**Team:** `@moterodiaz` (Mateo, lead), `@Ahm3d-KA`, `@maksymmatviievskyi`, `@Marcus228`
+**Project:** **MetaLab**, a Ray-Ban Display reading helper. Product details are in `metalab_prd.md`.
+
+## 1. Executive Summary and Stack Overview
+
+Junction allows one project to enter several challenges. MetaLab is one pipeline, so each sponsor track below maps to a stage we already build:
+
+| Stage | Component | Challenge it supports |
+|---|---|---|
+| Capture and display | iOS app with the Meta Wearables Device Access Toolkit (`ios/`) | Meta |
+| Read the page | NVIDIA Nemotron 3.5 Super VL (`backend/ai/`) | NVIDIA Nemotron |
+| Reason and draw | Gemini reasoning and image models (`backend/`) | Google / Gemini |
+| Orchestrate | FastAPI on Modal (`backend/app/`) | Modal |
+| Team process | `tools/board` and the bounded PR review workflow | Tieto (below) |
+
+Fit and prizes for each track must be re-checked against the catalog in section 6 before Saturday 12:00.
+
 ---
 
 ## 2. Official Deadlines, Rules, Judging Criteria & Submission Checklist
@@ -47,7 +66,12 @@ Before Sunday 10:00 AM, verify every box below is complete:
 
 ---
 
-@@PART3A@@
+## 3. Challenge Guidance
+
+- **Meta:** scored on creativity, technical execution, real-world value, and UX (25% each). See section 6 of `metalab_prd.md` for what we show per item.
+- **NVIDIA Nemotron:** the page-reading step uses `nvidia/nemotron-3.5-super-vl-120b-a12b`. The submission must carry the model note in section 5.
+- **Gemini / Modal:** reasoning and image generation run on Gemini, hosted on a Modal FastAPI backend. Include the public `modal deploy` URL as the live demo.
+
 
 ### Free add-on: Tieto — "Earned Trust in AI Code" (`ID: 351`, Agentic AI Track)
 - **Prizes:**
@@ -72,7 +96,11 @@ Before Sunday 10:00 AM, verify every box below is complete:
   3. **Lessons Log (`docs/TIETO_LESSONS_LOG.md`):** Document the real failure modes you already encountered today (e.g., Devin reporting "pass" while reviewing nothing due to credits, infinite bot-fix loops requiring the 5-commit cap, rebase vs. merge conflicts on bot-pushed branches).
 
 ---
-@@PART3B@@
+## 5. Submission Note Template (NVIDIA Nemotron)
+
+Paste into the project description and fill in the brackets:
+
+> **Models used.** MetaLab uses NVIDIA `nvidia/nemotron-3.5-super-vl-120b-a12b` (via `https://integrate.api.nvidia.com/v1`) to read the page photo captured by the glasses, with thinking [disabled/enabled]. Gemini [model ids] handles reasoning and image generation. Nemotron output is text only and is passed to the reasoning step. Frames are processed in memory and not stored.
 
 ---
 
