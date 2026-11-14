@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 
@@ -44,22 +46,56 @@ async def health() -> dict:
     return {"ok": True}
 
 
+MAX_QUEUED_FRAMES = 4
+MAX_QUEUED_BYTES = 32 * 1024 * 1024
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
+    """Handle one request at a time, but keep listening while it runs: a disconnect cancels
+    the request (no further model calls, nothing saved to the book session), and a message
+    that arrives meanwhile is handled next (#111)."""
     await websocket.accept()
+    receiving: asyncio.Task | None = None
+    handling: asyncio.Task | None = None
+    queued: list[str | bytes] = []
+    queued_bytes = 0
     try:
         while True:
-            event = await websocket.receive()
+            if handling is None and queued:
+                frame = queued.pop(0)
+                queued_bytes -= len(frame)
+                handling = asyncio.create_task(handle(websocket, frame))
+            receiving = receiving or asyncio.create_task(websocket.receive())
+            waiting = {receiving} if handling is None else {receiving, handling}
+            await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+            if handling is not None and handling.done():
+                await handling
+                handling = None
+            if not receiving.done():
+                continue
+            event = receiving.result()
+            receiving = None
             if event["type"] == "websocket.disconnect":
                 break
             raw = event.get("text")
             if raw is None:
                 raw = event.get("bytes")  # the iPhone client sends JSON as binary frames
-            if raw is None:
-                continue
-            await handle(websocket, raw)
+            if raw is not None:
+                queued_bytes += len(raw)
+                if len(queued) >= MAX_QUEUED_FRAMES or queued_bytes > MAX_QUEUED_BYTES:
+                    await websocket.close(code=1008)  # policy violation: too much pending input
+                    break
+                queued.append(raw)  # handled in order; reading continues so a disconnect is seen
     except WebSocketDisconnect:
         pass
+    finally:
+        tasks = [t for t in (receiving, handling) if t is not None]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 async def handle(websocket: WebSocket, raw: str | bytes) -> None:
@@ -93,6 +129,9 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         card = await pipeline.run(invoke, send_stage)
         await send(websocket, card)
         outcome = "card"
+    except asyncio.CancelledError:
+        outcome = "cancelled"  # the phone hung up mid-request
+        raise
     except WebSocketDisconnect:
         outcome = "disconnected"
         raise

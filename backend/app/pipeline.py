@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import traceback
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from typing import Awaitable, Callable, Optional, TypeVar
 
@@ -19,7 +20,7 @@ import stt
 from stt.speak import discard as discard_clip, speak
 from ai import image
 from ai import page_reader
-from ai.reasoning import resolve_reason_model
+from ai.reasoning import default_session_store, resolve_reason_model
 from ai import think as _ai_think
 
 from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
@@ -156,11 +157,27 @@ def _image_model() -> str:
     return name.strip() or image.DEFAULT_MODEL_IMAGE
 
 
+_SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
+
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
+    history = default_session_store.get_or_create(invoke.session_id).history
+    lock = _SESSION_LOCKS.get(invoke.session_id)
+    if lock is None:
+        lock = _SESSION_LOCKS[invoke.session_id] = asyncio.Lock()
+    before: list = []
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
-            return await _run(invoke, send_stage)
+            # One request per session at a time, so a cancel only ever undoes its own exchange.
+            async with lock:
+                before = list(history)
+                return await _run(invoke, send_stage)
+    except asyncio.CancelledError:
+        # The phone hung up: forget what this request recorded (think saves before drawing), nothing else.
+        for exchange in [e for e in history if not any(e is b for b in before)]:
+            history.remove(exchange)
+        raise
     except TimeoutError as exc:
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
 
