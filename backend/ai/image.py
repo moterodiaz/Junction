@@ -45,6 +45,7 @@ DUMMY_PNG = (
 
 DEFAULT_BASE_URL = "https://api.metalab.example"
 DEFAULT_MODEL_IMAGE = "gemini-nano-banana-2.1"
+MAX_STORED_IMAGES = 200
 
 
 @dataclass
@@ -89,6 +90,12 @@ def store_image(
         _images[clean_id] = item
         if session_id:
             _session_images[session_id].add(clean_id)
+        # Bound memory: evict oldest images (dicts keep insertion order)
+        while len(_images) > MAX_STORED_IMAGES:
+            old_id = next(iter(_images))
+            old = _images.pop(old_id)
+            if old.session_id:
+                _session_images[old.session_id].discard(old_id)
     return item
 
 
