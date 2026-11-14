@@ -137,9 +137,13 @@ With `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `MODEL_READ` exported (from the Modal
 secret owner; never commit or paste them):
 
 ```sh
-cd backend && .venv/bin/python -m ai.measure_accuracy --json > /tmp/nemotron-results.json \
-  && .venv/bin/python -m ai.measure_accuracy > /tmp/nemotron-results.txt
+cd backend && .venv/bin/python -m ai.measure_accuracy --timeout 400 --json > /tmp/nemotron-results.json \
+  && .venv/bin/python -m ai.measure_accuracy --timeout 400 > /tmp/nemotron-results.txt
 ```
+`read_page()` defaults to a 30 s timeout (`page_reader.py:336`), which would record
+timeouts for a ~260 s endpoint. In Step 1 add a benchmark-only `--timeout` option
+(default 400 s) to `measure_accuracy` and pass it as `read_page(..., timeout=...)`.
+Do not change the live request budget or the `read_page` default.
 Expect 4 samples × up to ~5 min each; run it in the background and keep working.
 Then write `backend/ai/sample_frames/RESULTS.md`:
 

@@ -181,7 +181,7 @@ notice) for PRs authored by `github-actions[bot]`/`claude[bot]`.
 - Fixer commits on this PR: <n>/5 cap
 
 ### Refused by AI / escalated to a named human
-- <each PR comment containing "needs human", quoted first line, author, link> — or "none"
+- <each PR comment containing "needs human", quoted first line, author, link> — or "none". Exclude comments containing `<!-- metalab-pr-header -->` (the header itself), here and in the `needs_human_comments` count in `tools/metrics`, so the header never counts or quotes itself.
 
 ### Human sign-off (<owner handles>)
 - [ ] Checked: …  - [ ] Not checked and why: …  - [ ] Residual risk accepted: …

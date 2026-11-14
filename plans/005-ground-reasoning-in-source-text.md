@@ -126,7 +126,7 @@ Add, using `StubGeminiClient` and a fresh `SessionStore()`:
         answer = await think("explain", "To be, or not to be, that is the question", "s1",
                              client=client, session_store=store)
         self.assertEqual(answer["book"]["title"], "Hamlet")
-        self.assertEqual(answer["book"]["location"], "Act 3, Scene 1")
+        self.assertTrue(answer["book"]["location"].startswith("Act 3, Scene 1"))  # _ground appends ", lines a-b"
         self.assertTrue(answer["sources"] and answer["sources"][0]["url"].startswith("https://"))
         call = client.calls[-1]
         self.assertIn("grounding", call)                      # the client received grounding

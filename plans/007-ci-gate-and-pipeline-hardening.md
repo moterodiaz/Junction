@@ -165,8 +165,8 @@ In `.github/workflows/claude-fix.yml`:
              BEFORE_SHA: ${{ steps.before.outputs.sha }}
            run: |
              set -euo pipefail
-             changed="$(git diff --name-only "$BEFORE_SHA"..HEAD || true)"
-             bad="$(grep -E '^(\.github/|\.claude/|\.agents/|contracts/)' <<<"$changed" || true)"
+             changed="$(git diff --name-only "$BEFORE_SHA"..HEAD)"   # no `|| true`: fail the step if the diff fails
+             bad="$(grep -E '^(\.github/|\.claude/|\.agents/|contracts/)' <<<"$changed" || [ $? -eq 1 ])"   # tolerate only no-match
              if [ -n "$bad" ]; then
                author="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author --jq .author.login)"
                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "needs human: claude-fix changed protected paths and its commit was not pushed: $(tr '\n' ' ' <<<"$bad") — @moterodiaz"
@@ -183,7 +183,8 @@ In `.github/workflows/claude-fix.yml`:
 5. In "Enable auto-merge when review threads are resolved", before `gh pr merge --auto`,
    compute the PR's changed files and skip when protected:
    ```bash
-             protected="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json files --jq '.files[].path' | grep -E '^(\.github/|\.claude/|\.agents/|contracts/)' || true)"
+             files="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json files --jq '.files[].path')"   # no `|| true`: a failed lookup must stop the step
+             protected="$(grep -E '^(\.github/|\.claude/|\.agents/|contracts/)' <<<"$files" || [ $? -eq 1 ])"   # tolerate only grep's no-match (1)
              if [ -n "$protected" ]; then
                echo "protected paths changed; auto-merge left to the owner (AGENTS.md §3 rule 9)"
                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "needs human: this PR touches protected paths ($(tr '\n' ' ' <<<"$protected")); owner merges per AGENTS.md §3 rule 9 — @moterodiaz" || true
