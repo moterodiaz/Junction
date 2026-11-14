@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from ai.image import image_router
 from ai.page_reader import PageReadError
+from stt.speak import audio_router
 
 from . import pipeline
 from .config import get_settings
@@ -25,6 +26,7 @@ if not log.handlers:
     log.setLevel(logging.INFO)
 
 app = FastAPI(title="MetaLab backend")
+app.include_router(audio_router)
 if image_router is not None:
     app.include_router(image_router)
 

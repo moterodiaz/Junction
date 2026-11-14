@@ -15,6 +15,7 @@ from typing import Awaitable, Callable, TypeVar
 import httpx
 
 import stt
+from stt.speak import speak
 from ai import image
 from ai import page_reader
 
@@ -156,6 +157,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
 
     await send_stage("drawing")
     image_url = await timed(draw(answer["image_prompt"], invoke.session_id))
+    audio_url = await speak(answer["speech_text"])  # None on any failure: the phone speaks the text
 
     return Card(
         request_id=invoke.request_id,
@@ -163,6 +165,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         caption=answer["caption"],
         image_url=image_url,
         speech_text=answer["speech_text"],
+        audio_url=audio_url,
         book=Book(**answer["book"]),
         sources=[],
         models={
