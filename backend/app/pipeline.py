@@ -28,6 +28,7 @@ from ai import page_reader
 from ai.reasoning import default_session_store, ground_passage, resolve_reason_model, PassageMatch
 from ai import think as _ai_think
 
+from . import latency
 from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
@@ -511,7 +512,34 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             session.awaiting_book_clarification = True
         models = {"read": _read_model, "reason": _reason_model,
                   "image": _image_model() if image_url else "stub"}
-        return contract_card(invoke.request_id, answer, image_url, audio_url, models)
+        card = contract_card(invoke.request_id, answer, image_url, audio_url, models)
+
+        if dynamic_routing and decision is not None:
+            client = ai.decision.get_decision_client()
+            if decision.fallback_used:
+                decision_model = "fallback"
+            elif isinstance(client, ai.decision.StubDecisionClient):
+                decision_model = "stub"
+            else:
+                decision_model = os.environ.get("MODEL_DECISION", "").strip() or ai.decision.DEFAULT_MODEL_DECISION
+            latency.record_model_choice("decision", decision_model, fallback=bool(decision.fallback_used))
+
+        latency.record_model_choice("read", _read_model or "stub", fallback=bool(_read_model == "stub"))
+        latency.record_model_choice("reason", _reason_model or "stub", fallback=bool(_reason_model == "stub"))
+        latency.record_model_choice("image", models["image"], fallback=bool(models["image"] == "stub"))
+
+        if audio_url:
+            try:
+                from .config import get_settings
+                tts_model_name = get_settings().model_tts
+            except Exception:
+                tts_model_name = os.environ.get("MODEL_TTS", "")
+            tts_model = (tts_model_name or "").strip() or getattr(stt.speak, "DEFAULT_MODEL_TTS", "gemini-3.8-flash-tts")
+            latency.record_model_choice("tts", tts_model, fallback=False)
+        else:
+            latency.record_model_choice("tts", "stub", fallback=True)
+
+        return card
     except BaseException:
         # No card, so the clip would never reach the phone: stop it, or delete it if it is
         # already stored (#109). Covers a draw failure, the request timeout or a hang-up while
