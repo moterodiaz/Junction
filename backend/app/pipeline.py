@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import logging
 import os
 import re
@@ -20,9 +21,10 @@ import httpx
 import stt
 from stt.speak import discard as discard_clip, speak
 import ai.decision
+import ai.reasoning
 from ai import image
 from ai import page_reader
-from ai.reasoning import default_session_store, resolve_reason_model
+from ai.reasoning import default_session_store, ground_passage, resolve_reason_model, PassageMatch
 from ai import think as _ai_think
 
 from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
@@ -128,6 +130,7 @@ async def think(
     session_id: str,
     *,
     model: Optional[str] = None,
+    passage_match: Optional[PassageMatch] = None,
 ) -> dict:
     if not os.environ.get("GEMINI_API_KEY", "").strip():
         # offline/test path: byte-identical stub so CI and conformance exchanges are unaffected
@@ -138,6 +141,15 @@ async def think(
             "image_prompt": "A lone prince on a dark stage, bright outline on black",
             "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
         }
+    _ai_sig = inspect.signature(_ai_think)
+    if "passage_match" in _ai_sig.parameters:
+        return await _ai_think(
+            command,
+            page_text,
+            session_id,
+            model=model,
+            passage_match=passage_match,
+        )
     return await _ai_think(command, page_text, session_id, model=model)
 
 
@@ -198,7 +210,8 @@ _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
-    history = default_session_store.get_or_create(invoke.session_id).history
+    session = default_session_store.get_or_create(invoke.session_id)
+    history = session.history
     lock = _SESSION_LOCKS.get(invoke.session_id)
     if lock is None:
         lock = _SESSION_LOCKS[invoke.session_id] = asyncio.Lock()
@@ -208,7 +221,14 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
             # One request per session at a time, so a cancel only ever undoes its own exchange.
             async with lock:
                 before = list(history)
-                return await _run(invoke, send_stage)
+                # Capture and restore the flag only while holding the lock, so a request that
+                # never ran cannot undo a book reply accepted by the one that did.
+                before_clarifying = getattr(session, "awaiting_book_clarification", False)
+                try:
+                    return await _run(invoke, send_stage)
+                except BaseException:
+                    session.awaiting_book_clarification = before_clarifying
+                    raise
     except asyncio.CancelledError:
         # The phone hung up: forget what this request recorded (think saves before drawing), nothing else.
         for exchange in [e for e in history if not any(e is b for b in before)]:
@@ -219,6 +239,51 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
 
 
 _HTTPS_URL = re.compile(r"^https://[^\s/?#]+[^\s]*$")  # the contract's httpsUrl pattern
+
+_CLARIFY_BOOK_PREFIXES = (
+    "i am reading ",
+    "i'm reading ",
+    "we are reading ",
+    "we're reading ",
+    "the book is ",
+    "the play is ",
+    "this book is ",
+    "this play is ",
+    "book is ",
+    "play is ",
+    "this is ",
+    "it is ",
+    "it's ",
+)
+_NON_BOOK_REPLIES = {"", "unknown", "unknown book", "i don't know", "not sure", "no idea", "skip"}
+
+
+def _apply_book_clarification_reply(session: ai.session.BookSession, utterance: str, has_passage_match: bool) -> bool:
+    """Resolve a pending book-clarification turn by selecting or adding the named book."""
+    if not getattr(session, "awaiting_book_clarification", False):
+        return False
+    session.awaiting_book_clarification = False
+    if has_passage_match:
+        return True
+
+    cleaned = utterance.strip()
+    for prefix in _CLARIFY_BOOK_PREFIXES:
+        if cleaned.lower().startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    cleaned = cleaned.strip(" \t\r\n\"'.,!?:;")
+    if cleaned.lower() in _NON_BOOK_REPLIES or len(cleaned) > 120:
+        return False
+
+    cleaned_lower = cleaned.lower()
+    for candidate in getattr(session, "candidate_books", ()):
+        title = getattr(candidate, "title", "").strip()
+        if title and title.lower() not in ("unknown", "unknown book") and title.lower() == cleaned_lower:
+            session.set_active_book(title, candidate.author, candidate.location)
+            return True
+
+    session.set_active_book(cleaned)
+    return True
 
 
 def _text(value: object) -> str:
@@ -276,6 +341,17 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     await send_stage("reading")
     page_text = await timed(read_page(invoke.frame))
 
+    passage_match = ground_passage(page_text)
+    passage_score = float(passage_match.score) if passage_match is not None else 0.0
+    session = default_session_store.get_or_create(invoke.session_id)
+    if passage_match is not None:
+        session.set_active_book(
+            passage_match.play_title,
+            passage_match.author,
+            passage_match.location,
+        )
+    clarification_resolved = _apply_book_clarification_reply(session, utterance, passage_match is not None)
+
     _read_model = getattr(page_text, "model", None) or (
         page_reader._resolve_config()[2]
         if os.environ.get("NVIDIA_API_KEY", "").strip()
@@ -283,11 +359,28 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     )
 
     decision = None
+    clarify = False
     if dynamic_routing:
-        session = default_session_store.get_or_create(invoke.session_id)
-        decision = await timed(ai.decision.decide(utterance, page_text, session))
+        decision = await timed(ai.decision.decide(utterance, page_text, session, passage_score=passage_score))
         if decision.fallback_used and (stt.match_command(utterance) is None):
             raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
+
+        if (
+            not decision.fallback_used
+            and decision.book_changed
+            and decision.book_match
+            and decision.book_match != "unknown"
+            and decision.book_match_confidence >= 0.70
+        ):
+            session.set_active_book(decision.book_match)
+
+        if (
+            not clarification_resolved
+            and not decision.fallback_used
+            and decision.action == "clarify"
+            and ai.decision.should_clarify_book(decision, passage_score)
+        ):
+            clarify = True
 
         client = ai.decision.get_decision_client()
         if os.environ.get("GEMINI_API_KEY", "").strip() or not isinstance(client, ai.decision.GeminiDecisionClient):
@@ -304,10 +397,28 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         think_prompt = command
 
     await send_stage("thinking")
-    answer = await timed(think(
-        think_prompt, page_text, invoke.session_id,
-        model=_reason_model if _reason_model != "stub" else None,
-    ))
+    if clarify:
+        clarification_text = "Which book are you reading right now? Please name the play or book."
+        answer = {
+            "title": "Which book are you reading?",
+            "caption": clarification_text,
+            "speech_text": clarification_text,
+            "image_prompt": "",
+            "book": {
+                "title": session.book.title or "Unknown book",
+                "author": session.book.author or "Unknown author",
+                "location": session.book.location or "Unknown location",
+            },
+            "sources": [],
+        }
+    else:
+        answer = await timed(think(
+            think_prompt,
+            page_text,
+            invoke.session_id,
+            model=_reason_model if _reason_model != "stub" else None,
+            passage_match=passage_match,
+        ))
 
     await send_stage("drawing")
     # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit
@@ -332,7 +443,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
 
     speaking = asyncio.create_task(_speak())
     try:
-        skip_draw = decision is not None and (decision.speak_only or not decision.needs_image)
+        skip_draw = clarify or (decision is not None and (decision.speak_only or not decision.needs_image))
         if skip_draw:
             image_url = None
         else:
@@ -344,6 +455,8 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             discard_clip(speaking.result())
         raise
     audio_url = await speaking
+    if clarify:
+        session.awaiting_book_clarification = True
 
     models = {"read": _read_model, "reason": _reason_model,
               "image": _image_model() if image_url else "stub"}
