@@ -244,6 +244,42 @@ class SourceLoaderTest(unittest.TestCase):
         assert match is not None
         self.assertGreaterEqual(match.score, 0.90)
 
+    def test_ocr_every_word_error_short_query(self) -> None:
+        """Verify short queries where every word has an OCR character error can still match."""
+        with tempfile.TemporaryDirectory() as d:
+            lines = [
+                {"type": "line", "line": 1, "speaker": "HAMLET", "text": "To be."},
+                {"type": "line", "line": 2, "speaker": "HAMLET", "text": "Or not to be."},
+            ]
+            play = {
+                "id": "t", "title": "T",
+                "acts": [{"act": 1, "act_roman": "I", "scenes": [
+                    {"scene": 1, "scene_roman": "I", "lines": lines}]}],
+            }
+            (Path(d) / "t.json").write_text(json.dumps(play), encoding="utf-8")
+            # "T0 bc" is an OCR misread of "To be" — every word has a character substitution
+            match = find_passage("T0 bc", play="t", data_dir=d, min_score=0.6)
+            self.assertIsNotNone(match)
+            assert match is not None
+            self.assertEqual(match.line_start, 1)
+            self.assertGreaterEqual(match.score, 0.6)
+
+    def test_unrelated_short_query_returns_none(self) -> None:
+        """Verify a clearly unrelated short query returns None even after the prefilter is relaxed."""
+        with tempfile.TemporaryDirectory() as d:
+            lines = [
+                {"type": "line", "line": 1, "speaker": "HAMLET", "text": "To be."},
+                {"type": "line", "line": 2, "speaker": "HAMLET", "text": "Or not to be."},
+            ]
+            play = {
+                "id": "t", "title": "T",
+                "acts": [{"act": 1, "act_roman": "I", "scenes": [
+                    {"scene": 1, "scene_roman": "I", "lines": lines}]}],
+            }
+            (Path(d) / "t.json").write_text(json.dumps(play), encoding="utf-8")
+            # "xyzzy quux" shares no meaningful characters with the play lines
+            self.assertIsNone(find_passage("xyzzy quux", play="t", data_dir=d, min_score=0.6))
+
     def test_exact_line_beats_partial_word_match(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             lines = [

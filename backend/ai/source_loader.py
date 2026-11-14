@@ -465,6 +465,8 @@ def find_passage(
     # 3. Fuzzy token overlap / SequenceMatcher window search for OCR errors or partial speech
     best_candidate: Optional[Tuple[float, int, int]] = None  # (score, start_idx, end_idx)
     min_tokens = len(query_words)
+    # ponytail: short-query threshold ≤ 4 words; raise if OCR errors regularly span longer passages
+    _is_short_query = len(query_words) <= 4
 
     # Determine candidate window range
     for window_size in range(1, max_window_lines + 1):
@@ -477,11 +479,11 @@ def find_passage(
                 continue
 
             tok_sim = _token_similarity(norm_query, window_norm)
-            if tok_sim < 0.4:
+            if not _is_short_query and tok_sim < 0.4:
                 continue
 
             seq_ratio = SequenceMatcher(None, norm_query, window_norm).ratio()
-            combined_score = (tok_sim * 0.6) + (seq_ratio * 0.4)
+            combined_score = seq_ratio if _is_short_query else (tok_sim * 0.6) + (seq_ratio * 0.4)
 
             if combined_score >= min_score:
                 if best_candidate is None or combined_score > best_candidate[0]:
