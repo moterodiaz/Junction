@@ -1,10 +1,13 @@
 import asyncio
+import io
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import unittest
 from unittest import mock
+import urllib.error
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
@@ -310,16 +313,6 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
                     parse_reasoning_json(json.dumps(payload), session)
                 self.assertIn("missing both caption and speech text", str(ctx.exception).lower())
 
-    def test_parse_reasoning_json_sanitizes_errors_without_model_text_leak(self):
-        """REQ-PRIV-02: invalid model output never leaks raw text into ReasoningError."""
-        session = BookSession("s-leak-check")
-        secret_text = "SECRET_TOKEN_DO_NOT_LEAK"
-        malformed = f"Not valid JSON with {secret_text}"
-
-        with self.assertRaises(ReasoningError) as ctx:
-            parse_reasoning_json(malformed, session)
-        self.assertNotIn(secret_text, str(ctx.exception))
-
     def test_e2e_websocket_blank_caption_yields_valid_card(self):
         """#175 (REQ-WS-01): end-to-end /ws test invoking real parse_reasoning_json with blank caption yields valid Card."""
         model_json = json.dumps({
@@ -370,6 +363,99 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(reply["title"], "Hamlet, Act 3, Scene 1")
         self.assertEqual(reply["book"]["title"], "Hamlet")
+
+    async def test_http_gemini_client_error_body_does_not_leak_secret(self):
+        """REQ-PRIV-02: Upstream HTTP error bodies must never leak into ReasoningError or logs."""
+        client = HttpGeminiClient(api_key="test-api-key")
+        session = BookSession("s-privacy-http")
+        err_fp = io.BytesIO(b'{"error": {"message": "SECRET_UPSTREAM_BODY_DETAILS"}}')
+        http_err = urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com",
+            code=500,
+            msg="Internal Server Error",
+            hdrs={},
+            fp=err_fp,
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=http_err):
+            with self.assertRaises(ReasoningError) as ctx:
+                await client.generate_reasoning("test question", "test page", session)
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("SECRET", err_msg)
+        self.assertIn("Gemini API HTTP 500", err_msg)
+
+        # Ensure logging the exception does not leak SECRET into logs
+        logger = logging.getLogger("metalab.reasoning")
+        with self.assertLogs("metalab.reasoning", level="ERROR") as cm:
+            logger.error("Failed to generate reasoning: %s", ctx.exception)
+        for log_line in cm.output:
+            self.assertNotIn("SECRET", log_line)
+
+    async def test_http_gemini_client_network_error_does_not_leak_secret(self):
+        """REQ-PRIV-02: URLError messages/details must not leak secrets."""
+        client = HttpGeminiClient(api_key="test-api-key")
+        session = BookSession("s-privacy-net")
+
+        # URLError with TimeoutError
+        timeout_url_err = urllib.error.URLError(reason=TimeoutError("SECRET_NETWORK_TIMEOUT"))
+        with mock.patch("urllib.request.urlopen", side_effect=timeout_url_err):
+            with self.assertRaises(TimeoutError) as ctx:
+                await client.generate_reasoning("test question", "test page", session)
+        self.assertNotIn("SECRET", str(ctx.exception))
+        self.assertEqual(str(ctx.exception), "Gemini request timed out")
+
+        # URLError with generic exception
+        net_err = urllib.error.URLError(reason=RuntimeError("SECRET_CONNECTION_REFUSED_WITH_TOKEN"))
+        with mock.patch("urllib.request.urlopen", side_effect=net_err):
+            with self.assertRaises(ReasoningError) as ctx:
+                await client.generate_reasoning("test question", "test page", session)
+        self.assertNotIn("SECRET", str(ctx.exception))
+        self.assertEqual(str(ctx.exception), "Gemini API network error: RuntimeError")
+
+    async def test_http_gemini_client_invalid_json_does_not_leak_secret(self):
+        """REQ-PRIV-02: Unparseable response JSON from Gemini must not leak raw body/secret."""
+        client = HttpGeminiClient(api_key="test-api-key")
+        session = BookSession("s-privacy-json")
+        mock_resp = mock.MagicMock()
+        mock_resp.read.return_value = b"<html>SECRET_GEMINI_GATEWAY_ERROR</html>"
+        mock_resp.__enter__.return_value = mock_resp
+
+        with mock.patch("urllib.request.urlopen", return_value=mock_resp):
+            with self.assertRaises(ReasoningError) as ctx:
+                await client.generate_reasoning("test question", "test page", session)
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("SECRET", err_msg)
+        self.assertEqual(err_msg, "Invalid JSON from Gemini API")
+
+    def test_parse_reasoning_json_unparseable_output_does_not_leak_secret(self):
+        """REQ-PRIV-02: Model output that is unparseable text must not leak in ReasoningError."""
+        session = BookSession("s-privacy-parse-1")
+        bad_output = "I cannot fulfill this request: SECRET_PROMPT_CONTENT_HERE"
+        with self.assertRaises(ReasoningError) as ctx:
+            parse_reasoning_json(bad_output, session)
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("SECRET", err_msg)
+        self.assertEqual(err_msg, "Could not parse JSON from model output")
+
+        logger = logging.getLogger("metalab.reasoning")
+        with self.assertLogs("metalab.reasoning", level="ERROR") as cm:
+            logger.error("Parse failed: %s", ctx.exception)
+        for log_line in cm.output:
+            self.assertNotIn("SECRET", log_line)
+
+    def test_parse_reasoning_json_malformed_bracketed_output_does_not_leak_secret(self):
+        """REQ-PRIV-02: Model output with malformed bracketed JSON must not leak in ReasoningError."""
+        session = BookSession("s-privacy-parse-2")
+        bad_json = "{'title': SECRET_UNQUOTED_VALUE}"
+        with self.assertRaises(ReasoningError) as ctx:
+            parse_reasoning_json(bad_json, session)
+
+        err_msg = str(ctx.exception)
+        self.assertNotIn("SECRET", err_msg)
+        self.assertEqual(err_msg, "Could not parse JSON from model output")
 
 
 if __name__ == "__main__":

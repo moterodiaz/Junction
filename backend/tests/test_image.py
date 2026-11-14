@@ -119,7 +119,84 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
             url = await draw("Polonius behind tapestry", client=stub)
 
         self.assertIsNone(url)
-        self.assertTrue(any("Upstream timeout" in msg for msg in cm.output))
+        self.assertTrue(any("ConnectionError" in msg for msg in cm.output))
+        self.assertFalse(any("Upstream timeout" in msg for msg in cm.output))
+
+    async def test_generation_error_with_secret_returns_none_and_redacts(self):
+        stub = StubImageClient(billing_enabled=True)
+
+        async def crash_generation(model, prompt):
+            raise RuntimeError("SECRET upstream prompt quote: 'Draw Hamlet'")
+
+        stub.generate_image = crash_generation
+
+        with self.assertLogs("metalab.image", level=logging.WARNING) as cm:
+            url = await draw("Polonius behind tapestry", client=stub)
+
+        self.assertIsNone(url)
+        self.assertTrue(any("RuntimeError" in msg for msg in cm.output))
+        for msg in cm.output:
+            self.assertNotIn("SECRET", msg)
+
+    async def test_billing_error_with_secret_returns_none_and_redacts(self):
+        stub = StubImageClient(billing_enabled=True)
+
+        async def fail_generation(model, prompt):
+            raise BillingNotEnabledError("SECRET account billing suspended")
+
+        stub.generate_image = fail_generation
+
+        with self.assertLogs("metalab.image", level=logging.WARNING) as cm:
+            url = await draw("King Claudius kneeling", client=stub)
+
+        self.assertIsNone(url)
+        self.assertFalse(is_billing_enabled())
+        self.assertTrue(any("BillingNotEnabledError" in msg for msg in cm.output))
+        for msg in cm.output:
+            self.assertNotIn("SECRET", msg)
+
+    async def test_billing_check_error_with_secret_returns_none_and_redacts(self):
+        stub = StubImageClient(billing_enabled=True)
+
+        async def fail_check():
+            raise RuntimeError("SECRET probe network timeout")
+
+        stub.check_billing = fail_check
+
+        with self.assertLogs("metalab.image", level=logging.WARNING) as cm:
+            url = await draw("Horatio on the platform", client=stub)
+
+        self.assertIsNone(url)
+        self.assertFalse(is_billing_enabled())
+        self.assertTrue(any("RuntimeError" in msg for msg in cm.output))
+        for msg in cm.output:
+            self.assertNotIn("SECRET", msg)
+
+    async def test_gemini_image_client_billing_error_does_not_leak_secret(self):
+        fake_client = mock.MagicMock()
+        fake_client.aio.models.generate_content.side_effect = Exception(
+            "permission denied: SECRET token details quoted prompt"
+        )
+
+        with mock.patch("google.genai.Client", return_value=fake_client):
+            client = image.GeminiImageClient(api_key="test-key", model="gemini-nano-banana-2.1")
+            with self.assertRaises(BillingNotEnabledError) as ctx:
+                await client.generate_image("gemini-nano-banana-2.1", "Prompt")
+            self.assertNotIn("SECRET", str(ctx.exception))
+            self.assertEqual(
+                str(ctx.exception),
+                "Billing or permission is not enabled for image generation.",
+            )
+
+    async def test_gemini_image_client_check_billing_does_not_leak_secret(self):
+        with mock.patch("google.genai.Client", side_effect=Exception("billing account SECRET error")):
+            client = image.GeminiImageClient(api_key="test-key")
+            with self.assertLogs("metalab.image", level=logging.WARNING) as cm:
+                res = await client.check_billing()
+            self.assertFalse(res)
+            self.assertTrue(any("Exception" in msg for msg in cm.output))
+            for msg in cm.output:
+                self.assertNotIn("SECRET", msg)
 
     async def test_session_cleanup(self):
         stub = StubImageClient(billing_enabled=True)

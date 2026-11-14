@@ -1,6 +1,6 @@
 # Tieto concept card: bounded autonomy, tiered by risk
 
-How a four-person team let AI agents write, review, fix and merge most of the code for MetaLab in one weekend, what a named human still signs off on, and how we measure whether that trust was earned. Every number below comes from this repository's GitHub data (measured 2026-11-14 14:15 UTC); `tools/metrics` regenerates them.
+How a four-person team let AI agents write, review, fix and merge most of the code for MetaLab in one weekend, what a named human still signs off on, and how we measure whether that trust was earned. Every number below comes from this repository's GitHub data (measured 2026-11-14 14:38 UTC); `tools/metrics` regenerates them.
 
 ## 1. Recommendation
 
@@ -48,21 +48,37 @@ Definitions (computed by `tools/metrics` from the GitHub API):
 - **Disposition coverage:** review threads with a written reply ÷ all review threads.
 - **AI finding acceptance rate:** threads fixed ÷ (threads fixed + threads rejected with a reason), over threads that have a disposition.
 - **Share routed to humans:** PRs with any `needs human` comment ÷ PRs.
-- **Escape rate:** reverts or hotfix PRs within 24 h ÷ merged PRs.
+- **Escape rate:** revert PRs ÷ merged PRs.
 - **Fixer effort:** `claude-fix` commits ÷ PRs.
 
-| Metric (product PRs, #67 onwards) | Value at 2026-11-14 14:15 UTC |
+Output of `tools/metrics` (all PRs from #67, the first product PR; denominators are the counts in the same table):
+
+| Metric | Value |
 |---|---|
-| PRs opened / merged / open | 29 / 27 / 2 |
-| Time to merge | median 5.7 min, mean 15.9 min, max 89 min |
-| Greptile review threads | 74 on 19 PRs, all resolved |
-| Threads with a written reply | 30 (28 "Fixed in <sha>", 0 rejected) |
-| Threads resolved with no reply | 44 (59%) |
-| AI finding acceptance rate (threads with a disposition) | 28 of 28 |
-| `claude-fix` commits | 24 on 15 PRs (measured 12:40 UTC); cap of 5 never hit |
-| `ci` runs succeeded | 196 of the last 200 |
+| PRs opened | 35 |
+| PRs merged | 33 |
+| Time to merge, median (min) | 5.1 |
+| Time to merge, mean (min) | 13.7 |
+| AI review threads | 82 |
+| Threads fixed | 36 |
+| Threads rejected with a reason | 0 |
+| Threads escalated to a human | 0 |
+| Threads resolved in silence | 46 |
+| Threads still open | 0 |
+| Disposition coverage (%) | 43.9 |
+| AI finding acceptance (%) | 100.0 |
+| claude-fix commits | 28 |
+| PRs routed to a human | 15 |
+| Share routed to a human (%) | 42.9 |
 | Reverts | 0 |
-| Human approvals on merged PRs (all PRs) | 0 of 60 |
+| Escape rate (%) | 0.0 |
+| PRs with a REQ id | 6 |
+| REQ id coverage (%) | 17.1 |
+| ci runs succeeded, last 100 (%) | 97.0 |
+
+PRs #67 onwards, measured 2026-11-14T14:38:28Z by `tools/metrics`.
+
+Human approvals on merged PRs: 0 (no PR was approved; owners merge instead, rule 9). REQ id coverage is low because ids were introduced at PR #122; `tools/task claim` and the `pr-header` check now require one.
 
 The two numbers we commit to watching: disposition coverage must reach 100% for new PRs (rule 8), and the escape rate must not rise while time to merge stays low.
 
@@ -70,7 +86,7 @@ The two numbers we commit to watching: disposition coverage must reach 100% for 
 
 - Greptile's recall is unknown: we can count what it found, not what it missed.
 - 0 reverts in one day of building proves little.
-- The acceptance rate (28 of 28) looks perfect only because no finding was ever rejected in writing; with 44 silent threads it is not yet a real measure.
+- The acceptance rate (36 of 36) looks perfect only because no finding was ever rejected in writing; with 46 silent threads it is not yet a real measure.
 - The safety net was broken for most of the day: the sweeper's retry step failed 170 of its last 200 runs and nobody was alerted (lessons log entry 2).
 - The workflow guard (#120) stops `claude-fix` from pushing to protected paths or auto-merging protected-path PRs, but GitHub itself requires 0 approvals, so an agent or a teammate can still enable auto-merge on such a PR by hand, against rule 9. CODEOWNERS names the owners; it does not block a merge while approvals stay at 0.
 - The iOS tests are proxies, and the app target is never compiled in CI.
@@ -78,4 +94,4 @@ The two numbers we commit to watching: disposition coverage must reach 100% for 
 
 ## 7. Walkthrough
 
-The live walkthrough uses one agent-written PR with its self-explaining header (Verified by AI / Refused or escalated to a named human / Human sign-off, plus metrics). Until the header workflow is live, the candidate is PR #86 (REQ-ERR-01, REQ-PRIV-01): every stage failure maps to a contract error code and a request writes nothing to disk. It had 3 Greptile threads, 1 fixer commit, and contract and privacy tests.
+The live walkthrough uses one agent-written PR with its self-explaining header (Verified by AI / Refused or escalated to a named human / Human sign-off, plus metrics). The `pr-header` workflow posts it as a sticky comment on every PR. The candidate is PR #86 (REQ-ERR-01, REQ-PRIV-01): every stage failure maps to a contract error code and a request writes nothing to disk. It had 3 Greptile threads, 1 fixer commit, and contract and privacy tests.

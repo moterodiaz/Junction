@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+# Trust metrics for the agent PR pipeline, computed from GitHub. Needs `gh` (authenticated) and python3.
+# Usage: tools/metrics [--since <pr-number>] [--json]   repo-wide table (default --since 67, the first product PR)
+#        tools/metrics --pr <N>                         the trust header for one PR (markdown, used by pr-header.yml)
+# Env: METRICS_REPO (default: the current gh repo); METRICS_TABLE, a file holding a pre-rendered repo-wide table for --pr. Definitions: docs/TIETO_CONCEPT_CARD.md section 5.
+set -euo pipefail
+command -v gh >/dev/null 2>&1 || { echo "metrics: gh not found (https://cli.github.com)" >&2; exit 1; }
+REPO="${METRICS_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export REPO ROOT
+exec python3 - "$@" <<'PY'
+import json, os, re, statistics, subprocess, sys
+from datetime import datetime, timezone
+
+REPO, ROOT = os.environ["REPO"], os.environ["ROOT"]
+OWNER, NAME = REPO.split("/")
+MARKER = "<!-- metalab-pr-header -->"
+SIGNOFF_START, SIGNOFF_END = "<!-- signoff:start -->", "<!-- signoff:end -->"
+PROTECTED = re.compile(r"^(\.github|\.claude|\.agents|contracts)/")
+REQ = re.compile(r"REQ-[A-Z]+-[0-9]+")
+FIXER_PREFIX = "fix: address greptile review"
+# Same order as AGENTS.md section 4 and .github/CODEOWNERS (used when CODEOWNERS is missing).
+DEFAULT_OWNERS = [("/.github/", "@moterodiaz"), ("/.claude/", "@moterodiaz"), ("/.agents/", "@moterodiaz"),
+                  ("/contracts/", "@moterodiaz"), ("/docs/", "@moterodiaz"), ("/ios/", "@maksymmatviievskyi"),
+                  ("/backend/app/", "@Ahm3d-KA"), ("/backend/stt/", "@Ahm3d-KA"), ("/backend/ai/", "@Marcus228")]
+LEAD = "@moterodiaz"
+
+def usage(code=1):
+    print("usage: tools/metrics [--since <pr-number>] [--json] | tools/metrics --pr <N>", file=sys.stderr)
+    sys.exit(code)
+
+def gh(*args):
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True).stdout
+
+def graphql(query, **vars):
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for k, v in vars.items():
+        if v is not None:
+            args += ["-F" if isinstance(v, int) else "-f", f"{k}={v}"]
+    return json.loads(gh(*args))["data"]["repository"]
+
+THREADS = "reviewThreads(first:100){totalCount nodes{isResolved path line comments(first:30){nodes{author{login} body url}}}}"
+PR_FIELDS = f"""number title body state createdAt mergedAt author{{login}}
+  commits(first:100){{nodes{{commit{{message}}}}}}
+  comments(first:100){{nodes{{author{{login}} body url}}}}
+  {THREADS}"""
+
+def all_prs():
+    # 50 PRs per page keeps the query far below GitHub's 500,000-node limit (never ask gh pr list for commits).
+    q = f"query($o:String!,$n:String!,$c:String){{repository(owner:$o,name:$n){{pullRequests(first:50,after:$c,orderBy:{{field:CREATED_AT,direction:ASC}}){{pageInfo{{hasNextPage endCursor}} nodes{{{PR_FIELDS}}}}}}}}}"
+    out, cursor = [], None
+    while True:
+        page = graphql(q, o=OWNER, n=NAME, c=cursor)["pullRequests"]
+        out += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            return out
+        cursor = page["pageInfo"]["endCursor"]
+
+# A disposition is how a reply opens (AGENTS.md section 3 rule 8), not words inside its explanation.
+DISPOSITIONS = [("escalated", re.compile(r"(needs human|left open for a human)")),
+                ("rejected", re.compile(r"not changing")),
+                ("fixed", re.compile(r"((already )?fixed in|\w+ in [0-9a-f]{7,40}\b)"))]
+
+def classify(thread):
+    found = None
+    for c in thread["comments"]["nodes"][1:]:
+        login = (c["author"] or {}).get("login") or ""
+        if "greptile" in login:
+            continue
+        opening = re.sub(r"^(\[[^\]]*\]\s*)+", "", c["body"].strip()).lower()
+        for kind, pattern in DISPOSITIONS:
+            if pattern.match(opening):
+                found = kind  # the latest reply with a disposition wins
+                break
+    return found or ("silent" if thread["isResolved"] else "open")
+
+def ai_threads(pr):
+    return [t for t in pr["reviewThreads"]["nodes"]
+            if t["comments"]["nodes"] and "greptile" in ((t["comments"]["nodes"][0]["author"] or {}).get("login") or "")]
+
+def needs_human(pr):
+    return [c for c in pr["comments"]["nodes"] if "needs human" in c["body"] and MARKER not in c["body"]]
+
+def fixer_commits(pr):
+    return sum(c["commit"]["message"].startswith(FIXER_PREFIX) for c in pr["commits"]["nodes"])
+
+def ts(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+def pct(a, b):
+    return round(100 * a / b, 1) if b else None
+
+def repo_metrics(since):
+    prs = [p for p in all_prs() if p["number"] >= since]
+    merged = [p for p in prs if p["mergedAt"]]
+    ttm = [(ts(p["mergedAt"]) - ts(p["createdAt"])).total_seconds() / 60 for p in merged]
+    kinds = [classify(t) for p in prs for t in ai_threads(p)]
+    count = {k: kinds.count(k) for k in ("fixed", "rejected", "escalated", "silent", "open")}
+    disposed = count["fixed"] + count["rejected"] + count["escalated"]
+    routed = [p for p in prs if needs_human(p)]
+    reverts = [p for p in merged if re.match(r"revert", p["title"], re.I)]
+    with_req = [p for p in prs if REQ.search(p["title"] + " " + (p["body"] or ""))]
+    fixer = sum(fixer_commits(p) for p in prs)
+    runs = json.loads(gh("run", "list", "-R", REPO, "--workflow", "ci.yml", "--limit", "100", "--json", "conclusion"))
+    done = [r for r in runs if r["conclusion"]]
+    return {
+        "since_pr": since,
+        "prs_opened": len(prs),
+        "prs_merged": len(merged),
+        "ttm_median_min": round(statistics.median(ttm), 1) if ttm else None,
+        "ttm_mean_min": round(statistics.mean(ttm), 1) if ttm else None,
+        "ttm_max_min": round(max(ttm), 1) if ttm else None,
+        "threads_total": len(kinds),
+        "threads_fixed": count["fixed"],
+        "threads_rejected": count["rejected"],
+        "threads_escalated": count["escalated"],
+        "threads_silent": count["silent"],
+        "threads_open": count["open"],
+        "disposition_coverage_pct": pct(disposed, len(kinds)),
+        "ai_acceptance_pct": pct(count["fixed"], count["fixed"] + count["rejected"]),
+        "fixer_commits": fixer,
+        "fixer_commits_per_pr": round(fixer / len(prs), 2) if prs else None,
+        "prs_routed_to_human": len(routed),
+        "routed_to_human_pct": pct(len(routed), len(prs)),
+        "needs_human_comments": sum(len(needs_human(p)) for p in prs),
+        "reverts": len(reverts),
+        "escape_rate_pct": pct(len(reverts), len(merged)),
+        "prs_with_req_id": len(with_req),
+        "req_id_coverage_pct": pct(len(with_req), len(prs)),
+        "ci_runs_success_pct": pct(sum(r["conclusion"] == "success" for r in done), len(done)),
+        "measured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+LABELS = [("prs_opened", "PRs opened"), ("prs_merged", "PRs merged"), ("ttm_median_min", "Time to merge, median (min)"),
+          ("ttm_mean_min", "Time to merge, mean (min)"), ("threads_total", "AI review threads"),
+          ("threads_fixed", "Threads fixed"), ("threads_rejected", "Threads rejected with a reason"),
+          ("threads_escalated", "Threads escalated to a human"), ("threads_silent", "Threads resolved in silence"),
+          ("threads_open", "Threads still open"), ("disposition_coverage_pct", "Disposition coverage (%)"),
+          ("ai_acceptance_pct", "AI finding acceptance (%)"), ("fixer_commits", "claude-fix commits"),
+          ("prs_routed_to_human", "PRs routed to a human"), ("routed_to_human_pct", "Share routed to a human (%)"),
+          ("reverts", "Reverts"), ("escape_rate_pct", "Escape rate (%)"), ("prs_with_req_id", "PRs with a REQ id"),
+          ("req_id_coverage_pct", "REQ id coverage (%)"), ("ci_runs_success_pct", "ci runs succeeded, last 100 (%)")]
+
+def table(m):
+    rows = ["| Metric | Value |", "|---|---|"]
+    rows += [f"| {label} | {'n/a' if m[key] is None else m[key]} |" for key, label in LABELS]
+    return "\n".join(rows) + f"\n\nPRs #{m['since_pr']} onwards, measured {m['measured_at']} by `tools/metrics`."
+
+def owners_table():
+    path = os.path.join(ROOT, ".github", "CODEOWNERS")
+    if not os.path.exists(path):
+        return DEFAULT_OWNERS
+    rules = []
+    for line in open(path):
+        parts = line.split("#", 1)[0].split()
+        if len(parts) >= 2:
+            rules.append((parts[0], " ".join(parts[1:])))
+    return rules or DEFAULT_OWNERS
+
+def owner_of(path):
+    found = None
+    for pattern, owner in owners_table():  # CODEOWNERS semantics: the last matching rule wins
+        if ("/" + path).startswith(pattern if pattern.endswith("/") else pattern + "/") or "/" + path == pattern:
+            found = owner
+    return found or LEAD
+
+def requirement_text(req):
+    try:
+        for line in open(os.path.join(ROOT, "docs", "REQUIREMENTS.md")):
+            cells = [c.strip() for c in line.split("|")]
+            if len(cells) > 4 and cells[1] == req:
+                return cells[3]
+    except OSError:
+        pass
+    return None
+
+def check_lines(pr):
+    nodes = ((pr["commits"]["nodes"] or [{}])[-1].get("commit") or {}).get("statusCheckRollup") or {}
+    out = {}
+    for n in (nodes.get("contexts") or {}).get("nodes", []):
+        name = n.get("name") or n.get("context")
+        state = (n.get("conclusion") or n.get("status") or n.get("state") or "pending").lower()
+        out[name] = (state, n.get("detailsUrl") or n.get("targetUrl"))
+    return out
+
+def shared_table():
+    # A sweep over many PRs renders the repo-wide table once and passes it in (pr-header.yml).
+    path = os.environ.get("METRICS_TABLE")
+    if path and os.path.exists(path):
+        return open(path).read().strip()
+    return table(repo_metrics(67))
+
+def header(number):
+    q = f"""query($o:String!,$n:String!,$p:Int!){{repository(owner:$o,name:$n){{pullRequest(number:$p){{
+      number title body labels(first:20){{nodes{{name}}}}
+      allCommits: commits(first:100){{totalCount nodes{{commit{{message}}}}}}
+      commits(last:1){{nodes{{commit{{statusCheckRollup{{contexts(first:30){{nodes{{
+        ... on CheckRun{{name conclusion status detailsUrl}} ... on StatusContext{{context state targetUrl}}}}}}}}}}}}}}
+      comments(first:100){{totalCount nodes{{author{{login}} body url}}}}
+      {THREADS}}}}}}}"""
+    pr = graphql(q, o=OWNER, n=NAME, p=number)["pullRequest"]
+    # REST pages through up to 3000 files; a rename counts under both its old and new path.
+    files = [p for p in gh("api", "--paginate", f"repos/{REPO}/pulls/{number}/files?per_page=100",
+                           "--jq", ".[] | .filename, (.previous_filename // empty)").splitlines() if p]
+    labels = [l["name"] for l in pr["labels"]["nodes"]]
+    reqs = sorted(set(REQ.findall(pr["title"] + " " + (pr["body"] or ""))))
+    protected = [f for f in files if PROTECTED.match(f)]
+    tier = "human-merge" if protected or "no-auto-merge" in labels else "auto-merge allowed"
+    owners = sorted({owner_of(f) for f in files}) or [LEAD]
+    threads = ai_threads(pr)
+    kinds = [classify(t) for t in threads]
+    fixer = sum(c["commit"]["message"].startswith(FIXER_PREFIX) for c in pr["allCommits"]["nodes"])
+    checks = check_lines(pr)
+    out = [MARKER, f"## Trust header · {', '.join(reqs) or 'no REQ id'} · {tier}"]
+    if reqs:
+        out += [f"**Requirement:** `{r}`: {requirement_text(r) or 'not found in docs/REQUIREMENTS.md'}" for r in reqs]
+    else:
+        out.append("**Requirement:** missing. Add an id from `docs/REQUIREMENTS.md` to the title or body (AGENTS.md §3 rule 7).")
+    why = f"protected paths: {', '.join(f'`{p}`' for p in protected)}" if protected else ("labelled `no-auto-merge`" if tier == "human-merge" else "no protected path changed")
+    out += [f"**Risk tier:** {tier} ({why}; AGENTS.md §3 rule 9)", f"**Named owner(s):** {' '.join(owners)}", "", "### Verified by AI"]
+    for name in ("ci", "Greptile Review"):
+        state, url = checks.get(name, ("not run yet", None))
+        out.append(f"- {name}: {f'[{state}]({url})' if url else state}")
+    out.append(f"- Review threads: {len(threads)} (fixed {kinds.count('fixed')}, rejected {kinds.count('rejected')}, "
+               f"escalated {kinds.count('escalated')}, silent {kinds.count('silent')}, open {kinds.count('open')})")
+    for t, k in zip(threads, kinds):
+        if k in ("silent", "open"):
+            out.append(f"  - {k}: [`{t['path']}:{t['line'] or '?'}`]({t['comments']['nodes'][0]['url']})")
+    out.append(f"- claude-fix commits on this PR: {fixer} of the 5 cap")
+    capped = [what for what, conn in (("review threads", pr["reviewThreads"]), ("comments", pr["comments"]), ("commits", pr["allCommits"]))
+              if conn["totalCount"] > len(conn["nodes"])]
+    if capped:
+        out.append(f"- Incomplete: only the first 100 {', '.join(capped)} were read; counts above are lower bounds.")
+    out += ["", "### Refused by AI or escalated to a named human"]
+    esc = needs_human(pr) + [c for t, k in zip(threads, kinds) if k == "escalated" for c in t["comments"]["nodes"][1:] if "needs human" in c["body"].lower()]
+    if esc:
+        for c in esc:
+            first = c["body"].strip().splitlines()[0][:200]
+            out.append(f"- [{first}]({c['url']}) (@{(c['author'] or {}).get('login', '?')})")
+    else:
+        out.append("- none")
+    # pr-header.yml keeps whatever the owner wrote between these markers when it refreshes the comment.
+    out += ["", f"### Human sign-off ({' '.join(owners)})", SIGNOFF_START,
+            "- [ ] Checked:", "- [ ] Not checked, and why:", "- [ ] Residual risk accepted:", SIGNOFF_END, "",
+            "<details><summary>Pipeline metrics (repo-wide)</summary>", "", shared_table(), "", "</details>"]
+    return "\n".join(out)
+
+args = sys.argv[1:]
+since, as_json, pr = 67, False, None
+while args:
+    a = args.pop(0)
+    if a == "--json":
+        as_json = True
+    elif a in ("--since", "--pr") and args and args[0].isdigit():
+        val = int(args.pop(0))
+        since, pr = (val, pr) if a == "--since" else (since, val)
+    elif a in ("-h", "--help"):
+        usage(0)
+    else:
+        usage()
+try:
+    if pr is not None:
+        print(header(pr))
+    else:
+        m = repo_metrics(since)
+        print(json.dumps(m, indent=2) if as_json else table(m))
+except subprocess.CalledProcessError as e:
+    print(f"metrics: gh failed: {e.stderr.strip()[:500]}", file=sys.stderr)
+    sys.exit(1)
+PY
