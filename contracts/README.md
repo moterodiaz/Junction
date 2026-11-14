@@ -29,7 +29,7 @@
   - `models`: `{ "read": "...", "reason": "...", "image": "..." }`
 - **`error`**:
   - `type`: `"error"`
-  - `request_id`: non-empty string, or `null` only when the backend could not parse the incoming message and so has no request id to echo (the phone treats it as "the last request failed")
+  - `request_id`: non-empty string, or `null` only when the backend could not parse the incoming message and so has no request id to echo
   - `code`: `"no_text_found" | "stt_failed" | "model_timeout" | "internal"`
   - `message`: non-empty string
   - `retryable`: boolean

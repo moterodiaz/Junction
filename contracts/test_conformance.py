@@ -28,12 +28,13 @@ VALIDATOR = Draft202012Validator(SCHEMA)
 sys.path.insert(0, str(BACKEND_DIR))
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import pipeline  # noqa: E402
+from app import main, pipeline  # noqa: E402
 from app.main import app  # noqa: E402
 
 STAGES = ["transcribing", "reading", "thinking", "drawing"]
 COMPARED = ("type", "stage", "request_id", "code", "retryable")
 TIMEOUT_S = 10
+EXTRA_REPLY_TIMEOUT_S = 0.1
 
 
 def load(name: str) -> dict:
@@ -51,16 +52,16 @@ def encode_like_ios(message: dict) -> bytes:
 
 
 @contextmanager
-def deadline(seconds: int):
+def deadline(seconds: float):
     def fire(signum, frame):
         raise TimeoutError(f"no reply from /ws within {seconds}s")
 
     previous = signal.signal(signal.SIGALRM, fire)
-    signal.alarm(seconds)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
     try:
         yield
     finally:
-        signal.alarm(0)
+        signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
 
 
@@ -82,6 +83,13 @@ def drive(exchange: dict, count: int | None = None) -> list[dict]:
             send_frame(ws, frame)
         if count is not None:
             replies = [ws.receive_json() for _ in range(count)]
+            try:
+                with deadline(EXTRA_REPLY_TIMEOUT_S):
+                    extra = ws.receive_json()
+            except TimeoutError:
+                pass
+            else:
+                raise AssertionError(f"unexpected reply after expected sequence: {extra}")
         else:
             done = 0
             while done < len(exchange["send"]):
@@ -193,6 +201,17 @@ class DriftTests(unittest.TestCase):
         exchange = load("audio-and-text")
         with mock.patch(f"{__name__}.TIMEOUT_S", 1), self.assertRaises(TimeoutError):
             drive(exchange, len(exchange["receive"]) + 1)
+
+    def test_duplicate_final_reply_is_reported(self) -> None:
+        original_send = main.send
+
+        async def send_duplicate_final(ws, message) -> None:
+            await original_send(ws, message)
+            if message.type == "card":
+                await original_send(ws, message)
+
+        with mock.patch.object(main, "send", new=send_duplicate_final), self.assertRaises(AssertionError):
+            check("text-invoke")
 
 
 if __name__ == "__main__":
