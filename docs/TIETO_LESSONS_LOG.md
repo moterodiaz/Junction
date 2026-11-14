@@ -41,7 +41,7 @@ Real incidents from building MetaLab with AI agents on 2026-11-14 (times UTC), e
 ## 7. A PR its author marked "no auto-merge" merged itself  (13:45, PR #100)
 **What happened.** A teammate's agent opened #100 (review plans, docs only) and wrote "no auto-merge" in the description. `claude-fix` enabled auto-merge as soon as it had no unresolved threads, and `github-actions` merged it. The lead had decided not to publish that text, so it had to be removed by a new PR (#115).
 **Why.** The author's intent was written in prose, which no workflow reads. `claude-fix` enables auto-merge on every PR whose threads are resolved.
-**What we changed.** One merge rule (AGENTS.md §3 rule 9), and `claude-fix` skips auto-merge on protected-path PRs (#120). This guard does not cover the incident itself: a docs-only PR is not on a protected path, so an author's "no auto-merge" in prose is still not honored. Holding such a PR remains unsupported (keep it as a draft, which Greptile and auto-merge skip, until it is ready).
+**What we changed.** One merge rule (AGENTS.md §3 rule 9), and `claude-fix` skips auto-merge on protected-path PRs (#120). A docs-only PR like #100 is not on a protected path, so #120 also adds a `no-auto-merge` label that `claude-fix` honors: an author who wants to hold a PR says so in a form the workflow reads.
 **Rubric lesson.** Clarity: a rule that lives only in prose is not enforced.
 
 ## 8. A hosted reviewer reported "pass" while reviewing nothing  (before the event; partly mitigated, not fixed)
@@ -65,11 +65,11 @@ Real incidents from building MetaLab with AI agents on 2026-11-14 (times UTC), e
 ## 11. The merge rule was written five different ways  (found 13:35)
 **What happened.** AGENTS.md allowed agents to run `gh pr merge --auto`, the Codex safety gate said `gh pr merge` was prohibited, a `claude-fix.yml` comment said `.claude/settings.json` denies it (it does not), the strategy doc pitched a "hard rule", and AGENTS.md said `.github` changes need a human merge while 30 PRs were merged by `github-actions`.
 **Why.** Each file was written at a different time, and none pointed to the others.
-**What we changed.** The rule is stated once, as AGENTS.md §3 rule 9, and the other places point to it. The safety gate and the workflow comment are aligned in #120.
+**What we changed.** The rule is stated once, as AGENTS.md §3 rule 9, and the other places point to it. #120 aligned the Codex safety gate (it now blocks only `gh pr merge --admin`, like the Claude guard) and the `claude-fix.yml` comment.
 **Rubric lesson.** Clarity: one rule, in one place, matching what the code enforces.
 
 ## 12. The fixer edited another owner's file and broke its test  (about 14:00, PR #104)
 **What happened.** On #104 (backend core), `claude-fix` answered a review thread by editing `backend/ai/image.py`, which belongs to another owner, and broke that owner's test. The PR author reverted the edit and filed a task for the owner (#108) with the diff as a starting point.
 **Why.** The fixer may edit any file the review mentions; nothing checks the owner table.
-**What we changed.** The PR author's revert and handoff are the pattern we follow. The `claude-fix` path guard (#120) refuses changes to protected paths before it pushes.
+**What we changed.** The PR author's revert and handoff are the pattern we follow. The `claude-fix` path guard (#120) refuses changes to protected paths before it pushes, but another owner's product folder (like `backend/ai/`) is not protected; there the owner's tests and review are the check. That gap is open.
 **Rubric lesson.** Practicality: a named human owns each folder, and the AI should hand off rather than cross that line.

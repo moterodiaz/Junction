@@ -72,7 +72,7 @@ The two numbers we commit to watching: disposition coverage must reach 100% for 
 - 0 reverts in one day of building proves little.
 - The acceptance rate (28 of 28) looks perfect only because no finding was ever rejected in writing; with 44 silent threads it is not yet a real measure.
 - The safety net was broken for most of the day: the sweeper's retry step failed 170 of its last 200 runs and nobody was alerted (lessons log entry 2).
-- The protected-path rule needs the workflow to enforce it. Until the `claude-fix` path guard (#120) merges, it is a team rule that a bot can break, as PR #100 showed (lessons log entry 7).
+- The workflow guard (#120) stops `claude-fix` from pushing to protected paths or auto-merging protected-path PRs, but GitHub itself requires 0 approvals, so an agent or a teammate can still enable auto-merge on such a PR by hand, against rule 9. CODEOWNERS names the owners; it does not block a merge while approvals stay at 0.
 - The iOS tests are proxies, and the app target is never compiled in CI.
 - The pipeline has run on one repository, for one weekend, with four people.
 

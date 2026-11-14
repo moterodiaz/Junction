@@ -1,0 +1,11 @@
+# Mirrors AGENTS.md section 4. The first four paths are protected (AGENTS.md §3 rule 9):
+# their owner merges, and claude-fix neither pushes to them nor enables auto-merge.
+/.github/     @moterodiaz
+/.claude/     @moterodiaz
+/.agents/     @moterodiaz
+/contracts/   @moterodiaz
+/docs/        @moterodiaz
+/ios/         @maksymmatviievskyi
+/backend/app/ @Ahm3d-KA
+/backend/stt/ @Ahm3d-KA
+/backend/ai/  @Marcus228
