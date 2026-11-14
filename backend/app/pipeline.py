@@ -9,6 +9,7 @@ import base64
 import binascii
 import logging
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Awaitable, Callable, TypeVar
 
@@ -39,7 +40,16 @@ class PipelineError(Exception):
 STAGE_TIMEOUT_S = float(os.environ.get("STAGE_TIMEOUT_S", "60"))
 
 # A timed-out transcription cannot be stopped, so cap how many can run (and hold audio) at once.
-_STT_THREADS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stt")
+_STT_WORKERS = 2
+_STT_THREADS = ThreadPoolExecutor(max_workers=_STT_WORKERS, thread_name_prefix="stt")
+_STT_SLOTS = threading.BoundedSemaphore(_STT_WORKERS)
+
+
+def _transcribe_in_slot(clip: bytes) -> str:
+    try:
+        return stt.transcribe(clip)
+    finally:
+        _STT_SLOTS.release()
 
 UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this."
 
@@ -49,8 +59,19 @@ async def transcribe(audio: Media) -> str:
         clip = base64.b64decode(audio.b64, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise PipelineError("stt_failed", "The audio clip could not be decoded.", True) from exc
+    # Take a slot before queueing so a stuck engine cannot pile up decoded clips; the slot is
+    # released only when the worker really finishes, not when the request times out.
+    if not _STT_SLOTS.acquire(blocking=False):
+        raise PipelineError("model_timeout", "That took too long. Try again.", True)
     try:
-        return await asyncio.get_running_loop().run_in_executor(_STT_THREADS, stt.transcribe, clip)
+        future = _STT_THREADS.submit(_transcribe_in_slot, clip)
+    except BaseException:
+        _STT_SLOTS.release()
+        raise
+    # A job cancelled before a worker picked it up never runs, so free its slot here.
+    future.add_done_callback(lambda f: _STT_SLOTS.release() if f.cancelled() else None)
+    try:
+        return await asyncio.wrap_future(future)
     except TimeoutError:
         raise  # timed() turns it into model_timeout
     except Exception as exc:

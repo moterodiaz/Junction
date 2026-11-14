@@ -41,7 +41,17 @@ def replies_to(message, until=("card", "error")):
 
 
 
-class ErrorMappingTest(unittest.TestCase):
+class OfflineKeysMixin:
+    """Keep tests offline: no live model keys, whatever the shell exports."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": ""})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class ErrorMappingTest(OfflineKeysMixin, unittest.TestCase):
     def last_reply_with(self, stage, replacement, **env):
         with mock.patch.object(pipeline, stage, replacement), \
                 mock.patch.dict(os.environ, env):
@@ -138,7 +148,12 @@ def kept_in_memory(markers):
     """Live containers still holding the request's frame/audio (as base64 text or raw bytes)."""
     gc.collect()
     hits = []
-    for obj in gc.get_objects():
+    # gc.get_objects() skips dicts holding only strings/bytes, so also walk module globals,
+    # where a cache such as CACHE = {"frame": frame.b64} would live.
+    roots = [vars(m) for name, m in list(sys.modules.items())
+             if m is not None and name.split(".")[0] in ("app", "ai", "stt")]
+    for obj in list(gc.get_objects()) + roots + [v for r in roots for v in r.values()
+                                                 if isinstance(v, dict)]:
         if obj is markers:  # the search terms themselves
             continue
         if isinstance(obj, (Invoke, Media)):
@@ -157,10 +172,11 @@ def kept_in_memory(markers):
     return hits
 
 
-class PrivacyTest(unittest.TestCase):
+class PrivacyTest(OfflineKeysMixin, unittest.TestCase):
     """PRD section 6: frames and audio are processed in memory, never written, never kept."""
 
     def setUp(self):
+        super().setUp()
         self.addCleanup(stt.set_engine, stt.set_engine(lambda audio: "explain"))
 
     def test_a_request_writes_nothing_to_disk(self):
@@ -183,6 +199,45 @@ class PrivacyTest(unittest.TestCase):
         Path(tempfile.gettempdir(), "metalab-privacy-probe.jpg").unlink()
         self.assertTrue(writes)
         self.assertTrue(kept_in_memory(kept.pop()))
+
+    def test_detector_catches_a_string_only_cache(self):
+        async def caching_read(frame):
+            pipeline.LEAK_CACHE = {"frame": frame.b64}
+            return "page"
+
+        self.addCleanup(lambda: vars(pipeline).pop("LEAK_CACHE", None))
+        with mock.patch.object(pipeline, "read_page", caching_read):
+            markers = private_request()
+        self.assertTrue(kept_in_memory(markers))
+
+
+class SttSlotTest(unittest.TestCase):
+    def test_stuck_engine_cannot_queue_more_audio(self):
+        import threading
+
+        release = threading.Event()
+        calls = []
+
+        def stuck(audio):
+            calls.append(audio)
+            release.wait(5)
+            return "explain"
+
+        self.addCleanup(stt.set_engine, stt.set_engine(stuck))
+        self.addCleanup(release.set)
+        media = Media(mime="audio/wav", b64=AUDIO["b64"])
+
+        async def go():
+            tasks = [asyncio.ensure_future(pipeline.transcribe(media)) for _ in range(2)]
+            await asyncio.sleep(0.1)
+            with self.assertRaises(pipeline.PipelineError) as ctx:
+                await pipeline.transcribe(media)
+            release.set()
+            await asyncio.gather(*tasks)
+            return ctx.exception.code
+
+        self.assertEqual(asyncio.run(go()), "model_timeout")
+        self.assertEqual(len(calls), 2)
 
 
 if __name__ == "__main__":
