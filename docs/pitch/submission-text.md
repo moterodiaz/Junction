@@ -8,7 +8,7 @@ MetaLab turns Ray-Ban Display glasses into a reading companion: look at a page, 
 
 ## Short description (~60 words)
 
-Cluely showed that people want AI that sees what they see. MetaLab brings that to the page. A student stuck on a line of Hamlet asks out loud; the glasses take one photo; Gemini works out what the passage means, using the whole reading session, and draws it for the lens. One photo, only on request, never stored.
+Cluely showed that people want AI that sees what they see. MetaLab brings that to the page. A student stuck on a line of Hamlet asks out loud; the glasses take one photo; Gemini works out what the passage means, using the whole reading session, and draws it for the lens. One photo, only on request, not stored by default.
 
 ## Long description (~200 words)
 
@@ -16,7 +16,7 @@ You're reading Hamlet and hit a line you can't picture. Today you put the book d
 
 You look at the page and say "draw this". The glasses take one photo. Nemotron reads the text **[E4]**, and Gemini reasons over the passage and everything you asked earlier in the session, so follow-ups build on each other **[E6]**. Then Gemini's image model paints the scene for the lens. The Ray-Ban Display adds light, so black is see-through, and we ask for a bright scene on pure black that floats over the page **[E5]**. On our live server, one request with a real Hamlet page came back in 25.0 s, and 94% of that time was Gemini thinking and drawing **[E1]**.
 
-MetaLab takes the idea behind Cluely and turns its biggest choice around. Cluely is built to go unnoticed. MetaLab is built to be obvious: one photo, only when you ask, processed in memory and never written to disk. Tests prove it, including one that plants a leaky stage on purpose **[E9]**.
+MetaLab takes the idea behind Cluely and turns its biggest choice around. Cluely is built to go unnoticed. MetaLab is built to be obvious: one photo, only when you ask, processed in memory and not saved by default. The backend never writes to disk, and a test proves it, including one that plants a leaky stage on purpose **[E9]**. The iPhone app has an off-by-default "Keep a sample frame" setting for collecting test pages; when someone turns it on, photos are saved on the phone.
 
 ## How we built it
 

@@ -61,7 +61,7 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 
 - A bar showing reading 0.3 s, thinking 10.1 s, drawing 13.5 s, and 1.1 s for everything else **[E1]**.
 - 17 contract tests passed against the live server **[E2]**.
-- 1 photo per question, never stored **[E9]**.
+- 1 photo per question, not stored by default (the backend never writes it to disk) **[E9]**.
 - 8 s before Gemini takes over reading **[E4]**.
 
 **Say:** this is a single measurement, not an average. Every stage has a 25 s limit inside the phone's 30 s, so the user sees an error they can retry, never a silent hang **[E10]**.
@@ -71,7 +71,7 @@ The card lands 25.0 s after you ask **[E1]**, and the lens shows what it is doin
 **On the slide:** "Cluely is built so nobody can tell it's there. MetaLab is built so you always can."
 
 - **One photo, only when you ask.** Nothing runs in the background.
-- **Used, then gone.** The photo and voice are processed in memory, and nothing is written to disk **[E9]**.
+- **Used, then gone.** The photo and voice are processed in memory, and the backend writes nothing to disk **[E9]**. The phone app saves a photo only if someone turns on the off-by-default "Keep a sample frame" setting.
 - **Tested, not promised.** A test plants a stage that leaks on purpose, and the checks catch it **[E9]**.
 
 ## 8. Built on
