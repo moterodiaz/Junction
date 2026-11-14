@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 import unittest
 from unittest import mock
 
@@ -22,6 +23,7 @@ from ai.image import (
     reset_billing_state,
     set_image_client,
     store_image,
+    sweep_idle_sessions,
 )
 
 
@@ -247,6 +249,57 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         stub = StubImageClient(billing_enabled=True)
         url = await draw("Test prompt", base_url="http://custom.lens.local", client=stub)
         self.assertTrue(url.startswith("https://custom.lens.local/img/"))
+
+    async def test_sweep_idle_sessions_removes_idle_session(self):
+        stub = StubImageClient(billing_enabled=True)
+        url = await draw("Idle prompt", session_id="idle-sess", client=stub)
+        img_id = re.search(r"/img/([a-zA-Z0-9_\-]+)\.png$", url).group(1)
+        self.assertIsNotNone(get_image(img_id))
+
+        ttl = 60.0
+        count = sweep_idle_sessions(now=time.monotonic() + ttl + 1, ttl=ttl)
+
+        self.assertEqual(count, 1)
+        self.assertIsNone(get_image(img_id))
+
+    def test_sweep_active_session_is_kept(self):
+        store_image("kept-img", b"data", session_id="active-sess")
+
+        ttl = 60.0
+        # Age the session beyond TTL, then refresh via get_image
+        with image._lock:
+            image._session_last_activity["active-sess"] = time.monotonic() - ttl - 10
+        get_image("kept-img")  # touches _session_last_activity back to ~now
+
+        count = sweep_idle_sessions(now=time.monotonic(), ttl=ttl)
+
+        self.assertEqual(count, 0)
+        self.assertIsNotNone(get_image("kept-img"))
+
+    def test_sweep_skips_session_with_pending_generation(self):
+        store_image("pending-img", b"data", session_id="pending-sess")
+        with image._lock:
+            image._pending_generations["pending-sess"] = 1
+            image._session_last_activity["pending-sess"] = time.monotonic() - 7200
+
+        count = sweep_idle_sessions(now=time.monotonic(), ttl=60.0)
+
+        self.assertEqual(count, 0)
+        self.assertIsNotNone(get_image("pending-img"))
+
+        with image._lock:
+            image._pending_generations.pop("pending-sess", None)
+
+    def test_sweep_env_var_ttl_fallback_on_garbage(self):
+        store_image("env-img", b"data", session_id="env-sess")
+        with image._lock:
+            image._session_last_activity["env-sess"] = time.monotonic() - 7200
+
+        with mock.patch.dict("os.environ", {"IMAGE_SESSION_TTL_SECONDS": "not-a-number"}):
+            count = sweep_idle_sessions()  # reads env var; falls back to 3600s default
+
+        self.assertEqual(count, 1)
+        self.assertIsNone(get_image("env-img"))
 
 
 if __name__ == "__main__":

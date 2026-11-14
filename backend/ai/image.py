@@ -45,6 +45,7 @@ DUMMY_PNG = (
 
 DEFAULT_MODEL_IMAGE = "gemini-nano-banana-2.1"
 MAX_STORED_IMAGES = 200
+_DEFAULT_SESSION_TTL = 3600.0
 
 
 @dataclass
@@ -63,6 +64,8 @@ _session_images: dict[str, set[str]] = defaultdict(set)
 # Bumped on cleanup so in-flight generations for an ended session can be discarded
 _session_epochs: dict[str, int] = {}
 _pending_generations: dict[str, int] = defaultdict(int)
+# Last activity time (monotonic) per session; touched on store and serve
+_session_last_activity: dict[str, float] = {}
 
 # Billing state cache: None = not checked yet, True/False = cached check result
 _billing_checked: bool = False
@@ -76,6 +79,7 @@ def _store_image_locked(item: StoredImage) -> None:
     _images[item.image_id] = item
     if item.session_id:
         _session_images[item.session_id].add(item.image_id)
+        _session_last_activity[item.session_id] = time.monotonic()
     unowned = [stored for stored in _images.values() if stored.session_id is None]
     while len(unowned) > MAX_STORED_IMAGES:
         old = unowned.pop(0)
@@ -99,6 +103,8 @@ def store_image(
     with _lock:
         # Active-session images live until cleanup; only unowned images are capped.
         _store_image_locked(item)
+    # ponytail: O(n_sessions) scan on each store; switch to a background timer if session count regularly exceeds ~1000
+    sweep_idle_sessions()
     return item
 
 
@@ -106,7 +112,10 @@ def get_image(image_id: str) -> Optional[StoredImage]:
     """Retrieve an image by its ID from memory."""
     clean_id = image_id.removesuffix(".png")
     with _lock:
-        return _images.get(clean_id)
+        item = _images.get(clean_id)
+        if item is not None and item.session_id:
+            _session_last_activity[item.session_id] = time.monotonic()
+        return item
 
 
 def delete_image(image_id: str) -> bool:
@@ -122,6 +131,7 @@ def delete_image(image_id: str) -> bool:
 def cleanup_session(session_id: str) -> int:
     """Delete all images associated with session_id. Returns number of deleted images."""
     with _lock:
+        _session_last_activity.pop(session_id, None)
         if _pending_generations.get(session_id, 0):
             _session_epochs[session_id] = _session_epochs.get(session_id, 0) + 1
         else:
@@ -141,6 +151,32 @@ def clear_all_images() -> None:
         _session_images.clear()
         _session_epochs.clear()
         _pending_generations.clear()
+        _session_last_activity.clear()
+
+
+def sweep_idle_sessions(now: Optional[float] = None, ttl: Optional[float] = None) -> int:
+    """Remove images for sessions idle longer than ttl seconds. Returns sessions swept.
+
+    Does not sweep sessions that have pending generations in flight.
+    TTL defaults to IMAGE_SESSION_TTL_SECONDS env var, then _DEFAULT_SESSION_TTL.
+    """
+    if now is None:
+        now = time.monotonic()
+    if ttl is None:
+        _raw = os.environ.get("IMAGE_SESSION_TTL_SECONDS", "")
+        try:
+            _parsed = float(_raw)
+            ttl = _parsed if _parsed > 0 else _DEFAULT_SESSION_TTL
+        except (ValueError, TypeError):
+            ttl = _DEFAULT_SESSION_TTL
+    with _lock:
+        to_sweep = [
+            sid for sid, last in _session_last_activity.items()
+            if now - last > ttl and not _pending_generations.get(sid, 0)
+        ]
+    for sid in to_sweep:
+        cleanup_session(sid)
+    return len(to_sweep)
 
 
 def reset_billing_state() -> None:
@@ -403,6 +439,8 @@ async def draw(
                 session_id=session_id,
             )
             _store_image_locked(item)
+        # ponytail: O(n_sessions) scan on each draw; switch to a background timer if session count regularly exceeds ~1000
+        sweep_idle_sessions()
     finally:
         if session_id:
             with _lock:
