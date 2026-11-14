@@ -80,5 +80,9 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
         sources=[],
-        models={"read": _read_model, "reason": "stub", "image": "stub"},
+        models={
+            "read": _read_model,
+            "reason": "stub",
+            "image": os.environ.get("MODEL_IMAGE", image.DEFAULT_MODEL_IMAGE) if image_url else "stub",
+        },
     )
