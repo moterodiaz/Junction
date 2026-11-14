@@ -160,6 +160,8 @@ reset true
 FAKE_GIT_HEAD=s PR_NUMBER=8 BEFORE_SHA=s run_step "$CF" "Reopen threads whose fix was not pushed"
 check_not "no local commit: reopens nothing" 'unresolveReviewThread'
 grep -qE "steps\.push\.outcome == 'failure'" "$CF" && ok || bad "reopen step must also run when the push fails"
+# The skip rule must not cover the fixer's own replies, or a reopened thread is never retried.
+grep -q "anyone other than greptile-apps, claude and" "$CF" && ok || bad "prompt must exempt the fixer's own replies from the skip rule"
 reset true
 db_resolved() { jq '.api.graphql.data.repository.pullRequest.reviewThreads.nodes = []' "$FAKE_GH_DB" > "$TMP/d" && mv "$TMP/d" "$FAKE_GH_DB"; }
 db_resolved

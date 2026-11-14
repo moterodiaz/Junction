@@ -165,8 +165,11 @@ jobs:
             List unresolved review threads with `gh api graphql` and read
             summaries with
             `gh pr view ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }} --repo ${{ github.repository }} --comments`.
-            Skip any thread that already has a reply from someone other than
-            greptile-apps: the PR author's agent is handling it.
+            Skip any thread that already has a reply from a person or their
+            agent, that is, anyone other than greptile-apps, claude and
+            github-actions: the PR author's agent is handling it. Replies
+            from claude or github-actions (including "Not pushed: ...") are
+            this fixer's own, so retry those threads.
             For each valid finding, make the smallest fix. For each invalid
             finding, reply on its thread with the reason. Run the repository's
             tests and lint when present, and do not push failing changes.
