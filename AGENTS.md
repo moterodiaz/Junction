@@ -46,13 +46,14 @@ Humans over agents. Only the team lead reassigns work between teammates. If anyo
 
 ## 4. Who owns what
 
-TEMPLATE split, not final. The team will agree owners together; until then ask the lead before editing outside your own area.
+Owners agreed at kickoff (2026-11-14). Change an owner with `tools/kickoff assign <area> <login>`; edit only your own area, and ask on the board before touching another owner's folders.
 
 | Area | Owner (GitHub login) | Folders |
 |---|---|---|
-| iOS app: thin client, Meta Wearables DAT capture and display, WebSocket client | TBD | `ios/` |
-| Backend: FastAPI orchestrator on Modal, speech to text, page reading and reasoning, image generation | TBD | `backend/` |
-| Shared contracts (WebSocket message schema, PRD section 7) | @moterodiaz (lead) | `contracts/` |
+| iOS app: thin client, Meta Wearables DAT capture and display, WebSocket client | @maksymmatviievskyi | `ios/` |
+| Backend core: FastAPI orchestrator on Modal, config, speech to text, error mapping, privacy, latency logging | @Ahm3d-KA | `backend/app/`, `backend/stt/` |
+| Backend AI: page reading, source text, book session and reasoning, image generation | @Marcus228 | `backend/ai/` |
+| Contracts and integration: WebSocket message schema (PRD section 7), end-to-end integration | @moterodiaz (lead) | `contracts/` |
 
 ## 5. Supervisor + sub-agents
 

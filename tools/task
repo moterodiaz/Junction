@@ -2,7 +2,7 @@
 # Agent task queue on GitHub issues. Needs only `gh` (authenticated).
 # Usage: tools/task <next|claim|fill|help>
 set -u
-[ "${1:-help}" = help ] && { echo "Usage: tools/task <next|claim N|fill|help>"; exit 0; }
+[ "${1:-help}" = help ] && { echo "Usage: tools/task <next|claim N|fill|areas|help>"; exit 0; }
 
 die() { echo "task: $*" >&2; exit 1; }
 command -v gh >/dev/null 2>&1 || die "gh not found (https://cli.github.com), then run: gh auth login"
@@ -64,9 +64,15 @@ my_areas() {
       if (n < 5) next
       if (index(cols[4], "`") == 0) next
       if (!owner_has_login(cols[3], login)) next
-      folders = cols[4]
-      gsub(/[ \t`\/]/, "", folders)
-      if (folders != "") print folders
+      cell = cols[4]
+      if (match(cell, /`[^`]+`/)) {
+        first = substr(cell, RSTART+1, RLENGTH-2)
+        key = tolower(first)
+        gsub(/\//, "-", key)
+        sub(/^-+/, "", key)
+        sub(/-+$/, "", key)
+        if (key != "") print key
+      }
     }
   ' "$agents_file"
 }
@@ -156,6 +162,10 @@ cmd_claim() {
   fi
 }
 
+cmd_areas() {
+  my_areas
+}
+
 cmd_fill() {
   local count=0 number encoded_title encoded_body list
   list="$(ready_tasks)" || die "could not list tasks from GitHub; retry later"
@@ -168,6 +178,6 @@ cmd_fill() {
 }
 
 case "${1:-help}" in
-  next) cmd_next ;; claim) shift; cmd_claim "$@" ;; fill) cmd_fill ;;
-  help) echo "Usage: tools/task <next|claim N|fill|help>" ;; *) die "unknown command: $1" ;;
+  next) cmd_next ;; claim) shift; cmd_claim "$@" ;; fill) cmd_fill ;; areas) cmd_areas ;;
+  help) echo "Usage: tools/task <next|claim N|fill|areas|help>" ;; *) die "unknown command: $1" ;;
 esac
