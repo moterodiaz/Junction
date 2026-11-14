@@ -11,8 +11,29 @@ on:
     types: [submitted]
   issue_comment:
     types: [created]
+  pull_request:
+    types: [labeled]
 
 jobs:
+  # Adding the no-auto-merge label holds the PR at once, even if auto-merge was already enabled.
+  hold:
+    if: github.event_name == 'pull_request' && github.event.label.name == 'no-auto-merge'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Disable auto-merge
+        run: |
+          if [ "$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            gh pr merge --disable-auto "$PR" --repo "$GITHUB_REPOSITORY"
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Held: \`no-auto-merge\` label added, so auto-merge is off. The owner merges (AGENTS.md §3 rule 9)."
+          fi
+
   fix:
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -159,15 +180,14 @@ jobs:
         run: |
           set -euo pipefail
           git fetch -q origin main
-          changed="$(git diff --name-only "$BEFORE_SHA" HEAD)"
           bad=""
-          while IFS= read -r f; do
-            [ -n "$f" ] || continue
+          # -z: raw names (no C-quoting); --no-renames: a move out of a protected path lists both sides.
+          while IFS= read -r -d '' f; do
             [[ "$f" =~ ^(\.github|\.claude|\.agents|contracts)/ ]] || continue
             # A protected file that now matches main came in through a merge of origin/main, not from the bot.
             git diff --quiet origin/main HEAD -- "$f" && continue
             bad="$bad $f"
-          done <<<"$changed"
+          done < <(git diff -z --no-renames --name-only "$BEFORE_SHA" HEAD)
           if [ -n "$bad" ]; then
             echo "::error::claude-fix changed protected paths:$bad"
             gh pr comment "$PR_NUMBER" --repo "$REPO" \
@@ -209,12 +229,17 @@ jobs:
             --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length' \
             | awk '{s+=$1} END {print s+0}')"
           # REST lists up to 3000 files; gh pr view --json files stops at 100.
-          files="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')"
-          protected="$(grep -E '^(\.github|\.claude|\.agents|contracts)/' <<<"$files" | tr '\n' ' ' || true)"
+          # Match in jq on the raw JSON names, old and new, so renames and odd filenames cannot slip past.
+          protected="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '[.[] | .filename, (.previous_filename // empty) | select(test("^(\\.github|\\.claude|\\.agents|contracts)/"))] | join(" ")' | tr '\n' ' ' | sed 's/^ *//; s/ *$//')"
           no_auto="$(gh api "repos/$REPO/issues/$PR_NUMBER" --jq '[.labels[].name] | index("no-auto-merge") != null')"
           if [ -n "$protected" ] || [ "$no_auto" = true ]; then
             reason="touches protected paths ($protected)"
-            [ "$no_auto" = true ] && reason="is labelled no-auto-merge"
+            if [ "$no_auto" = true ]; then
+              reason="is labelled no-auto-merge"
+              # A hold also cancels an auto-merge someone enabled earlier.
+              gh pr merge --disable-auto "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true
+            fi
             echo "PR $reason; auto-merge left to the owner (AGENTS.md §3 rule 9)"
             seen="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '.comments[].body')"
             grep -qF "owner merges per AGENTS.md §3 rule 9" <<<"$seen" || \
