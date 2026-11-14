@@ -11,6 +11,7 @@ public enum GlassesLink: String, Equatable, Sendable, Codable {
 
 public enum FailureKind: String, Equatable, Sendable, Codable {
     case permissionDenied
+    case microphoneDenied
     case sessionPaused
     case sessionStopped
     case hingesClosed
@@ -28,6 +29,8 @@ public enum RecoveryAction: String, Equatable, Sendable, Codable {
     /// A stopped session is terminal. The next attempt creates a new one.
     case startNewSession
     case requestPermission
+    /// The iPhone microphone permission lives in the iPhone Settings app, not in Meta AI.
+    case openSettings
     case retryInvoke
     case none
 }
@@ -177,6 +180,12 @@ public enum FailurePolicy {
                 banner: "Camera permission was denied. Allow it in Meta AI, then come back.",
                 actionTitle: "Allow camera",
                 action: .requestPermission
+            )
+        case .microphoneDenied:
+            return Recovery(
+                banner: "Microphone access is off. Allow it for MetaLab in the iPhone Settings app.",
+                actionTitle: "Open Settings",
+                action: .openSettings
             )
         case .sessionPaused:
             return Recovery(

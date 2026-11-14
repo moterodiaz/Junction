@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
     private var activeRequest: String?
     private var captureTask: Task<Void, Never>?
     private var waitTask: Task<Void, Never>?
+    private var presentTask: Task<Void, Never>?
     private var lastServerMessage = Date()
     private var startedWaiting = Date()
 
@@ -75,6 +76,7 @@ final class AppModel: ObservableObject {
 
     func setDisplayEnabled(_ enabled: Bool) {
         session = SessionMachine.reduce(session, .displayEnabled(enabled))
+        if !enabled { glasses?.clearDisplay() }
     }
 
     func register() async { await glasses?.register() }
@@ -84,6 +86,11 @@ final class AppModel: ObservableObject {
     func handle(url: URL) async { await glasses?.handle(url: url) }
 
     func newBook() {
+        // Invalidate any request in flight so its answer cannot restore the old book's card.
+        cancelWork()
+        glasses?.stopCamera()
+        activeRequest = nil
+        phase = .idle
         bookSessionId = UUID().uuidString
         UserDefaults.standard.set(bookSessionId, forKey: Keys.book)
         session.lastCard = nil
@@ -194,13 +201,17 @@ final class AppModel: ObservableObject {
             text: text
         )
         let body = try Contract.encode(message)
-        socket.disconnect()
-        socket.connect(url: config.webSocketURL)
-        try await socket.send(body)
-        phase = .waiting
+        // The deadline covers connecting too, so an offline phone cannot stay in "Capturing".
         startedWaiting = Date()
         lastServerMessage = Date()
         armDeadline(for: requestId)
+        socket.disconnect()
+        socket.connect(url: config.webSocketURL)
+        try await socket.send(body)
+        guard activeRequest == requestId else { return }
+        phase = .waiting
+        startedWaiting = Date()
+        lastServerMessage = Date()
     }
 
     private func receive(_ text: String) {
@@ -217,10 +228,15 @@ final class AppModel: ObservableObject {
             waitTask?.cancel()
             session = SessionMachine.reduce(session, .card(card))
             phase = .speaking
-            Task {
-                await show(LensCopy.content(for: card))
-                await speaker.speak(SpeechPlan.route(card: card, displayEnabled: session.displayEnabled))
-                if phase == .speaking { phase = .idle }
+            let requestId = card.requestId
+            presentTask?.cancel()
+            presentTask = Task { [weak self] in
+                guard let self else { return }
+                await self.show(LensCopy.content(for: card))
+                guard !Task.isCancelled, self.activeRequest == requestId else { return }
+                await self.speaker.speak(SpeechPlan.route(card: card, displayEnabled: self.session.displayEnabled))
+                guard !Task.isCancelled, self.activeRequest == requestId, self.phase == .speaking else { return }
+                self.phase = .idle
             }
         case .error(let error):
             guard error.requestId == activeRequest else { return }
@@ -235,7 +251,8 @@ final class AppModel: ObservableObject {
         waitTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(500))
-                guard let self, self.activeRequest == requestId, self.phase == .waiting else { return }
+                guard let self, self.activeRequest == requestId,
+                      self.phase == .waiting || self.phase == .capturing else { return }
                 let elapsed = Date().timeIntervalSince(self.startedWaiting)
                 let idle = Date().timeIntervalSince(self.lastServerMessage)
                 if Deadline.demo.isTimedOut(elapsed: elapsed, sinceLastServerMessage: idle) {
@@ -261,9 +278,8 @@ final class AppModel: ObservableObject {
     }
 
     private func fail(_ kind: FailureKind, retryable: Bool, message: String? = nil) {
-        captureTask?.cancel()
-        waitTask?.cancel()
-        socket.disconnect()
+        cancelWork()
+        activeRequest = nil
         phase = .idle
         session = SessionMachine.reduce(session, .failure(kind, retryable: retryable))
         if let message, !message.isEmpty {
@@ -276,9 +292,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Stops every task and sound belonging to the current request.
+    private func cancelWork() {
+        captureTask?.cancel()
+        waitTask?.cancel()
+        presentTask?.cancel()
+        speaker.stop()
+        socket.disconnect()
+    }
+
     private func kind(_ problem: GlassesProblem) -> FailureKind {
         switch problem {
         case .permissionDenied: .permissionDenied
+        case .microphoneDenied: .microphoneDenied
         case .hingesClosed: .hingesClosed
         case .bluetoothLost: .bluetoothLost
         case .timeout, .notReady: .backendTimeout

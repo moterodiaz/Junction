@@ -265,6 +265,10 @@ struct RootView: View {
         switch action {
         case .requestPermission:
             Task { await model.allowCamera() }
+        case .openSettings:
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
         case .startNewSession:
             Task { await model.reconnect() }
         case .retryInvoke:

@@ -9,6 +9,7 @@ import UIKit
 enum GlassesProblem: Error {
     case notReady
     case permissionDenied
+    case microphoneDenied
     case hingesClosed
     case bluetoothLost
     case timeout
@@ -163,7 +164,7 @@ final class GlassesBridge {
 
     func recordWav(maxSeconds: Double, trailingSilence: Double, sampleRate: Int) async throws -> Data {
         let allowed = await AVAudioApplication.requestRecordPermission()
-        guard allowed else { throw GlassesProblem.permissionDenied }
+        guard allowed else { throw GlassesProblem.microphoneDenied }
         try await settleHFP()
 
         let engine = AVAudioEngine()
@@ -254,6 +255,12 @@ final class GlassesBridge {
         }
         guard let display else { throw GlassesProblem.notReady }
         try await display.send(LensLayout.make(content))
+    }
+
+    /// Takes the current card off the glasses. The next `show` adds a fresh display.
+    func clearDisplay() {
+        display?.stop()
+        display = nil
     }
 
     private func captureFirstFrame(_ stream: MWDATCamera.Stream) async throws -> Data {
