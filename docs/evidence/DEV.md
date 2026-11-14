@@ -16,12 +16,12 @@ Requirement: REQ-DEV-01. PRD §12.11. Owner: Mateo (@moterodiaz, lead).
 | Claude Opus (`Claude Opus …`) | 24 |
 | Cursor (`cursoragent@cursor.com`) | 2 |
 | **Codex / OpenAI** | **0** |
-| No tool trailer | 17 |
+| No tool trailer | 18 (17 with no `Co-authored-by` at all, 1 with only a human co-author) |
 
 The scan matched `Codex`, `codex` and `OpenAI` in trailers; `git log --grep=codex -i` found no commit message either.
 
 Limits of this map:
-- Attribution relies on trailers the tools add. The 17 commits without a trailer could come from any tool or from a person. Nothing proves either.
+- Attribution relies on trailers the tools add. The 18 commits without a tool trailer (17 with no trailer, 1 with only a human co-author) could come from any tool or from a person. Nothing proves either.
 - Per-file and per-test attribution was not done. With 0 Codex commits there is nothing to map.
 
 ## 2. Entire
@@ -41,6 +41,6 @@ Neither is started by this file.
 ## Reproduce
 
 ```
-git log origin/main --format='%H %(trailers:key=Co-authored-by,valueonly,separator=;) %an' | grep -c '<tool>'
-git log origin/main -i --grep=codex --oneline
+git log 9d10e28 --format='%H %(trailers:key=Co-authored-by,valueonly,separator=;) %an' | grep -Fc '<tool>'
+git log 9d10e28 -i --grep=codex --oneline
 ```
