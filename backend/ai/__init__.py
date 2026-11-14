@@ -1,14 +1,38 @@
 """Backend AI module: page reading, source text, book session and reasoning, image generation."""
 
+from __future__ import annotations
+
+# Page reader (PRD Section 4, Issue #28)
+try:
+    from .page_reader import (
+        NemotronClient,
+        NoTextFoundError,
+        PageReadError,
+        PageReadTimeoutError,
+        StubNemotronClient,
+        extract_frame_data,
+        read_page,
+    )
+except ImportError:
+    pass
+
+# Image generation and serving (PRD Section 4, Section 6, Section 9)
 from .image import draw, cleanup_session, get_image, format_display_prompt, StubImageClient
-from .page_reader import (
-    NemotronClient,
-    NoTextFoundError,
-    PageReadError,
-    PageReadTimeoutError,
-    StubNemotronClient,
-    extract_frame_data,
-    read_page,
+
+# Source text loader (PRD Section 2, Section 8, Section 10 C4, Issue #29)
+from .source_loader import (
+    Act,
+    Line,
+    PassageMatch,
+    Play,
+    Scene,
+    find_passage,
+    get_play,
+    get_source_citation,
+    list_plays,
+    load_play,
+    locate_passage,
+    set_plays_directory,
 )
 from .session import (
     BookInfo,
@@ -29,12 +53,14 @@ from .reasoning import (
     think,
 )
 
+# Optional sibling modules if present
+try:
+    from .reasoning import think  # type: ignore
+except ImportError:
+    pass
+
 __all__ = [
-    "draw",
-    "cleanup_session",
-    "get_image",
-    "format_display_prompt",
-    "StubImageClient",
+    # Page reading
     "NemotronClient",
     "NoTextFoundError",
     "PageReadError",
@@ -42,6 +68,26 @@ __all__ = [
     "StubNemotronClient",
     "extract_frame_data",
     "read_page",
+    # Image generation
+    "draw",
+    "cleanup_session",
+    "get_image",
+    "format_display_prompt",
+    "StubImageClient",
+    # Source text loader
+    "Act",
+    "Line",
+    "PassageMatch",
+    "Play",
+    "Scene",
+    "find_passage",
+    "get_play",
+    "get_source_citation",
+    "list_plays",
+    "load_play",
+    "locate_passage",
+    "set_plays_directory",
+    # Book session and reasoning
     "BookInfo",
     "BookSession",
     "QAExchange",
