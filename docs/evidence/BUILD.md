@@ -12,7 +12,7 @@ CRACI (Helsinki) makes a supply-chain compliance platform for the EU Cyber Resil
 
 | Area | Dependencies (as declared) | Pinning | Build or image | Test entry point |
 |---|---|---|---|---|
-| Backend (`backend/`) | fastapi>=0.115, uvicorn[standard]>=0.30, pydantic>=2.7, httpx>=0.27, google-genai>=3.2.0, jsonschema==4.23.0 | **Ranges** except jsonschema; no lockfile | Modal image: `debian_slim(python_version="3.12")`, `pip_install_from_requirements` for both files below, `add_local_dir(backend)` (`backend/app/modal_app.py`) | `backend/test.sh` (venv, pip install, `unittest discover`, 300 s deadline) |
+| Backend (`backend/`) | fastapi>=0.115, uvicorn[standard]>=0.30, pydantic>=2.7, httpx>=0.27, google-genai>=3.2.0, jsonschema==4.23.0 | **Ranges** except jsonschema; no lockfile | Modal image: `debian_slim(python_version="3.12")`, `pip_install_from_requirements` for both files below, then a build-time `download_model('small.en')` that bakes about 0.5 GB of Whisper weights into the image (network access at build time), then `add_local_dir(backend)` without `.env`, `.venv` or tests (`backend/app/modal_app.py`) | `backend/test.sh` (venv, pip install, `unittest discover`, 300 s deadline) |
 | Speech engine (`backend/stt/`) | faster-whisper==1.2.1, av<16 | Exact / upper bound | Modal image only; never installed in CI. The image build also runs `download_model('small.en')` (`WHISPER_MODEL`, `backend/stt/engine.py`), fetching about 0.5 GB of Whisper weights from Hugging Face at build time, so a runner needs outbound network access and roughly 0.5 GB extra storage | Stubbed in `backend/test.sh` |
 | Contracts (`contracts/`) | jsonschema==4.23.0, websockets==17.4, plus backend's file | Exact for its own | none | `contracts/test.sh` (schema, fixtures, replay over `/ws`; live tests need `WS_URL`) |
 | iOS core (`ios/MetaLabCore`) | none (Swift tools 6.0, iOS 17 / macOS 14) | n/a | `swift build` | `ios/test.sh`: Python proxy tests, then `swift test` if a toolchain exists |
@@ -22,6 +22,7 @@ Gaps a supply-chain tool would flag, recorded rather than fixed here:
 - Backend dependencies are version ranges with no lockfile, so the deployed image's versions are whatever pip picked on deploy day. `backend/app/DELIVERY_EVIDENCE.md` lists one resolved set (fastapi 0.162.7, pydantic 2.14.3, uvicorn 0.54.0, httpx 0.28.1, google-genai 3.3.0) at `03c24bd`.
 - No SBOM is generated anywhere in the repo.
 - The Modal base image (`debian_slim`) is pulled by tag, not digest.
+- The Whisper weights (`small.en`) are downloaded at image build time and are not pinned to a revision or checksum.
 
 ## 3. Required `ci` today (the comparison baseline)
 
