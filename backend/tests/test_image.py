@@ -71,6 +71,17 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.data, stub.image_bytes)
         self.assertEqual(stored.session_id, "sess-1")
 
+    async def test_generation_errors_never_log_their_message(self):
+        class FailingClient:
+            async def generate_image(self, model, prompt):
+                raise RuntimeError("SECRET page text")
+
+        with self.assertLogs("metalab.image", level=logging.WARNING) as cm:
+            url = await draw("anything", client=FailingClient())
+
+        self.assertIsNone(url)
+        self.assertNotIn("SECRET", "\n".join(cm.output))
+
     async def test_first_call_billing_check_disabled_returns_none(self):
         stub = StubImageClient(billing_enabled=False)
         with self.assertLogs("metalab.image", level=logging.WARNING) as cm:
