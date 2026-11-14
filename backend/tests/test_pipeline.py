@@ -545,6 +545,57 @@ class PipelineGroundingAndBookClassificationTest(unittest.IsolatedAsyncioTestCas
         self.assertEqual(card.book.title, "Hamlet")
         self.assertEqual(len(self._stub_reason.calls), 1)
 
+    async def test_clarify_reply_adds_unfamiliar_book_before_candidate_check_and_runs_think(self):
+        """Greptile P1: clarification reply adds unfamiliar title before decide() and learns via think()."""
+        seen_candidates: list[list[str]] = []
+
+        class InspectingDecisionClient(StubDecisionClient):
+            async def decide(self, utterance, page_text="", session=None, model=None, timeout_s=2.0, enabled_checks=None):
+                seen_candidates.append([b.title for b in session.candidate_books] if session else [])
+                return await super().decide(utterance, page_text, session, model=model, timeout_s=timeout_s, enabled_checks=enabled_checks)
+
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance="what is this?",
+            book_match="unknown",
+            book_match_confidence=0.35,
+            book_changed=False,
+        )
+        set_decision_client(InspectingDecisionClient(default_result=dec_result))
+
+        turn1 = Invoke(
+            type="invoke", request_id="r-clr-1", session_id="s-clr-loop",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this?",
+        )
+        turn2 = Invoke(
+            type="invoke", request_id="r-clr-2", session_id="s-clr-loop",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="I'm reading The Odyssey.",
+        )
+        with mock.patch.dict(os.environ, {"DYNAMIC_MODEL_ROUTING": "true"}), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Tell me, Muse, of the man of many ways"), \
+             mock.patch.object(pipeline, "draw", new_callable=mock.AsyncMock, return_value="https://example.com/odyssey.png"), \
+             mock.patch.object(pipeline, "speak", new_callable=mock.AsyncMock, return_value="https://example.com/odyssey.wav"):
+            card1 = await pipeline.run(turn1, _noop_send_stage)
+            self.assertEqual(card1.title, "Which book are you reading?")
+            session = default_session_store.get("s-clr-loop")
+            self.assertTrue(session.awaiting_book_clarification)
+
+            card2 = await pipeline.run(turn2, _noop_send_stage)
+
+        self.assertIn("The Odyssey", seen_candidates[1])
+        self.assertFalse(session.awaiting_book_clarification)
+        self.assertEqual(session.book.title, "The Odyssey")
+        self.assertNotEqual(card2.title, "Which book are you reading?")
+        self.assertEqual(card2.book.title, "The Odyssey")
+        self.assertEqual(card2.sources, [])
+        self.assertEqual(len(self._stub_reason.calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

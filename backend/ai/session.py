@@ -65,6 +65,7 @@ class BookSession:
         else:
             self.candidate_books = [self.book]
         self.history: List[QAExchange] = []
+        self.awaiting_book_clarification: bool = False
         self.created_at = time.time()
 
     def add_candidate_book(self, book: BookInfo) -> None:

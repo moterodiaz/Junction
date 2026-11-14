@@ -232,6 +232,57 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
 
 _HTTPS_URL = re.compile(r"^https://[^\s/?#]+[^\s]*$")  # the contract's httpsUrl pattern
 
+_CLARIFY_BOOK_PREFIXES = (
+    "i am reading ",
+    "i'm reading ",
+    "we are reading ",
+    "we're reading ",
+    "the book is ",
+    "the play is ",
+    "this book is ",
+    "this play is ",
+    "book is ",
+    "play is ",
+    "this is ",
+    "it is ",
+    "it's ",
+)
+_NON_BOOK_REPLIES = {"", "unknown", "unknown book", "i don't know", "not sure", "no idea", "skip"}
+
+
+def _apply_book_clarification_reply(session: ai.session.BookSession, utterance: str, has_passage_match: bool) -> bool:
+    """Resolve a pending book-clarification turn by selecting or adding the named book."""
+    if not getattr(session, "awaiting_book_clarification", False):
+        return False
+    session.awaiting_book_clarification = False
+    if has_passage_match:
+        return True
+
+    raw = utterance.strip()
+    lower = raw.lower()
+    candidates = sorted(
+        getattr(session, "candidate_books", ()),
+        key=lambda c: len(getattr(c, "title", "").strip()),
+        reverse=True,
+    )
+    for candidate in candidates:
+        title = getattr(candidate, "title", "").strip()
+        if title and title.lower() not in ("unknown", "unknown book") and title.lower() in lower:
+            session.set_active_book(title, candidate.author, candidate.location)
+            return True
+
+    cleaned = raw
+    for prefix in _CLARIFY_BOOK_PREFIXES:
+        if cleaned.lower().startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+    cleaned = cleaned.strip(" \t\r\n\"'.,!?:;")
+    if cleaned.lower() in _NON_BOOK_REPLIES or len(cleaned) > 120:
+        return False
+
+    session.set_active_book(cleaned)
+    return True
+
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
@@ -297,6 +348,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             passage_match.author,
             passage_match.location,
         )
+    clarification_resolved = _apply_book_clarification_reply(session, utterance, passage_match is not None)
 
     _read_model = getattr(page_text, "model", None) or (
         page_reader._resolve_config()[2]
@@ -321,11 +373,13 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             session.set_active_book(decision.book_match)
 
         if (
-            not decision.fallback_used
+            not clarification_resolved
+            and not decision.fallback_used
             and decision.action == "clarify"
             and ai.decision.should_clarify_book(decision, passage_score)
         ):
             clarify = True
+            session.awaiting_book_clarification = True
 
         client = ai.decision.get_decision_client()
         if os.environ.get("GEMINI_API_KEY", "").strip() or not isinstance(client, ai.decision.GeminiDecisionClient):
