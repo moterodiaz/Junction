@@ -1,0 +1,326 @@
+{
+  "description": "PROPOSED v2 reference traces, not recordings. Inputs/outputs are synthetic semantic labels (type:request), not wire frames. at_ms is server monotonic time. Independent hand-authored outputs and state markers assert the contract. All traces start on an already negotiated v2 connection in verified abstract owner-a context.",
+  "cases": [
+    {
+      "name": "cancel-wins-and-late-card-is-discarded",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"status","request":"a","out":["status:a"]},
+        {"op":"cancel","session":"s","request":"a","out":["cancelled:a"],"state":{"s":{"history":[],"cache":[],"media":[],"staged":[],"pending":[]}}},
+        {"op":"cancel","session":"s","request":"a"},
+        {"op":"complete","request":"a","state":{"s":{"history":[],"cache":[],"media":[]}}}
+      ]
+    },
+    {
+      "name": "completion-wins-and-late-cancel-is-silent",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"cancel","session":"s","request":"a","state":{"s":{"history":["a"],"cache":["a"],"media":["a"]}}},
+        {"op":"complete","request":"a"}
+      ]
+    },
+    {
+      "name": "failure-wins-without-history-or-partial-media",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","result":"error","out":["error:a"]},
+        {"op":"cancel","session":"s","request":"a","state":{"s":{"history":[],"cache":[],"media":[],"staged":[]}}}
+      ]
+    },
+    {
+      "name": "cancel-one-overlapping-invocation-not-its-sibling",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"invoke","session":"s","request":"b"},
+        {"op":"cancel","session":"s","request":"a","out":["cancelled:a"],"state":{"s":{"pending":["b"],"staged":["b"]}}},
+        {"op":"complete","request":"b","out":["card:b"]},
+        {"op":"complete","request":"a","state":{"s":{"history":["b"],"cache":["b"],"media":["b"]}}}
+      ]
+    },
+    {
+      "name": "end-revokes-before-cleanup-then-terminals-before-ack",
+      "events": [
+        {"op":"invoke","session":"s","request":"completed"},
+        {"op":"complete","request":"completed","out":["card:completed"]},
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"invoke","session":"s","request":"b"},
+        {"op":"end","session":"s","request":"end","out":["cancelled:a","cancelled:b"],"state":{"s":{"deleted":true,"clean":false,"pending":[]}}},
+        {"op":"read","session":"s","request":"completed","resource":"text","allowed":false},
+        {"op":"read","session":"s","request":"completed","resource":"cache","allowed":false},
+        {"op":"read","session":"s","request":"completed","resource":"image","allowed":false},
+        {"op":"read","session":"s","request":"completed","resource":"audio","allowed":false},
+        {"op":"complete","request":"b"},
+        {"op":"cleanup","session":"s","out":["session_ended:end"],"state":{"s":{"history":[],"cache":[],"media":[],"staged":[],"clean":true}}},
+        {"op":"end","session":"s","request":"end","out":["session_ended:end"]},
+        {"op":"invoke","session":"s","request":"late","out":["session_unavailable:late"]}
+      ]
+    },
+    {
+      "name": "end-one-session-does-not-delete-another",
+      "events": [
+        {"op":"invoke","session":"one","request":"a"},
+        {"op":"invoke","session":"two","request":"b"},
+        {"op":"end","session":"one","request":"end","out":["cancelled:a"],"state":{"two":{"pending":["b"],"deleted":false}}},
+        {"op":"cleanup","session":"one","out":["session_ended:end"]},
+        {"op":"complete","request":"b","out":["card:b"]},
+        {"op":"read","session":"two","request":"b","resource":"image","allowed":true}
+      ]
+    },
+    {
+      "name": "disconnect-abandons-active-and-queued-without-terminal",
+      "events": [
+        {"op":"invoke","session":"s","request":"done"},
+        {"op":"complete","request":"done","out":["card:done"]},
+        {"op":"invoke","session":"s","request":"active"},
+        {"op":"invoke","session":"s","request":"queued"},
+        {"op":"disconnect","state":{"s":{"history":["done"],"cache":["done"],"media":["done"],"staged":[],"pending":[],"deleted":false}}},
+        {"op":"complete","request":"active"},
+        {"op":"complete","request":"queued"},
+        {"op":"connect","at_ms":100},
+        {"op":"resume","session":"s","allowed":true},
+        {"op":"read","session":"s","request":"done","resource":"text","allowed":true},
+        {"op":"invoke","session":"s","request":"new"},
+        {"op":"complete","request":"new","out":["card:new"],"state":{"s":{"history":["done","new"]}}}
+      ]
+    },
+    {
+      "name": "disconnect-after-end-before-cleanup-has-no-ack",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"end","session":"s","request":"end","out":["cancelled:a"]},
+        {"op":"disconnect"},
+        {"op":"cleanup","session":"s","state":{"s":{"clean":true,"history":[],"cache":[],"media":[]}}},
+        {"op":"connect"},
+        {"op":"end","session":"s","request":"end","out":["session_ended:end"]}
+      ]
+    },
+    {
+      "name": "expiry-revokes-all-resources-at-exact-boundary",
+      "events": [
+        {"op":"invoke","session":"s","request":"a","at_ms":0},
+        {"op":"complete","request":"a","at_ms":100,"out":["card:a"]},
+        {"op":"read","session":"s","request":"a","resource":"image","at_ms":899999,"allowed":true},
+        {"op":"read","session":"s","request":"a","resource":"text","at_ms":900000,"allowed":false,"state":{"s":{"deleted":true,"clean":false}}},
+        {"op":"read","session":"s","request":"a","resource":"cache","allowed":false},
+        {"op":"read","session":"s","request":"a","resource":"image","allowed":false},
+        {"op":"read","session":"s","request":"a","resource":"audio","allowed":false},
+        {"op":"cleanup","session":"s","at_ms":905000,"state":{"s":{"clean":true,"history":[],"cache":[],"media":[]}}},
+        {"op":"invoke","session":"s","request":"late","out":["session_unavailable:late"]}
+      ]
+    },
+    {
+      "name": "accepted-invocation-one-ms-before-boundary-refreshes",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"invoke","session":"s","request":"b","at_ms":899999},
+        {"op":"tick","at_ms":900000,"state":{"s":{"deleted":false,"last":899999,"pending":["b"]}}},
+        {"op":"complete","request":"b","out":["card:b"]},
+        {"op":"read","session":"s","request":"a","resource":"audio","at_ms":1799998,"allowed":true},
+        {"op":"tick","at_ms":1799999,"state":{"s":{"deleted":true}}},
+        {"op":"cleanup","session":"s","at_ms":1804999}
+      ]
+    },
+    {
+      "name": "invocation-at-boundary-is-not-accepted-or-refreshed",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"invoke","session":"s","request":"b","at_ms":900000,"out":["session_unavailable:b"],"state":{"s":{"last":0,"pending":[]}}},
+        {"op":"cleanup","session":"s","at_ms":905000}
+      ]
+    },
+    {
+      "name": "reconnect-ping-rejected-duplicate-progress-and-result-do-not-refresh",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"status","request":"a","at_ms":200,"out":["status:a"]},
+        {"op":"complete","request":"a","at_ms":300,"out":["card:a"]},
+        {"op":"invoke","session":"s","request":"a","at_ms":400,"out":["duplicate_request:a"]},
+        {"op":"rejected","at_ms":500},
+        {"op":"cancel","session":"s","request":"a","at_ms":600},
+        {"op":"disconnect","at_ms":700},
+        {"op":"connect","at_ms":800},
+        {"op":"resume","session":"s","allowed":true},
+        {"op":"ping","at_ms":899999,"state":{"s":{"last":0}}},
+        {"op":"resume","session":"s","at_ms":900000,"allowed":false},
+        {"op":"cleanup","session":"s","at_ms":905000}
+      ]
+    },
+    {
+      "name": "expiry-cancels-connected-pending-and-discards-late-media",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"tick","at_ms":900000,"out":["cancelled:a"],"state":{"s":{"deleted":true,"pending":[],"staged":[]}}},
+        {"op":"complete","request":"a"},
+        {"op":"cleanup","session":"s","at_ms":905000,"state":{"s":{"history":[],"cache":[],"media":[]}}}
+      ]
+    },
+    {
+      "name": "expiry-while-disconnected-never-delivers-terminal",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"disconnect","at_ms":1},
+        {"op":"tick","at_ms":900000},
+        {"op":"cleanup","session":"s","at_ms":905000},
+        {"op":"connect"},
+        {"op":"resume","session":"s","allowed":false},
+        {"op":"complete","request":"a"}
+      ]
+    },
+    {
+      "name": "wall-clock-forward-and-backward-jumps-do-not-expire-session",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"wall_jump","wall_delta_ms":86400000,"at_ms":1,"state":{"s":{"deleted":false,"last":0}}},
+        {"op":"wall_jump","wall_delta_ms":-172800000,"at_ms":2,"state":{"s":{"deleted":false,"last":0}}},
+        {"op":"tick","at_ms":900000},
+        {"op":"cleanup","session":"s","at_ms":905000}
+      ]
+    },
+    {
+      "name": "reset-uses-fresh-id-and-keeps-old-session-deleted",
+      "events": [
+        {"op":"invoke","session":"old","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"end","session":"old","request":"end"},
+        {"op":"cleanup","session":"old","out":["session_ended:end"]},
+        {"op":"invoke","session":"old","request":"b","out":["session_unavailable:b"]},
+        {"op":"invoke","session":"fresh","request":"c","state":{"fresh":{"history":[]}}},
+        {"op":"complete","request":"c","out":["card:c"],"state":{"fresh":{"history":["c"]},"old":{"history":[],"deleted":true}}}
+      ]
+    },
+    {
+      "name": "unknown-and-wrong-session-cancels-do-not-affect-work",
+      "events": [
+        {"op":"invoke","session":"one","request":"a"},
+        {"op":"invoke","session":"two","request":"b"},
+        {"op":"cancel","session":"one","request":"missing","out":["unknown_request:missing"]},
+        {"op":"cancel","session":"one","request":"b","out":["session_mismatch:b"]},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"complete","request":"b","out":["card:b"]}
+      ]
+    },
+    {
+      "name": "other-client-cannot-read-resume-invoke-or-end-session",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"disconnect"},
+        {"op":"connect","context":"owner-b"},
+        {"op":"resume","session":"s","allowed":false},
+        {"op":"read","session":"s","request":"a","resource":"text","allowed":false},
+        {"op":"read","session":"s","request":"a","resource":"image","allowed":false},
+        {"op":"invoke","session":"s","request":"b","out":["session_unavailable:b"]},
+        {"op":"cancel","session":"s","request":"a","out":["session_unavailable:a"]},
+        {"op":"end","session":"s","request":"end","out":["session_unavailable:end"],"state":{"s":{"deleted":false,"history":["a"]}}}
+      ]
+    },
+    {
+      "name": "end-empty-session-and-control-id-collision",
+      "events": [
+        {"op":"end","session":"empty","request":"end"},
+        {"op":"end","session":"empty","request":"end"},
+        {"op":"cleanup","session":"empty","out":["session_ended:end"]},
+        {"op":"invoke","session":"fresh","request":"end","out":["duplicate_request:end"]},
+        {"op":"invoke","session":"fresh","request":"a"},
+        {"op":"end","session":"fresh","request":"a","out":["duplicate_request:a"]},
+        {"op":"complete","request":"a","out":["card:a"]}
+      ]
+    },
+    {
+      "name": "invalid-second-terminal-after-completion",
+      "reject": "terminal/control order",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"cancel","session":"s","request":"a","out":["cancelled:a"]}
+      ]
+    },
+    {
+      "name": "invalid-status-after-terminal",
+      "reject": "status after terminal",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"cancel","session":"s","request":"a","out":["cancelled:a"]},
+        {"op":"status","request":"a","out":["status:a"]}
+      ]
+    },
+    {
+      "name": "invalid-early-end-ack",
+      "reject": "terminal/control order",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"end","session":"s","request":"end","out":["session_ended:end","cancelled:a"]}
+      ]
+    },
+    {
+      "name": "invalid-disconnect-terminal-delivery",
+      "reject": "terminal/control order",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"disconnect","out":["cancelled:a"]}
+      ]
+    },
+    {
+      "name": "invalid-cleanup-one-ms-over-budget",
+      "reject": "cleanup exceeded five seconds",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"tick","at_ms":900000},
+        {"op":"cleanup","session":"s","at_ms":905001}
+      ]
+    },
+    {
+      "name": "invalid-media-readable-at-expiry-boundary",
+      "reject": "incorrect state/media accessibility",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"complete","request":"a","out":["card:a"]},
+        {"op":"read","session":"s","request":"a","resource":"image","at_ms":900000,"allowed":true}
+      ]
+    },
+    {
+      "name": "invalid-cancelled-history-committed",
+      "reject": "s.history",
+      "events": [
+        {"op":"invoke","session":"s","request":"a"},
+        {"op":"cancel","session":"s","request":"a","out":["cancelled:a"],"state":{"s":{"history":["a"]}}}
+      ]
+    },
+    {
+      "name": "invalid-monotonic-clock-backwards",
+      "reject": "server monotonic clock moved backwards",
+      "events": [
+        {"op":"invoke","session":"s","request":"a","at_ms":2},
+        {"op":"tick","at_ms":1}
+      ]
+    },
+    {
+      "name": "fresh-connection-may-reuse-prior-connection-request-id",
+      "events": [
+        {"op":"invoke","session":"s1","request":"r1"},
+        {"op":"complete","request":"r1","out":["card:r1"]},
+        {"op":"disconnect"},
+        {"op":"connect","context":"owner-b"},
+        {"op":"invoke","session":"s2","request":"r1"},
+        {"op":"complete","request":"r1","out":["card:r1"]},
+        {"op":"invoke","session":"s2","request":"r1","out":["duplicate_request:r1"]}
+      ]
+    },
+    {
+      "name": "stale-completion-from-abandoned-connection-is-ignored",
+      "events": [
+        {"op":"invoke","session":"s1","request":"r1"},
+        {"op":"disconnect"},
+        {"op":"connect","context":"owner-b"},
+        {"op":"invoke","session":"s2","request":"r1"},
+        {"op":"complete","request":"r1","conn":0,"state":{"s2":{"pending":["r1"]}}},
+        {"op":"complete","request":"r1","out":["card:r1"],"state":{"s2":{"history":["r1"],"cache":["r1"],"media":["r1"],"pending":[]}}}
+      ]
+    }
+  ]
+}
