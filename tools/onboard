@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Read-only onboard readiness check. Run once before starting work.
+# Usage: tools/onboard
+# Env:   ONBOARD_REPO=owner/repo  (override auto-detection; use for testing)
+set -u
+
+FAIL_COUNT=0
+
+ok()   { printf 'OK   %s\n' "$*"; }
+warn() { printf 'WARN %s\n' "$*"; }
+fail() { printf 'FAIL %s\n' "$*"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
+
+get_repo() {
+  if [ -n "${ONBOARD_REPO:-}" ]; then
+    printf '%s\n' "$ONBOARD_REPO"
+    return 0
+  fi
+  local r
+  r="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || return 1
+  printf '%s\n' "$r"
+}
+
+check_repo_access() {
+  local repo="$1" push_ok invite_id
+  push_ok="$(gh api "repos/$repo" --jq '.permissions.push // false' 2>/dev/null)" \
+    || push_ok="false"
+  if [ "$push_ok" = "true" ]; then
+    ok "repo push access: $repo"
+    return
+  fi
+  invite_id="$(gh api user/repository_invitations \
+    --jq ".[] | select(.repository.full_name==\"$repo\") | .id" 2>/dev/null)" \
+    || invite_id=""
+  if [ -n "$invite_id" ]; then
+    fail "no push access to $repo (invite pending) — fix: gh api -X PATCH user/repository_invitations/$invite_id"
+  else
+    fail "no push access to $repo (not a member or repo not found) — fix: ask the repo owner to invite you, then: gh api -X PATCH user/repository_invitations/<id>"
+  fi
+}
+
+check_scripts() {
+  local root="$1" s path
+  for s in tools/board tools/wt tools/task; do
+    path="$root/$s"
+    if [ ! -f "$path" ]; then
+      fail "$s missing — fix: git pull"
+    elif [ ! -x "$path" ]; then
+      fail "$s not executable — fix: chmod +x $path"
+    elif ! bash -n "$path" 2>/dev/null; then
+      fail "$s bash syntax error — fix: inspect $path"
+    else
+      ok "$s exists, executable, bash-clean"
+    fi
+  done
+}
+
+check_hooks() {
+  local root="$1" settings hooks_dir hook name all_ok
+  settings="$root/.claude/settings.json"
+  if [ ! -f "$settings" ]; then
+    fail ".claude/settings.json missing — fix: git pull"
+  elif ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$settings" 2>/dev/null; then
+    fail ".claude/settings.json invalid JSON — fix: repair $settings"
+  else
+    ok ".claude/settings.json valid JSON"
+  fi
+  hooks_dir="$root/.claude/hooks"
+  all_ok=1
+  for name in no-edit-on-main board-session-start board-prompt; do
+    hook="$hooks_dir/$name.sh"
+    if [ ! -f "$hook" ]; then
+      fail "hook $name.sh missing — fix: git pull"
+      all_ok=0
+    elif [ ! -x "$hook" ]; then
+      fail "hook $name.sh not executable — fix: chmod +x $hook"
+      all_ok=0
+    elif ! bash -n "$hook" 2>/dev/null; then
+      fail "hook $name.sh bash syntax error — fix: inspect $hook"
+      all_ok=0
+    fi
+  done
+  [ "$all_ok" -eq 1 ] && ok ".claude/hooks/*.sh present, executable, bash-clean"
+}
+
+check_branch() {
+  local branch
+  branch="$(git branch --show-current 2>/dev/null)" || branch=""
+  if [ "$branch" = "main" ]; then
+    warn "on branch main — fix: tools/wt <issue#>-<slug>"
+  else
+    ok "not on main (branch: ${branch:-detached})"
+  fi
+}
+
+check_user_settings() {
+  local usf="$HOME/.claude/settings.json" missing_allow missing_auto
+  if [ ! -f "$usf" ]; then
+    warn "$usf not found — fix: create it with the user settings block from KICKOFF.md"
+    return
+  fi
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$usf" 2>/dev/null; then
+    warn "$usf invalid JSON — fix: replace with the user settings block from KICKOFF.md"
+    return
+  fi
+  missing_allow="$(python3 - "$usf" 2>/dev/null <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+allow = d.get('permissions', {}).get('allow', [])
+if 'Bash(gh pr create *)' not in allow:
+    print('permissions.allow missing Bash(gh pr create *)')
+PY
+)"
+  missing_auto="$(python3 - "$usf" 2>/dev/null <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+if 'autoMode' not in d:
+    print('autoMode key missing')
+PY
+)"
+  if [ -n "$missing_allow" ]; then
+    warn "$usf: $missing_allow — fix: merge the user settings block from KICKOFF.md"
+  fi
+  if [ -n "$missing_auto" ]; then
+    warn "$usf: $missing_auto — fix: merge the user settings block from KICKOFF.md"
+  fi
+  if [ -z "$missing_allow" ] && [ -z "$missing_auto" ]; then
+    ok "$usf: permissions.allow and autoMode present"
+  fi
+}
+
+check_task() {
+  local root="$1"
+  [ -x "$root/tools/task" ] || return
+  if "$root/tools/task" next >/dev/null 2>&1; then
+    ok "tools/task next works"
+  else
+    fail "tools/task next returned an error — fix: run tools/task next and resolve the reported error"
+  fi
+}
+
+# --- Main ---
+gh_ok=1
+if ! command -v gh >/dev/null 2>&1; then
+  fail "gh not installed — fix: brew install gh && gh auth login"
+  gh_ok=0
+elif ! gh auth status >/dev/null 2>&1; then
+  fail "gh not authenticated — fix: gh auth login"
+  gh_ok=0
+else
+  ok "gh installed and authenticated"
+fi
+
+if [ "$gh_ok" -eq 1 ]; then
+  REPO=""
+  REPO="$(get_repo 2>/dev/null)" \
+    || fail "cannot determine repo — fix: set ONBOARD_REPO=owner/name or run from inside a git clone"
+  [ -n "$REPO" ] && check_repo_access "$REPO"
+fi
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || ROOT="$(pwd)"
+check_scripts "$ROOT"
+check_hooks "$ROOT"
+check_branch
+check_user_settings
+[ "$gh_ok" -eq 1 ] && check_task "$ROOT"
+
+printf '\n'
+if [ "$FAIL_COUNT" -eq 0 ]; then
+  printf 'READY\n'
+  exit 0
+else
+  printf 'NOT READY: %d problem(s)\n' "$FAIL_COUNT"
+  exit 1
+fi
