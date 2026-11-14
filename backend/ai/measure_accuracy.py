@@ -10,7 +10,6 @@ import argparse
 import asyncio
 import difflib
 import json
-import os
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -60,7 +59,7 @@ def compute_character_accuracy(pred: str, target: str) -> float:
     if not t:
         return 1.0 if not p else 0.0
     dist = levenshtein(p, t)
-    return max(0.0, 1.0 - (dist / max(len(t), len(p))))
+    return max(0.0, 1.0 - (dist / len(t)))
 
 
 def compute_word_accuracy(pred: str, target: str) -> float:
@@ -70,7 +69,7 @@ def compute_word_accuracy(pred: str, target: str) -> float:
     if not t_words:
         return 1.0 if not p_words else 0.0
     dist = levenshtein(p_words, t_words)
-    return max(0.0, 1.0 - (dist / max(len(t_words), len(p_words))))
+    return max(0.0, 1.0 - (dist / len(t_words)))
 
 
 @dataclass
@@ -195,17 +194,8 @@ async def run_benchmark(
     if not samples:
         raise ValueError(f"No sample frames found in {samples_dir}")
 
-    if client is None:
-        # If no client passed and no NVIDIA_API_KEY in env, use stub
-        if not os.environ.get("NVIDIA_API_KEY"):
-            # Build stub responses from samples
-            stub_responses = {}
-            for s in samples:
-                with open(s["image_path"], "rb") as f:
-                    _, b64 = extract_frame_data(f.read())
-                resp = s["expected_text"] if s["has_text"] else "NO_TEXT_FOUND"
-                stub_responses[b64] = resp or "NO_TEXT_FOUND"
-            client = StubNemotronClient(responses=stub_responses)
+    # With client=None, read_page builds the real Nemotron client, which raises
+    # if NVIDIA_API_KEY is missing. Simulated runs require an explicit --use-stub.
 
     results: list[SampleResult] = []
     for s in samples:
@@ -290,8 +280,11 @@ def main() -> int:
 
     if args.json:
         data = asdict(report)
+        data["simulated"] = args.use_stub
         print(json.dumps(data, indent=2))
     else:
+        if args.use_stub:
+            print("*** SIMULATED: stub client echoes expected text; not a real Nemotron measurement ***")
         print(format_report_table(report))
 
     return 0

@@ -38,6 +38,10 @@ class MeasureAccuracyTest(unittest.TestCase):
         self.assertGreater(char_acc, 0.9)
         self.assertGreater(word_acc, 0.8)
 
+    def test_metrics_insertion_is_penalized(self):
+        self.assertEqual(compute_word_accuracy("hello world", "hello"), 0.0)
+        self.assertEqual(compute_character_accuracy("hellohello", "hello"), 0.0)
+
     def test_load_samples_from_directory(self):
         samples = load_samples(DEFAULT_SAMPLES_DIR)
         self.assertGreaterEqual(len(samples), 4)

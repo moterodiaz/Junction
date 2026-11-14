@@ -129,7 +129,7 @@ class PageReaderTest(unittest.TestCase):
             self.assertEqual(url, "https://api.nvidia.com/v1/chat/completions")
             self.assertEqual(headers["Authorization"], "Bearer test-key")
             self.assertEqual(payload["model"], DEFAULT_MODEL_READ)
-            self.assertFalse(payload["extra_body"]["chat_template_kwargs"]["enable_thinking"])
+            self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
             msg_content = payload["messages"][0]["content"]
             self.assertEqual(msg_content[0]["type"], "image_url")
             self.assertEqual(msg_content[0]["image_url"]["url"], "data:image/jpeg;base64,QUFBQQ==")

@@ -199,10 +199,8 @@ class NemotronClient:
                     ],
                 }
             ],
-            "extra_body": {
-                "chat_template_kwargs": {
-                    "enable_thinking": False,
-                }
+            "chat_template_kwargs": {
+                "enable_thinking": False,
             },
         }
 
