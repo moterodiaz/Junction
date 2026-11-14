@@ -78,7 +78,7 @@ All of these use stub or mocked clients; none calls a provider. Live model behav
 
 Per PR (threads / `claude-fix` commits / minutes to merge): #74 7/2/30, #75 11/4/43, #77 12/3/79, #80 9/3/89, #99 2/0/14, #105 0/0/3, #176 1/1/4, #178 1/1/4, #179 2/1/18, #206 2/1/7.
 
-**Misses found after review, all fixed:**
+**Misses found after review:**
 - Raw upstream error messages could reach the logs from the image, page-reader and reasoning clients (#108), fixed in #176.
 - A blank caption failed before the fallback (#175, found on #174), fixed in #178.
 - The live grounding miss in section 3 is still open (#129).
