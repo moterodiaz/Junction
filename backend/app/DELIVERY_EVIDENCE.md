@@ -45,7 +45,7 @@ Deployed by @Marcus228 with `modal deploy backend/app/modal_app.py`.
 | When | Command | Outcome |
 |---|---|---|
 | 14:05 | one typed `explain` request with a real photo of a Hamlet page | card in 25.0 s: reading 0.3 s, thinking 10.1 s, drawing 13.5 s; `models` = read `nemotron-3.5-super-vl`, reason `gemini-4-hydrogen`, image `gemini-nano-banana-2.1`; `image_url` set; `audio_url` null |
-| ~15:25 | `WS_URL=…/ws contracts/test.sh` | 17 tests; every live reply passed the schema; drift only from placeholder media in the recordings (a 28-byte fake JPEG gives `internal` after reading; an empty WAV gives `stt_failed`, so Whisper runs on Modal) |
+| ~15:25 | `WS_URL=…/ws contracts/test.sh` | 17 tests; every live reply passed the schema; drift only from placeholder media in the recordings (a 28-byte fake JPEG gives `internal` after reading; an empty WAV gives `stt_failed`, which does not show whether Whisper ran: an import or model-load failure gives the same code. Successful live transcription is unverified until real speech succeeds) |
 | 16:27 | `GET /health` | HTTP 200 `{"ok":true}` in 6.4 s (container cold start) |
 
 The live build predates #107, #171–#174 (merged after the deploy). A redeploy is needed for the baked Whisper weights, cancel on disconnect and contract-valid cards.
