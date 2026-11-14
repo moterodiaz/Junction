@@ -46,6 +46,10 @@ async def health() -> dict:
     return {"ok": True}
 
 
+MAX_QUEUED_FRAMES = 4
+MAX_QUEUED_BYTES = 32 * 1024 * 1024
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     """Handle one request at a time, but keep listening while it runs: a disconnect cancels
@@ -55,10 +59,13 @@ async def ws(websocket: WebSocket) -> None:
     receiving: asyncio.Task | None = None
     handling: asyncio.Task | None = None
     queued: list[str | bytes] = []
+    queued_bytes = 0
     try:
         while True:
             if handling is None and queued:
-                handling = asyncio.create_task(handle(websocket, queued.pop(0)))
+                frame = queued.pop(0)
+                queued_bytes -= len(frame)
+                handling = asyncio.create_task(handle(websocket, frame))
             receiving = receiving or asyncio.create_task(websocket.receive())
             waiting = {receiving} if handling is None else {receiving, handling}
             await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
@@ -75,6 +82,10 @@ async def ws(websocket: WebSocket) -> None:
             if raw is None:
                 raw = event.get("bytes")  # the iPhone client sends JSON as binary frames
             if raw is not None:
+                queued_bytes += len(raw)
+                if len(queued) >= MAX_QUEUED_FRAMES or queued_bytes > MAX_QUEUED_BYTES:
+                    await websocket.close(code=1008)  # policy violation: too much pending input
+                    break
                 queued.append(raw)  # handled in order; reading continues so a disconnect is seen
     except WebSocketDisconnect:
         pass
