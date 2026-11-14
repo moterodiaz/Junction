@@ -96,3 +96,17 @@ Per PR (threads / `claude-fix` commits / minutes to merge): #74 7/2/30, #75 11/4
 ## 7. Handoff to D (the lead)
 
 Lane updates from Marcus (#194–#199) will be appended here after #196. Gate tasks #135–#138 can cite this file for the AI area. It is evidence for review, not a gate acceptance.
+
+## 8. DeepMind priority lane updates (#185, #194–#199, Marcus @Marcus228)
+
+Recorded alongside `#196` (`LANE-C4`, Order 4). Only observed merged commits and local offline suite runs are recorded here; live Modal calls for post-`5dbb607` lane additions remain pending redeploy and live evidence capture.
+
+| Lane task | PR / Status | Summary of AI & pipeline changes |
+|---|---|---|
+| `#185` (`LANE-C1`, Order 1) | Merged in PR `#206` (`536e831`) | Added `backend/ai/decision.py` (`GeminiDecisionClient` using `gemini-decision-1` over `v1beta` Decisions API, `DYNAMIC_MODEL_ROUTING=false` default), wired `pipeline.py` routing + tier selection (`fast`/`balanced`/`deep`), fixed TTS URL resolution (`backend/stt/speak.py`). `claude-fix` `34a9083` preserved `MODEL_DECISION` env override and blank `MODEL_REASON_*` fallback. |
+| `#194` (`LANE-C2`, Order 2) | Open in PR `#209` | Added local *Hamlet* passage grounding (`ground_passage` with `min_words=5` guard) and explicit ungrounded no-source path (`sources == []`), mid-session candidate-book tracking (`BookSession.candidate_books`), clarification persistence (`BookSession.awaiting_book_clarification`), and `inspect.signature` compatibility guards. |
+| `#195` (`LANE-C3`, Order 3) | Queued behind `#194` | Adds `STYLE_PRESETS` / `style_preset` classification in `decision.py` (with `DECISION_ENABLE_SPOILER_CHECK=false` modular toggle hook) and soft `style_preset` visual conditioning in `image.py` / `pipeline.py` while preserving `#000000` background rules and `gemini-nano-banana-2.1` image fallback. |
+| `#196` (`LANE-C4`, Order 4) | This PR | Syncs `REQ-OBS-01` in `docs/REQUIREMENTS.md`, PRD §§4 / 12.13, `Junction-Prep/IMPLEMENTATION_PLAN.md`, `backend/README.md`, and appends this section to `backend/ai/DELIVERY_EVIDENCE.md`. |
+| `#197` (`LANE-C5`, Order 5) | Queued behind `#196` | Tracks `BookSession.max_position` / `seen_passages` and forwards `spoiler_guard` to `reasoning.think()` behind `DECISION_ENABLE_SPOILER_CHECK=false` without modifying contract schemas. |
+| `#198` (`LANE-C6`, Order 6) | Queued behind `#197` | Adds `ModelChoiceTracker` in `backend/app/latency.py` recording only stage names, model IDs, and fallback booleans (`REQ-OBS-01`, `REQ-PRIV-02`). |
+| `#199` (`LANE-C7`, Order 7) | Queued behind `#198` | Adds optional `gemini-3.5-transcribe` STT engine behind `STT_ENGINE=whisper` default and client status earcon cues (`ios/MetaLab/AnswerSpeaker.swift`, disabled in unit tests) with zero contract changes. |
