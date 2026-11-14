@@ -358,6 +358,19 @@ def _token_similarity(s1: str, s2: str) -> float:
     return len(intersection) / len(tokens1)
 
 
+def _fuzzy_token_similarity(query_words: List[str], window_norm: str, threshold: float = 0.5) -> float:
+    """Fraction of query words with a best per-word SequenceMatcher ratio >= threshold."""
+    # ponytail: O(q*w) per window; fine for <=4-word queries; switch to index if longer
+    window_words = window_norm.split()
+    if not query_words or not window_words:
+        return 0.0
+    matched = sum(
+        1 for qw in query_words
+        if max(SequenceMatcher(None, qw, ww).ratio() for ww in window_words) >= threshold
+    )
+    return matched / len(query_words)
+
+
 def find_passage(
     query: str,
     play: Optional[str] = "Hamlet",
@@ -483,7 +496,11 @@ def find_passage(
                 continue
 
             seq_ratio = SequenceMatcher(None, norm_query, window_norm).ratio()
-            combined_score = seq_ratio if _is_short_query else (tok_sim * 0.6) + (seq_ratio * 0.4)
+            if _is_short_query:
+                fuzzy_tok_sim = _fuzzy_token_similarity(query_words, window_norm)
+                combined_score = 0.6 * fuzzy_tok_sim + 0.4 * seq_ratio
+            else:
+                combined_score = (tok_sim * 0.6) + (seq_ratio * 0.4)
 
             if combined_score >= min_score:
                 if best_candidate is None or combined_score > best_candidate[0]:

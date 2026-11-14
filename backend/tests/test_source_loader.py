@@ -296,6 +296,28 @@ class SourceLoaderTest(unittest.TestCase):
             assert match is not None
             self.assertEqual(match.line_start, 2)
 
+    def test_short_query_word_overlap_beats_char_similarity(self) -> None:
+        """Verify short query uses fuzzy word overlap: slings line wins over unrelated short line."""
+        with tempfile.TemporaryDirectory() as d:
+            lines = [
+                {"type": "line", "line": 1, "speaker": "A", "text": "The King, sir."},
+                {"type": "line", "line": 5, "speaker": "B", "text": "The slings and arrows of outrageous fortune."},
+            ]
+            play = {
+                "id": "t", "title": "T",
+                "acts": [{"act": 1, "act_roman": "I", "scenes": [
+                    {"scene": 1, "scene_roman": "I", "lines": lines}]}],
+            }
+            (Path(d) / "t.json").write_text(json.dumps(play), encoding="utf-8")
+            # "the slings arrows" (missing "and") must locate the slings line, not "The King, sir."
+            match = find_passage("the slings arrows", play="t", data_dir=d, min_score=0.6)
+            self.assertIsNotNone(match)
+            assert match is not None
+            self.assertEqual(match.line_start, 5)
+            self.assertGreaterEqual(match.score, 0.6)
+            # Confirm the unrelated short line is not returned
+            self.assertNotEqual(match.line_start, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
