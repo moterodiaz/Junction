@@ -7,10 +7,10 @@ from __future__ import annotations
 import os
 from typing import Awaitable, Callable
 
-from ai import page_reader
+from ai import DEFAULT_MODEL_REASON, page_reader
 from ai import think as _ai_think
 
-from .messages import Book, Card, Invoke, Media, Stage
+from .messages import Book, Card, Invoke, Media, Source, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
 
@@ -63,6 +63,18 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     await send_stage("thinking")
     answer = await think(command, page_text, invoke.session_id)
 
+    _reason_model = (
+        DEFAULT_MODEL_REASON
+        if os.environ.get("GEMINI_API_KEY", "").strip()
+        else "stub"
+    )
+    raw_sources = answer.get("sources") or []
+    sources = [
+        Source(title=s.get("title") or "Source", url=s["url"])
+        for s in raw_sources
+        if isinstance(s, dict) and s.get("url")
+    ]
+
     await send_stage("drawing")
     image_url = await draw(answer["image_prompt"])
 
@@ -73,6 +85,6 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         image_url=image_url,
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
-        sources=[],
-        models={"read": _read_model, "reason": "stub", "image": "stub"},
+        sources=sources,
+        models={"read": _read_model, "reason": _reason_model, "image": "stub"},
     )

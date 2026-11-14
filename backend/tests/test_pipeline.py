@@ -6,9 +6,10 @@ import os
 import unittest
 from unittest import mock
 
-from ai.reasoning import StubGeminiClient, set_reasoning_client
+from ai.reasoning import DEFAULT_MODEL_REASON, StubGeminiClient, set_reasoning_client
 from ai.session import default_session_store
 from app import pipeline
+from app.messages import Invoke, Media
 
 _STUB_ANSWER = {
     "title": "Hamlet, Act 3, Scene 1",
@@ -74,6 +75,88 @@ class PipelineThinkKeyUnsetTest(unittest.IsolatedAsyncioTestCase):
         """When GEMINI_API_KEY is absent, pipeline.think returns the fixed offline dict unchanged."""
         answer = await pipeline.think("any command", "any page", "s-offline")
         self.assertEqual(answer, _OFFLINE_DICT)
+
+
+async def _noop_send_stage(stage):
+    pass
+
+
+_INVOKE = Invoke(
+    type="invoke",
+    request_id="r-run",
+    session_id="s-run",
+    frame=Media(mime="image/jpeg", b64="AAAA"),
+    text="explain",
+)
+
+_STUB_ANSWER_WITH_SOURCES = {
+    "title": "Hamlet, Act 3, Scene 1",
+    "caption": "Live caption.",
+    "speech_text": "Live speech.",
+    "image_prompt": "Live prompt, pure black background (#000000).",
+    "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+    "sources": [{"title": "Project Gutenberg Hamlet", "url": "https://www.gutenberg.org/ebooks/1524"}],
+}
+
+
+class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        default_session_store.clear()
+        self._stub = StubGeminiClient(default_answer=_STUB_ANSWER_WITH_SOURCES)
+        set_reasoning_client(self._stub)
+        self._env_patch = mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy"})
+        self._env_patch.start()
+
+    def tearDown(self):
+        self._env_patch.stop()
+        set_reasoning_client(None)
+        default_session_store.clear()
+
+    async def test_sources_populated_and_reason_model_reported(self):
+        """Live path: card.sources mirrors Gemini sources; models.reason is DEFAULT_MODEL_REASON."""
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+            card = await pipeline.run(_INVOKE, _noop_send_stage)
+        self.assertEqual(len(card.sources), 1)
+        self.assertEqual(card.sources[0].url, "https://www.gutenberg.org/ebooks/1524")
+        self.assertEqual(card.sources[0].title, "Project Gutenberg Hamlet")
+        self.assertEqual(card.models["reason"], DEFAULT_MODEL_REASON)
+
+    async def test_malformed_source_entries_dropped(self):
+        """Sources missing url are dropped; missing title gets default 'Source'; non-dicts dropped."""
+        stub = StubGeminiClient(default_answer={
+            **_STUB_ANSWER_WITH_SOURCES,
+            "sources": [
+                {"title": "Good", "url": "https://example.com/good"},
+                {"title": "No URL"},
+                {"url": "https://example.com/no-title"},
+                "not a dict",
+            ],
+        })
+        set_reasoning_client(stub)
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+            card = await pipeline.run(_INVOKE, _noop_send_stage)
+        self.assertEqual(len(card.sources), 2)
+        self.assertEqual(card.sources[0].url, "https://example.com/good")
+        self.assertEqual(card.sources[1].url, "https://example.com/no-title")
+        self.assertEqual(card.sources[1].title, "Source")
+
+
+class PipelineRunOfflinePathTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._env_patch = mock.patch.dict(os.environ)
+        self._env_patch.start()
+        os.environ.pop("GEMINI_API_KEY", None)
+        os.environ.pop("NVIDIA_API_KEY", None)
+
+    def tearDown(self):
+        self._env_patch.stop()
+
+    async def test_sources_empty_and_reason_model_is_stub(self):
+        """Offline path: card.sources is empty; models.reason is 'stub'."""
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+            card = await pipeline.run(_INVOKE, _noop_send_stage)
+        self.assertEqual(card.sources, [])
+        self.assertEqual(card.models["reason"], "stub")
 
 
 if __name__ == "__main__":
