@@ -12,7 +12,7 @@ MetaLab session bootstrap: get every teammate's agent running in its own worktre
 1. Accept your repository invite.
 2. `gh auth login`
 3. Clone the repo.
-4. Merge the user settings block below into `~/.claude/settings.json`.
+4. Run `tools/onboard --apply` (merges the user settings block below into ~/.claude/settings.json, keeps a backup).
 5. Run `tools/onboard` from your clone until READY (a WARN about being on main is fine here), then `tools/task next`, `tools/task claim N`, and `tools/wt N-slug`.
 
 ## Lead: split the work
@@ -37,7 +37,7 @@ See AGENTS.md START HERE: `tools/task next`, `tools/task claim N`, `tools/wt N-s
 PRs touching `.github/workflows/**` or `.claude/settings.json` need one human merge. Expired secrets must be rotated by a human. The Bash guard hook guards against accidents and obvious secret-file paths, NOT a sandbox.
 
 ## User settings block
-Paste into `~/.claude/settings.json` (merge arrays into existing arrays; create the file if absent).
+Applied by `tools/onboard --apply`; paste manually only if that command is unavailable.
 
 ```json
 {
