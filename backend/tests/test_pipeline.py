@@ -13,7 +13,7 @@ from ai import image
 from ai.image import StubImageClient, set_image_client
 from ai.reasoning import DEFAULT_MODEL_REASON, StubGeminiClient, parse_reasoning_json, set_reasoning_client
 from ai.session import default_session_store
-from app import pipeline
+from app import latency, pipeline
 from app.messages import Audio, Frame, Invoke, Media
 
 _STUB_ANSWER = {
@@ -1186,6 +1186,242 @@ class PipelineTerminalReplyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(card.type, "card")
         self.assertEqual(len(self.session.history), len(self.history) + 1)
         self.assertEqual(self.session.book.title, "Moby-Dick")
+
+
+class PipelineModelDistributionTelemetryTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        default_session_store.clear()
+        latency.reset_model_distribution()
+        self.addCleanup(latency.reset_model_distribution)
+        self._stub_reason = StubGeminiClient(default_answer=_STUB_ANSWER_WITH_SOURCES)
+        set_reasoning_client(self._stub_reason)
+        self._invoke = Invoke(
+            type="invoke",
+            request_id="r-telem-1",
+            session_id="s-telem-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"),
+            text="Draw a glowing skull of Yorick",
+        )
+
+    def tearDown(self):
+        set_reasoning_client(None)
+        set_decision_client(None)
+        default_session_store.clear()
+
+    async def test_model_distribution_increments_for_all_five_stages_live_path(self):
+        """#198: Model distribution counters increment for decision, read, reason, image, tts."""
+        dec_result = DecisionResult(
+            action="draw",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.98,
+            fallback_used=False,
+            raw_utterance="Draw a glowing skull of Yorick",
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        draw_mock = mock.AsyncMock(return_value="https://example.com/skull.png")
+        speak_mock = mock.AsyncMock(return_value="https://example.com/audio.wav")
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "NVIDIA_API_KEY": "",
+            "DYNAMIC_MODEL_ROUTING": "true",
+            "MODEL_DECISION": "gemini-decision-1",
+            "MODEL_IMAGE": "imagen-3.0-generate-002",
+            "MODEL_TTS": "gemini-3.8-flash-tts",
+        }), mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="Alas, poor Yorick!"), \
+           mock.patch.object(pipeline, "draw", draw_mock), \
+           mock.patch.object(pipeline, "speak", speak_mock):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["total"], 5)
+        self.assertEqual(dist["fallback_total"], 1)  # read is stub because NVIDIA_API_KEY is ""
+
+        # 1. Decision stage
+        self.assertIn("decision", dist["stages"])
+        self.assertEqual(dist["stages"]["decision"].get("stub"), 1)  # StubDecisionClient was used
+        self.assertEqual(dist["fallback_by_stage"]["decision"], 0)
+
+        # 2. Read stage
+        self.assertIn("read", dist["stages"])
+        self.assertEqual(dist["stages"]["read"].get("stub"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["read"], 1)
+
+        # 3. Reason stage
+        self.assertIn("reason", dist["stages"])
+        self.assertEqual(dist["stages"]["reason"].get("gemini-4-argon"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["reason"], 0)
+
+        # 4. Image stage
+        self.assertIn("image", dist["stages"])
+        self.assertEqual(dist["stages"]["image"].get(card.models["image"]), 1)
+        self.assertEqual(dist["fallback_by_stage"]["image"], 0)
+
+        # 5. TTS stage
+        self.assertIn("tts", dist["stages"])
+        self.assertEqual(len(dist["stages"]["tts"]), 1)
+        self.assertEqual(list(dist["stages"]["tts"].values())[0], 1)
+        self.assertEqual(dist["fallback_by_stage"]["tts"], 0)
+
+    async def test_model_distribution_fallback_tracking_when_skipped_or_stub(self):
+        """#198: Fallbacks tracked when image skipped (speak_only) and speak skipped (audio_url is None)."""
+        dec_result = DecisionResult(
+            action="explain",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=False,
+            speak_only=True,
+            confidence=0.95,
+            fallback_used=False,
+            raw_utterance="explain this briefly",
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        # speak returns None (simulating unavailable speech)
+        speak_mock = mock.AsyncMock(return_value=None)
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+        }), mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"), \
+           mock.patch.object(pipeline, "speak", speak_mock):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["stages"]["image"].get("stub"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["image"], 1)
+        self.assertEqual(dist["stages"]["tts"].get("stub"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["tts"], 1)
+
+    async def test_model_distribution_fallback_tracking_when_decision_fallback_used(self):
+        """#198: Fallback recorded for decision stage when decision.fallback_used is True."""
+        dec_result = DecisionResult(
+            action="explain",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.20,
+            fallback_used=True,
+            raw_utterance="explain",
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+        }), mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["stages"]["decision"].get("fallback"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["decision"], 1)
+
+    async def test_privacy_strict_req_priv_02_no_user_transcripts_or_prompts(self):
+        """REQ-PRIV-02: Stored telemetry counters NEVER contain transcripts, prompts, or session IDs."""
+        secret_utterance = "SECRET_STUDENT_TRANSCRIPT_12345"
+        invoke = Invoke(
+            type="invoke",
+            request_id="r-priv-1",
+            session_id="s-priv-12345",
+            frame=Frame(mime="image/jpeg", b64="AAAA"),
+            text=secret_utterance,
+        )
+        dec_result = DecisionResult(
+            action="explain",
+            task_tier="balanced",
+            recommended_model="gemini-4-argon",
+            needs_image=False,
+            speak_only=False,
+            confidence=0.90,
+            fallback_used=False,
+            raw_utterance=secret_utterance,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+        }), mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+            await pipeline.run(invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        for stage, models in dist["stages"].items():
+            self.assertNotIn("SECRET", stage)
+            self.assertNotIn("12345", stage)
+            for model_id, count in models.items():
+                self.assertNotIn("SECRET", model_id)
+                self.assertNotIn("12345", model_id)
+                self.assertNotIn(" ", model_id)
+
+    async def test_read_gemini_fallback_model_counted_in_telemetry(self):
+        """#198 REQ-LAT-01: Gemini fallback read is counted as fallback_by_stage[read]."""
+        from ai.page_reader import PageText
+        invoke = Invoke(
+            type="invoke", request_id="r-read-fb", session_id="s-read-fb",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "NVIDIA_API_KEY": "dummy",
+        }), mock.patch.object(pipeline, "read_page",
+                              new_callable=mock.AsyncMock,
+                              return_value=PageText("x", "gemini-fallback-id")):
+            await pipeline.run(invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["fallback_by_stage"]["read"], 1)
+
+    async def test_clarify_turn_does_not_record_reason_in_telemetry(self):
+        """#198 REQ-LAT-01: clarify turns skip think(), so reason stage must not be recorded."""
+        invoke = Invoke(
+            type="invoke", request_id="r-clr-telem", session_id="s-clr-telem",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this about?",
+        )
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.60,
+            fallback_used=False,
+            raw_utterance="what is this about?",
+            book_match_confidence=0.35,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+        }), mock.patch.object(pipeline, "read_page",
+                              new_callable=mock.AsyncMock,
+                              return_value="xyzzy qwerty nonexistent"):
+            await pipeline.run(invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["stages"].get("reason", {}), {})
+
+    async def test_unsafe_model_id_does_not_fail_the_card(self):
+        """#198 REQ-PRIV-02: unsafe model id in record_model_choice must not raise; card returned."""
+        invoke = Invoke(
+            type="invoke", request_id="r-unsafe-1", session_id="s-unsafe-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        unsafe_model = "gemini model with spaces"  # spaces violate _SAFE_MODEL_RE
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "MODEL_REASON": unsafe_model,
+        }), mock.patch.object(pipeline, "read_page",
+                              new_callable=mock.AsyncMock,
+                              return_value="page text"):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertIsNotNone(card)
+        self.assertEqual(card.type, "card")
 
 
 if __name__ == "__main__":
