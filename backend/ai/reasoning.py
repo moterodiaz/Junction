@@ -131,7 +131,11 @@ class HttpGeminiClient:
                 body = exc.read().decode("utf-8", errors="replace")
                 raise ReasoningError(f"Gemini API HTTP {exc.code}: {body}") from exc
             except urllib.error.URLError as exc:
+                if isinstance(exc.reason, TimeoutError):
+                    raise TimeoutError(f"Gemini request timed out: {exc}") from exc
                 raise ReasoningError(f"Gemini API network error: {exc}") from exc
+            except TimeoutError:
+                raise
             except Exception as exc:
                 raise ReasoningError(f"Gemini request failed: {exc}") from exc
 
@@ -339,8 +343,16 @@ async def think(
     )
 
     # Update session location and record Q&A exchange
-    if answer.get("book") and answer["book"].get("location"):
-        session.update_location(answer["book"]["location"])
+    book = answer.get("book")
+    if isinstance(book, dict):
+        title = book.get("title")
+        if isinstance(title, str) and title.strip():
+            session.book.title = title.strip()
+        author = book.get("author")
+        if isinstance(author, str) and author.strip():
+            session.book.author = author.strip()
+        if book.get("location"):
+            session.update_location(book["location"])
 
     session.add_exchange(
         question=command,
