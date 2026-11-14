@@ -118,7 +118,7 @@ class WsTest(unittest.TestCase):
 
     def test_models_read_is_model_name_on_real_reader_path(self):
         reader = StubNemotronClient(default_response="some text")
-        with mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key"}), \
+        with mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key", "MODEL_READ": DEFAULT_MODEL_READ}), \
                 mock.patch("ai.page_reader.NemotronClient", return_value=reader):
             replies = exchange(invoke(), 4)
         self.assertEqual(replies[3]["models"]["read"], DEFAULT_MODEL_READ)
