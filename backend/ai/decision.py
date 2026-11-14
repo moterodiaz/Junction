@@ -16,6 +16,7 @@ import asyncio
 from dataclasses import dataclass, field
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Protocol, Union
 
 from .session import BookSession
@@ -294,15 +295,16 @@ def fallback_decide(
 
     text_lower = (utterance or "").strip().lower()
     style_preset = "default"
-    if "woodcut" in text_lower or "ink" in text_lower:
+    words = set(re.findall(r"[a-z]+", text_lower))
+    if words & {"woodcut", "ink"}:
         style_preset = "ink_woodcut"
-    elif "gothic" in text_lower or "oil" in text_lower:
+    elif words & {"gothic", "oil"}:
         style_preset = "gothic_oil"
-    elif "botanical" in text_lower or "watercolor" in text_lower:
+    elif words & {"botanical", "watercolor"}:
         style_preset = "watercolor_botanical"
-    elif "noir" in text_lower or "sketch" in text_lower:
+    elif words & {"noir", "sketch"}:
         style_preset = "noir_sketch"
-    elif "etching" in text_lower or "engraving" in text_lower:
+    elif words & {"etching", "engraving"}:
         style_preset = "classical_etching"
 
     spoiler_risk = False
@@ -433,6 +435,9 @@ def _parse_decision_response(
     if str(style_val) not in valid_styles:
         style_val = style_spec.default
     style_preset = str(style_val)
+    if style_conf < MIN_CONFIDENCE_THRESHOLD:
+        # Uncertain style never rejects the request; use the default look.
+        style_preset = "default"
 
     # spoiler_risk
     spoil_spec = specs.get("spoiler_risk", DecisionQuestionSpec("spoiler_risk", "noul", "", default=False))
@@ -457,10 +462,6 @@ def _parse_decision_response(
     extra["answerable_from_seen"] = answerable_from_seen
 
     confs_to_include = [action_conf, tier_conf, img_conf, speak_conf]
-    if "style_preset" in answers:
-        confs_to_include.append(style_conf)
-    if "spoiler_risk" in answers:
-        confs_to_include.append(spoil_conf)
     all_confs = confs_to_include + extra_confs
     overall_confidence = min(all_confs) if all_confs else 1.0
     rec_model = resolve_model_for_tier(tier_val)
@@ -869,9 +870,12 @@ async def decide(
                 result.book_changed = raw_result.book_changed
             if raw_result.style_preset != "default":
                 result.style_preset = raw_result.style_preset
+                result.extra_answers["style_preset"] = result.style_preset
             if raw_result.spoiler_risk:
                 result.spoiler_risk = raw_result.spoiler_risk
                 result.answerable_from_seen = raw_result.answerable_from_seen
+                result.extra_answers["spoiler_risk"] = result.spoiler_risk
+                result.extra_answers["answerable_from_seen"] = result.answerable_from_seen
         else:
             result = raw_result
 
