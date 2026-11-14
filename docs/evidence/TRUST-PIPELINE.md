@@ -13,8 +13,8 @@ Every agent-written PR names a requirement id and a human owner (the CODEOWNERS 
 | Piece | What it does |
 |---|---|
 | `tools/metrics --gate <PR>` | Works out the PR's areas from its files, the open escapes per area, and who approved the **head commit**. Exit 0 passes; exit 3 holds, naming the escape and who must approve. |
-| `.github/workflows/trust.yml` (handed to the lead on #186; agent tokens cannot push workflows) | Posts the commit status `trust` on the PR's head when the PR changes, a review is submitted or dismissed, an escape issue changes, and every 30 minutes as a backstop. A `gh` failure posts `error`, so the PR stays held. |
-| main-protect ruleset | Lists `trust` as a required check, so GitHub itself refuses the merge, auto-merge from `claude-fix` included. **Pending:** the lead adds it; agents cannot change rulesets. |
+| `.github/workflows/trust.yml` (#190, by the lead: agent tokens cannot push workflows) | Posts the commit status `trust` on the PR's head when the PR changes, a review is submitted or dismissed, an escape issue changes, and every 30 minutes as a backstop. A `gh` failure posts `error`, so the PR stays held. |
+| main-protect ruleset | Lists `trust` as a required check, pinned to the GitHub Actions app (integration 15368), next to `ci` and `Greptile Review`. GitHub itself refuses the merge, auto-merge from `claude-fix` included, and a status posted by hand does not count. Added by the lead on 2026-11-14. |
 
 Choices, with the reason for each:
 - **Approval of the head commit only.** An approval does not cover code pushed after it.
@@ -22,7 +22,7 @@ Choices, with the reason for each:
 - **A later "changes requested" withdraws an approval.** A comment-only review changes nothing.
 - **The fix for an escape is held too.** It is the change most worth a human look.
 
-The offline tests (`tools/tests/trust_gate.test.sh`; the `ci` step that runs them is in the same handoff) drive the gate through a fake `gh`:
+The offline tests (`tools/tests/trust_gate.test.sh`, run in `ci` since #190) drive the gate through a fake `gh`:
 
 ```
 earned: no open escape
@@ -43,6 +43,20 @@ trust gate tests: OK
 ```
 
 The test is not vacuous: letting any approver release the hold makes it fail (`FAIL #50: want exit 3 with 'held:', got exit 0`). Against the live repo, `tools/metrics --gate 188` printed `trust earned in @moterodiaz` (exit 0), because all 9 escapes are closed.
+
+### Live drill: GitHub blocks a held PR (2026-11-14, 18:20 UTC)
+
+The lead asked for a live check once `trust` became required. Escape issue #193, a drill marked `[DRILL]` with `Introduced-by: #189`, withdrew trust from the lead's area for 23 seconds. It was then closed and unlabelled, so `tools/metrics` never counts it. Two open PRs were in that area:
+
+| Time | Event | #191 (`ci`, `Greptile Review` already passed) | #192 (this doc) |
+|---|---|---|---|
+| 18:18 to 18:20 | before the drill | `trust` success; merge state **CLEAN** | `trust` success |
+| 18:20:25 | drill escape #193 opened | | |
+| 18:20:40 | `trust.yml` re-evaluates every open PR | `trust` **failure**: "held: @moterodiaz trust withdrawn (#193); needs @moterodiaz to approve the head commit"; merge state **BLOCKED** | `trust` failure, same text |
+| 18:20:48 | #193 closed and unlabelled | | |
+| 18:20:53 to 18:21:05 | re-evaluated | `trust` success | `trust` success |
+
+On #191 `trust` was the only check that changed, and GitHub's merge state followed it, CLEAN to BLOCKED. The GraphQL `isRequired` field reported `trust` as required on both PRs. Nobody attempted a merge: AGENTS.md §3 rule 9 forbids merging with a failing check, and the merge state shows the refusal.
 
 ## 3. One change, end to end: PR #174 (REQ-WS-01)
 
@@ -118,11 +132,23 @@ A retroactive replay over the same PRs found:
 
 ## 6. Limits: what this does not prove
 
-- **The hold is not enforced until the lead commits `trust.yml` and adds `trust` to main-protect's required checks.** Until then it is a red status that a merge can ignore. *Owner: @moterodiaz.*
+- **A commit pushed in the minute before `trust.yml` reached `main` got no `trust` run.** #191's head 0590adf was pushed at 18:16:26; #190 merged at 18:17:09. The next run re-evaluates every open PR, so the gap closes by itself, and while it lasts the PR is blocked, not passed.
 - **"Human approval" rests on a team rule, not on cryptography.** Agents push from their human's account, and an agent could in principle approve another owner's PR. AGENTS.md §3 rule 9 forbids agents from approving; nothing technical stops them.
 - **Escapes are only as complete as the audits.** An escape is a defect someone found. There is no estimate of defects nobody has found.
 - **The cost of a hold was not measured.** That cost is the owner's approval latency. The replay counts the holds, not the minutes they would have taken.
 - **No baseline.** We have no comparable run without the pipeline, so we claim no time saved.
+
+## 7. Lessons from building the gate
+
+Same format as `docs/TIETO_LESSONS_LOG.md`; times UTC, 2026-11-14.
+
+**A. The AI reviewer found a fail-open hole in the gate itself** (17:37, PR #189). Greptile (P2): the gate read escapes through a list capped at 500 that included closed issues, so a long history could push an open escape off the list and the PR would pass. Fixed in 792e875: only open escapes are read, and a list at its limit stops the gate with an error, which holds the PR. *Rubric lesson, Evidence: the reviewer was right about the control that checks the reviewer's own blind spots.*
+
+**B. The first regression test for that fix passed before the fix** (17:40). The fake `gh` listed the open escape first, so truncation never reached it. Ordering the fake newest first, as `gh` does, made it fail with `got exit 0: trust earned`, then pass with the fix. *Rubric lesson, Measurement: a regression test counts only once it has failed on the old code.*
+
+**C. The first draft of this document made two claims the API contradicted** (17:30). It said #174 showed a trust header (the header workflow landed after #174 merged) and that 3 of the replayed holds were fixes (it is 9 of 10). Both were found by checking each claim against the API before opening the PR. *Rubric lesson, Clarity: an agent's evidence needs the same check as its code.*
+
+**D. `claude-fix` and the owner's agent fixed the same thread at once** (17:37:46 and 17:38:18, PR #189). Both pushed equivalent fixes; the bot's next push was rejected, and the board got a "needs human: claude-fix failed" that needed no human. The owner's agent kept one fix and explained the race on the board. *Rubric lesson, Practicality: two fixers on one thread produce noise in the channel people rely on.*
 
 ## Reproduce
 
