@@ -15,6 +15,7 @@ from typing import Awaitable, Callable, Optional, TypeVar
 import httpx
 
 import stt
+from stt.speak import speak
 from ai import image
 from ai import page_reader
 from ai.reasoning import resolve_reason_model
@@ -182,7 +183,18 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     ]
 
     await send_stage("drawing")
-    image_url = await timed(draw(answer["image_prompt"], invoke.session_id))
+    # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit
+    # would see. It is optional: None on any failure or timeout, and the phone speaks the text.
+    async def _speak() -> str | None:
+        try:
+            return await asyncio.wait_for(speak(answer["speech_text"]), STAGE_TIMEOUT_S)
+        except Exception as exc:
+            log.warning("Speech unavailable: %s", exc)
+            return None
+
+    image_url, audio_url = await asyncio.gather(
+        timed(draw(answer["image_prompt"], invoke.session_id)), _speak()
+    )
 
     return Card(
         request_id=invoke.request_id,
@@ -190,6 +202,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         caption=answer["caption"],
         image_url=image_url,
         speech_text=answer["speech_text"],
+        audio_url=audio_url,
         book=Book(**answer["book"]),
         sources=sources,
         models={
