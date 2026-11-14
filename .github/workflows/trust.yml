@@ -20,12 +20,6 @@ on:
         description: PR number to evaluate (empty = every open PR)
         required: false
 
-# One writer at a time, and every run re-evaluates every open PR, so the last run always posts the newest
-# decision; a queued run GitHub replaces with a newer one loses nothing.
-concurrency:
-  group: trust-status
-  cancel-in-progress: false
-
 jobs:
   evaluate:
     # Fork PRs get a read-only token and cannot post a status; issue events matter only for escapes.
@@ -33,6 +27,11 @@ jobs:
       (github.event_name != 'pull_request' && github.event_name != 'pull_request_review' && github.event_name != 'issues') ||
       (github.event_name == 'issues' && (contains(github.event.issue.labels.*.name, 'escape') || github.event.label.name == 'escape')) ||
       github.event.pull_request.head.repo.full_name == github.repository
+    # Job-level, so runs skipped by the condition above never take a queue slot. One writer at a time, and every
+    # run re-evaluates every open PR, so the last run posts the newest decision and a replaced queued run loses nothing.
+    concurrency:
+      group: trust-status
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
