@@ -195,7 +195,7 @@ def _text(value: object) -> str:
 
 
 def _https(value: object) -> str | None:
-    return value if isinstance(value, str) and _HTTPS_URL.match(value) else None
+    return value if isinstance(value, str) and _HTTPS_URL.fullmatch(value) else None  # $ alone allows a final "\n"
 
 
 def contract_card(request_id: str, answer: dict, image_url: str | None, audio_url: str | None,

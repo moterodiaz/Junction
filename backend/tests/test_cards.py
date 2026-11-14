@@ -65,6 +65,14 @@ class CardTest(unittest.TestCase):
         self.assertEqual(len(reply["sources"]), 2)  # the untitled one keeps its URL with a default title
         self.assertTrue(reply["sources"][1]["title"])
 
+    def test_a_url_with_a_trailing_newline_is_dropped_not_fatal(self):
+        # Python's $ matches before a final newline; the schema (and pydantic's regex) do not.
+        reply = card_for({"title": "t", "caption": "c", "speech_text": "s", "image_prompt": "p",
+                          "book": {"title": "b", "author": "a", "location": "l"},
+                          "sources": [{"title": "n", "url": "https://example.com\n"}]})
+        self.assert_valid_card(reply)
+        self.assertEqual(reply["sources"], [])
+
     def test_model_ids_are_reported_as_they_are(self):
         reply = card_for({"title": "t", "caption": "c", "speech_text": "s", "image_prompt": "p",
                           "book": {"title": "b", "author": "a", "location": "l"}})
