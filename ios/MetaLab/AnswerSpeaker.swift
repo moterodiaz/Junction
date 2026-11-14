@@ -20,7 +20,7 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
     /// Safe no-op in headless/simulator environments and never interrupts active speech synthesis.
     func playEarcon(for stage: PipelineStage) {
         guard earconsEnabled else { return }
-        guard player == nil, !synthesizer.isSpeaking else { return }
+        guard !(player?.isPlaying ?? false), !synthesizer.isSpeaking else { return }
         guard let data = Self.earconAudioData(for: stage) else { return }
         do {
             stopEarcon()

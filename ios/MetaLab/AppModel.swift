@@ -59,7 +59,6 @@ final class AppModel: ObservableObject {
         } else {
             earconsEnabled = true
         }
-        speaker.earconsEnabled = earconsEnabled
         do {
             try Wearables.configure()
             let bridge = GlassesBridge()
@@ -73,6 +72,7 @@ final class AppModel: ObservableObject {
             glasses = nil
             configureError = error.localizedDescription
         }
+        speaker.earconsEnabled = earconsEnabled
     }
 
     var blockedReason: String? {

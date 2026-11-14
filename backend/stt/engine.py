@@ -32,13 +32,26 @@ SHAKESPEARE_VOCABULARY_PROMPT = (
 _engine: Engine | None = None
 _engine_lock = threading.Lock()
 _gemini_client: Any = None
+_fallback_engine: Engine | None = None
+_fallback_lock = threading.Lock()
+GEMINI_TIMEOUT_MS = 15_000  # below the 25 s stage deadline, leaving time for the Whisper fallback
+
+
+def _whisper_fallback() -> Engine:
+    """One shared Whisper model for every fallback, built once behind a lock."""
+    global _fallback_engine
+    with _fallback_lock:
+        if _fallback_engine is None:
+            _fallback_engine = _faster_whisper()
+        return _fallback_engine
 
 
 def set_engine(engine: Engine | None) -> Engine | None:
     """Replace the speech engine (None restores the default); return the one it replaced."""
-    global _engine
+    global _engine, _fallback_engine
     with _engine_lock:
         previous, _engine = _engine, engine
+        _fallback_engine = None
     return previous
 
 
@@ -109,6 +122,8 @@ def _gemini_engine(
     """Create a speech transcription engine backed by Gemini (gemini-3.5-transcribe)."""
     target_model = model or os.environ.get("MODEL_TRANSCRIBE", "").strip() or GEMINI_MODEL
 
+    owned: list[Any] = []  # one lazily built client, reused across clips
+
     def run(audio: bytes) -> str:
         if not audio or not audio.strip(b"\x00 \t\r\n"):
             raise ValueError("Empty or invalid audio clip")
@@ -119,19 +134,27 @@ def _gemini_engine(
             if not resolved_key:
                 if fallback_to_whisper:
                     try:
-                        return _faster_whisper()(audio)
+                        return _whisper_fallback()(audio)
                     except Exception:
                         pass
                 raise RuntimeError("GEMINI_API_KEY is not set for Gemini transcription")
-            from google import genai
+            if not owned:
+                from google import genai
+                from google.genai import types as genai_types
 
-            resolved_client = genai.Client(api_key=resolved_key)
+                owned.append(
+                    genai.Client(
+                        api_key=resolved_key,
+                        http_options=genai_types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+                    )
+                )
+            resolved_client = owned[0]
 
         mime = _detect_mime_type(audio)
         if mime is None:
             if fallback_to_whisper:
                 try:
-                    return _faster_whisper()(audio)
+                    return _whisper_fallback()(audio)
                 except Exception:
                     pass
             raise ValueError("Unsupported audio format for Gemini transcription")
@@ -157,7 +180,7 @@ def _gemini_engine(
         except Exception as exc:
             if fallback_to_whisper:
                 try:
-                    return _faster_whisper()(audio)
+                    return _whisper_fallback()(audio)
                 except Exception:
                     pass
             # REQ-PRIV-02: Never log or echo audio bytes or user speech in the exception message
