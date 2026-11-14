@@ -111,7 +111,12 @@ jobs:
             fi
             # Runs from different triggers can race and both create a header; keep the oldest, drop the rest.
             list_headers | tail -n +2 | while read -r extra; do
-              gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$extra" >/dev/null
-              echo "#$pr: deleted duplicate header $extra"
+              if out="$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$extra" 2>&1)"; then
+                echo "#$pr: deleted duplicate header $extra"
+              elif grep -q 'HTTP 404' <<<"$out"; then
+                echo "#$pr: duplicate header $extra was already deleted by another run"
+              else
+                echo "::error::could not delete duplicate header $extra: $out"; exit 1
+              fi
             done
           done
