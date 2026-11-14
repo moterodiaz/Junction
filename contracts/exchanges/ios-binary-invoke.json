@@ -1,0 +1,55 @@
+{
+  "description": "Invoke encoded like the iOS Contract.encode (sorted keys, explicit nulls, escaped slashes) and sent as a binary frame.",
+  "send": [
+    {
+      "bytes": {
+        "type": "invoke",
+        "request_id": "r-ios",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "explain"
+      }
+    }
+  ],
+  "receive": [
+    {
+      "type": "status",
+      "request_id": "r-ios",
+      "stage": "reading"
+    },
+    {
+      "type": "status",
+      "request_id": "r-ios",
+      "stage": "thinking"
+    },
+    {
+      "type": "status",
+      "request_id": "r-ios",
+      "stage": "drawing"
+    },
+    {
+      "type": "card",
+      "request_id": "r-ios",
+      "title": "Hamlet, Act 3, Scene 1",
+      "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+      "image_url": null,
+      "speech_text": "Hamlet is alone, weighing whether to keep living.",
+      "audio_url": null,
+      "book": {
+        "title": "Hamlet",
+        "author": "William Shakespeare",
+        "location": "Act 3, Scene 1"
+      },
+      "sources": [],
+      "models": {
+        "read": "stub",
+        "reason": "stub",
+        "image": "stub"
+      }
+    }
+  ]
+}

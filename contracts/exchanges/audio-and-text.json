@@ -1,0 +1,31 @@
+{
+  "description": "Invoke with both audio and text is rejected, echoing its request_id.",
+  "invalid_send": true,
+  "send": [
+    {
+      "text": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": {
+          "mime": "audio/wav",
+          "b64": "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA="
+        },
+        "text": "explain"
+      }
+    }
+  ],
+  "receive": [
+    {
+      "type": "error",
+      "request_id": "r1",
+      "code": "internal",
+      "message": "invalid invoke: 1 validation error for Invoke\n  Value error, invoke needs exactly one of audio or text [type=value_error, input_value={'type': 'invoke', 'reque...A='}, 'text': 'explain'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/value_error",
+      "retryable": false
+    }
+  ]
+}
