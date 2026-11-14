@@ -44,6 +44,20 @@ trust gate tests: OK
 
 The test is not vacuous: letting any approver release the hold makes it fail (`FAIL #50: want exit 3 with 'held:', got exit 0`). Against the live repo, `tools/metrics --gate 188` printed `trust earned in @moterodiaz` (exit 0), because all 9 escapes are closed.
 
+### Live drill: GitHub blocks a held PR (2026-11-14, 18:20 UTC)
+
+The lead asked for a live check once `trust` became required. Escape issue #193, a drill marked `[DRILL]` with `Introduced-by: #189`, withdrew trust from the lead's area for 23 seconds. It was then closed and unlabelled, so `tools/metrics` never counts it. Two open PRs were in that area:
+
+| Time | Event | #191 (`ci`, `Greptile Review` already passed) | #192 (this doc) |
+|---|---|---|---|
+| 18:18 to 18:20 | before the drill | `trust` success; merge state **CLEAN** | `trust` success |
+| 18:20:25 | drill escape #193 opened | | |
+| 18:20:40 | `trust.yml` re-evaluates every open PR | `trust` **failure**: "held: @moterodiaz trust withdrawn (#193); needs @moterodiaz to approve the head commit"; merge state **BLOCKED** | `trust` failure, same text |
+| 18:20:48 | #193 closed and unlabelled | | |
+| 18:20:53 to 18:21:05 | re-evaluated | `trust` success | `trust` success |
+
+On #191 `trust` was the only check that changed, and GitHub's merge state followed it, CLEAN to BLOCKED. The GraphQL `isRequired` field reported `trust` as required on both PRs. Nobody attempted a merge: AGENTS.md §3 rule 9 forbids merging with a failing check, and the merge state shows the refusal.
+
 ## 3. One change, end to end: PR #174 (REQ-WS-01)
 
 REQ-WS-01: *`invoke`, `status`, `card` and `error` messages validate against `contracts/ws-messages.schema.json`.*
