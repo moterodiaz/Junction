@@ -240,6 +240,61 @@ class GeminiPageReaderTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 GeminiPageReader()
 
+    # --- parse_response finishReason tests ---
+
+    def test_parse_response_stop_returns_text(self):
+        data = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "hello"}]}}]}
+        self.assertEqual(GeminiPageReader.parse_response(data), "hello")
+
+    def test_parse_response_max_tokens_raises_page_read_error_not_partial(self):
+        data = {"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "partial"}]}}]}
+        with self.assertRaises(PageReadError) as ctx:
+            GeminiPageReader.parse_response(data)
+        self.assertNotIsInstance(ctx.exception, NoTextFoundError)
+        self.assertIn("truncated", str(ctx.exception).lower())
+
+    def test_parse_response_safety_raises_page_read_error_not_no_text(self):
+        data = {"candidates": [{"finishReason": "SAFETY", "content": {"parts": []}}]}
+        with self.assertRaises(PageReadError) as ctx:
+            GeminiPageReader.parse_response(data)
+        self.assertNotIsInstance(ctx.exception, NoTextFoundError)
+
+    def test_parse_response_stop_with_empty_text_raises_no_text_found(self):
+        data = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": ""}]}}]}
+        with self.assertRaises(NoTextFoundError):
+            GeminiPageReader.parse_response(data)
+
+    def test_parse_response_missing_finish_reason_with_text_returns_text(self):
+        data = {"candidates": [{"content": {"parts": [{"text": "some text"}]}}]}
+        self.assertEqual(GeminiPageReader.parse_response(data), "some text")
+
+    def test_parse_response_prompt_feedback_block_no_candidates_raises_page_read_error(self):
+        data = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
+        with self.assertRaises(PageReadError) as ctx:
+            GeminiPageReader.parse_response(data)
+        self.assertNotIsInstance(ctx.exception, NoTextFoundError)
+
+
+class FallbackLogOrderingTest(unittest.IsolatedAsyncioTestCase):
+    """Log success line must only appear after fallback.complete() returns successfully."""
+
+    async def test_fallback_fail_emits_no_success_log(self):
+        nemotron = StubNemotronClient(default_response=PageReadError("down"))
+        gemini = StubGeminiPageReader(PageReadError("also down"), model=GEMINI_MODEL)
+        with self.assertLogs("metalab.ai.page_reader", level="INFO") as cm:
+            with self.assertRaises(PageReadError):
+                await read_page_with_fallback(FRAME, primary=nemotron, fallback=gemini, budget_s=1)
+        success_logs = [m for m in cm.output if "page read by" in m and "(fallback:" in m]
+        self.assertEqual(success_logs, [])
+
+    async def test_fallback_success_emits_exactly_one_success_log(self):
+        nemotron = StubNemotronClient(default_response=PageReadError("down"))
+        gemini = StubGeminiPageReader("Text read by Gemini", model=GEMINI_MODEL)
+        with self.assertLogs("metalab.ai.page_reader", level="INFO") as cm:
+            await read_page_with_fallback(FRAME, primary=nemotron, fallback=gemini, budget_s=1)
+        success_logs = [m for m in cm.output if "page read by" in m and "(fallback:" in m]
+        self.assertEqual(len(success_logs), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

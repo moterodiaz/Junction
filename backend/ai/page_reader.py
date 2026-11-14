@@ -41,6 +41,9 @@ NO_TEXT_SIGNALS = {
     "EMPTY PAGE",
 }
 
+# finishReason values that allow text to be returned (missing / None counts as STOP-equivalent).
+_ACCEPT_FINISH = {None, "STOP", "FINISH_REASON_UNSPECIFIED"}
+
 
 class PageReadError(Exception):
     """Base exception for page reading failures."""
@@ -437,8 +440,21 @@ class GeminiPageReader:
     def parse_response(data: dict[str, Any]) -> str:
         candidates = data.get("candidates") or []
         if not candidates:
+            pf = (data.get("promptFeedback") or {}).get("blockReason")
+            if pf:
+                raise PageReadError(f"Gemini page reader blocked: {pf}.")
             raise PageReadError("Gemini page reader returned no candidates.")
-        parts = (candidates[0].get("content") or {}).get("parts") or []
+        candidate = candidates[0]
+        finish_reason = candidate.get("finishReason")
+        if finish_reason == "MAX_TOKENS":
+            raise PageReadError(
+                "Gemini page reader transcription was truncated (MAX_TOKENS); not returning partial text.",
+            )
+        if finish_reason not in _ACCEPT_FINISH:
+            raise PageReadError(
+                f"Gemini page reader stopped with finishReason {finish_reason!r}.",
+            )
+        parts = (candidate.get("content") or {}).get("parts") or []
         text = "".join(
             p.get("text", "") for p in parts
             if isinstance(p, dict) and not p.get("thought") and isinstance(p.get("text"), str)
@@ -522,5 +538,7 @@ async def read_page_with_fallback(
         reason = f"{type(exc).__name__}"
 
     fallback_model = getattr(fallback, "model", None) or DEFAULT_MODEL_READ_FALLBACK
+    log.info("page read fallback attempt: %s after %s %s", fallback_model, primary_model, reason)
+    text = await fallback.complete(b64, mime=mime)
     log.info("page read by %s (fallback: %s %s)", fallback_model, primary_model, reason)
-    return PageText(await fallback.complete(b64, mime=mime), fallback_model)
+    return PageText(text, fallback_model)
