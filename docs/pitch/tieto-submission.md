@@ -16,7 +16,7 @@ Most "AI code review" stories stop at "the bot left comments". We wanted to know
 
 **Where trust comes from.**
 - **Every change names its requirement and its owner.** Each PR cites a requirement id (77.2% of PRs do, and a check flags the rest) and has a named owner from CODEOWNERS **[E18]**.
-- **Every finding gets an answer.** An AI reviewer (Greptile) reviews each PR, and the fixer bot or the owner's agent answers each finding with "Fixed in <commit>" or "Not changing: <reason>". Of 131 threads, 93 were fixed and 1 was rejected with a reason **[E18]**. 33 were resolved in silence, but none of the 13 newest were **[E20]**.
+- **Every finding gets an answer.** An AI reviewer (Greptile) reviews each PR, and the fixer bot or the owner's agent answers each finding with "Fixed in <commit>" or "Not changing: <reason>". Of 131 threads, 93 were fixed and 1 was rejected with a reason **[E18]**. 33 were resolved in silence, and that count did not grow while 13 new threads arrived **[E20]**.
 - **A trust header on every PR** shows what the AI verified, what it refused to decide, and a sign-off box for the owner **[E19]**.
 
 **Trust is earned per area, and taken back.** When a defect reaches `main` past review, we record it as an "escape" against the PR that introduced it. A required `trust` check then blocks every PR in that area until the owner, or the lead, approves the exact head commit. In a live drill, a test escape turned a ready PR from mergeable to blocked within 15 seconds, and back again when it closed **[E19]**.

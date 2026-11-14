@@ -15,6 +15,6 @@ Script and shot list for Tieto's "Earned Trust in AI Code" track (#207, LANE-A5)
 ## Rules for the edit
 
 - **Re-run `tools/metrics` on the day and read out those numbers.** E18 is a snapshot from 19:56 UTC on 2026-11-14.
-- **The drill footage:** if the 18:20 drill wasn't screen-recorded, re-create it the same way. File a clearly marked `[DRILL]` escape, wait for `trust` to fail, then close it and remove the `escape` label. Announce it on the board first, as before **[E19]**.
+- **The drill footage:** if the 18:20 drill wasn't screen-recorded, re-create it the same way. File a clearly marked `[DRILL]` issue with the `escape` label and an `Introduced-by: #N` line in the body, where #N is a PR that touches the area of an open PR being filmed. Wait for `trust` to fail, then close it and remove the `escape` label. Announce it on the board first, as before **[E19]**.
 - **Don't claim time saved:** there is no baseline **[E19]**.
 - **Don't blur faces or names into the AI's work:** each PR shows its human owner, and that is the point.
