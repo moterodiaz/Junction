@@ -1082,6 +1082,7 @@ class PipelineModelDistributionTelemetryTest(unittest.IsolatedAsyncioTestCase):
 
         with mock.patch.dict(os.environ, {
             "GEMINI_API_KEY": "dummy",
+            "NVIDIA_API_KEY": "",
             "DYNAMIC_MODEL_ROUTING": "true",
             "MODEL_DECISION": "gemini-decision-1",
             "MODEL_IMAGE": "imagen-3.0-generate-002",
@@ -1093,7 +1094,7 @@ class PipelineModelDistributionTelemetryTest(unittest.IsolatedAsyncioTestCase):
 
         dist = latency.get_model_distribution()
         self.assertEqual(dist["total"], 5)
-        self.assertEqual(dist["fallback_total"], 1)  # read is stub because NVIDIA_API_KEY is unset
+        self.assertEqual(dist["fallback_total"], 1)  # read is stub because NVIDIA_API_KEY is ""
 
         # 1. Decision stage
         self.assertIn("decision", dist["stages"])
@@ -1211,6 +1212,71 @@ class PipelineModelDistributionTelemetryTest(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("SECRET", model_id)
                 self.assertNotIn("12345", model_id)
                 self.assertNotIn(" ", model_id)
+
+    async def test_read_gemini_fallback_model_counted_in_telemetry(self):
+        """#198 REQ-LAT-01: Gemini fallback read is counted as fallback_by_stage[read]."""
+        from ai.page_reader import PageText
+        invoke = Invoke(
+            type="invoke", request_id="r-read-fb", session_id="s-read-fb",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "NVIDIA_API_KEY": "dummy",
+        }), mock.patch.object(pipeline, "read_page",
+                              new_callable=mock.AsyncMock,
+                              return_value=PageText("x", "gemini-fallback-id")):
+            await pipeline.run(invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["fallback_by_stage"]["read"], 1)
+
+    async def test_clarify_turn_does_not_record_reason_in_telemetry(self):
+        """#198 REQ-LAT-01: clarify turns skip think(), so reason stage must not be recorded."""
+        invoke = Invoke(
+            type="invoke", request_id="r-clr-telem", session_id="s-clr-telem",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="what is this about?",
+        )
+        dec_result = DecisionResult(
+            action="clarify",
+            task_tier="fast",
+            recommended_model="gemini-3.5-flash-lite",
+            needs_image=True,
+            speak_only=False,
+            confidence=0.60,
+            fallback_used=False,
+            raw_utterance="what is this about?",
+            book_match_confidence=0.35,
+        )
+        set_decision_client(StubDecisionClient(default_result=dec_result))
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "DYNAMIC_MODEL_ROUTING": "true",
+        }), mock.patch.object(pipeline, "read_page",
+                              new_callable=mock.AsyncMock,
+                              return_value="xyzzy qwerty nonexistent"):
+            await pipeline.run(invoke, _noop_send_stage)
+
+        dist = latency.get_model_distribution()
+        self.assertEqual(dist["stages"].get("reason", {}), {})
+
+    async def test_unsafe_model_id_does_not_fail_the_card(self):
+        """#198 REQ-PRIV-02: unsafe model id in record_model_choice must not raise; card returned."""
+        invoke = Invoke(
+            type="invoke", request_id="r-unsafe-1", session_id="s-unsafe-1",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+        unsafe_model = "gemini model with spaces"  # spaces violate _SAFE_MODEL_RE
+        with mock.patch.dict(os.environ, {
+            "GEMINI_API_KEY": "dummy",
+            "MODEL_REASON": unsafe_model,
+        }), mock.patch.object(pipeline, "read_page",
+                              new_callable=mock.AsyncMock,
+                              return_value="page text"):
+            card = await pipeline.run(invoke, _noop_send_stage)
+
+        self.assertIsNotNone(card)
+        self.assertEqual(card.type, "card")
 
 
 if __name__ == "__main__":
