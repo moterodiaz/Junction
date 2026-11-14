@@ -1,0 +1,30 @@
+[
+  {
+    "id": "hamlet_act3_scene1",
+    "image": "hamlet_act3_scene1.jpg",
+    "text_file": "hamlet_act3_scene1.txt",
+    "has_text": true,
+    "expected_text": "To be, or not to be, that is the question:\nWhether 'tis nobler in the mind to suffer\nThe slings and arrows of outrageous fortune,\nOr to take arms against a sea of troubles\nAnd by opposing end them."
+  },
+  {
+    "id": "hamlet_act1_scene2",
+    "image": "hamlet_act1_scene2.jpg",
+    "text_file": "hamlet_act1_scene2.txt",
+    "has_text": true,
+    "expected_text": "O, that this too too solid flesh would melt,\nThaw and resolve itself into a dew!\nOr that the Everlasting had not fix'd\nHis canon 'gainst self-slaughter!"
+  },
+  {
+    "id": "blank_page",
+    "image": "blank_page.jpg",
+    "text_file": "blank_page.txt",
+    "has_text": false,
+    "expected_text": null
+  },
+  {
+    "id": "blurry_empty",
+    "image": "blurry_empty.jpg",
+    "text_file": "blurry_empty.txt",
+    "has_text": false,
+    "expected_text": null
+  }
+]

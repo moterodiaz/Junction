@@ -1,11 +1,22 @@
-"""Backend AI module for MetaLab (PRD section 2, section 4, section 8).
-
-Exports the public-domain play text loader and passage locator.
-Gracefully re-exports other sibling AI modules if present in the tree.
-"""
+"""Backend AI module: page reading, source text loading, book reasoning, and image generation."""
 
 from __future__ import annotations
 
+# Page reader (PRD Section 4, Issue #28)
+try:
+    from .page_reader import (
+        NemotronClient,
+        NoTextFoundError,
+        PageReadError,
+        PageReadTimeoutError,
+        StubNemotronClient,
+        extract_frame_data,
+        read_page,
+    )
+except ImportError:
+    pass
+
+# Source text loader (PRD Section 2, Section 8, Section 10 C4, Issue #29)
 from .source_loader import (
     Act,
     Line,
@@ -21,7 +32,27 @@ from .source_loader import (
     set_plays_directory,
 )
 
+# Optional sibling modules if present
+try:
+    from .reasoning import think  # type: ignore
+except ImportError:
+    pass
+
+try:
+    from .image import draw  # type: ignore
+except ImportError:
+    pass
+
 __all__ = [
+    # Page reading
+    "NemotronClient",
+    "NoTextFoundError",
+    "PageReadError",
+    "PageReadTimeoutError",
+    "StubNemotronClient",
+    "extract_frame_data",
+    "read_page",
+    # Source text loader
     "Act",
     "Line",
     "PassageMatch",
@@ -35,22 +66,3 @@ __all__ = [
     "locate_passage",
     "set_plays_directory",
 ]
-
-# Optional sibling module exports if present on branch
-try:
-    from .page_reader import read_page  # type: ignore
-    __all__.append("read_page")
-except ImportError:
-    pass
-
-try:
-    from .reasoning import think  # type: ignore
-    __all__.append("think")
-except ImportError:
-    pass
-
-try:
-    from .image import draw  # type: ignore
-    __all__.append("draw")
-except ImportError:
-    pass
