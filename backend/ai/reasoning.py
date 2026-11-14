@@ -17,6 +17,7 @@ Tests use a stub client without needing runtime API keys or network.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -38,13 +39,19 @@ def ground_passage(
     page_text: str,
     min_score: float = 0.6,
     play: Optional[str] = "Hamlet",
+    min_words: int = 5,
 ) -> Optional[PassageMatch]:
     """Locate recognized page text in structured play texts using find_passage.
 
     Returns PassageMatch if score >= min_score, else None.
     Millisecond local lookup.
+    Requires at least min_words distinct words to avoid matching common phrases.
     """
     if not page_text or not page_text.strip():
+        return None
+    # ponytail: word-count guard prevents single common words like "He." from matching
+    from .source_loader import normalize_text as _norm
+    if len(_norm(page_text).split()) < min_words:
         return None
     try:
         return find_passage(query=page_text, play=play, min_score=min_score)
@@ -382,15 +389,12 @@ def parse_reasoning_json(
                     "url": str(s.get("url", "")),
                 })
 
-    is_hamlet = book_title.strip().lower() == "hamlet"
     if passage_match is not None:
         if passage_match.source and not any(s.get("url") == passage_match.source.get("url") for s in sources):
             sources.insert(0, dict(passage_match.source))
-    elif not sources and is_hamlet:
-        sources = list(DEFAULT_HAMLET_SOURCES)
-    elif not is_hamlet:
-        # Explicit no-source-text path: do not silently fall back to DEFAULT_HAMLET_SOURCES
-        sources = [s for s in sources if "gutenberg.org/ebooks/1524" not in s.get("url", "")]
+    else:
+        # No verified passage: never emit unverified source citations
+        sources = []
 
     return {
         "title": title,
@@ -459,7 +463,8 @@ async def think(
         )
 
     active_client = client or get_reasoning_client()
-    try:
+    _sig = inspect.signature(active_client.generate_reasoning)
+    if "passage_match" in _sig.parameters:
         answer = await active_client.generate_reasoning(
             command=command,
             page_text=page_text,
@@ -467,7 +472,7 @@ async def think(
             model=model,
             passage_match=passage_match,
         )
-    except TypeError:
+    else:
         answer = await active_client.generate_reasoning(
             command=command,
             page_text=page_text,
@@ -492,13 +497,8 @@ async def think(
             ):
                 answer["sources"].insert(0, dict(passage_match.source))
     else:
-        # Explicit no-source-text path: do not silently fall back to DEFAULT_HAMLET_SOURCES if not Hamlet
-        is_hamlet = session.book.title.strip().lower() == "hamlet"
-        if not is_hamlet and "sources" in answer and isinstance(answer["sources"], list):
-            answer["sources"] = [
-                s for s in answer["sources"]
-                if not (isinstance(s, dict) and "gutenberg.org/ebooks/1524" in s.get("url", ""))
-            ]
+        # No verified passage: never emit unverified source citations
+        answer["sources"] = []
 
     # Update session location and record Q&A exchange
     book = answer.get("book")

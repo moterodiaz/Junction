@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import logging
 import os
 import re
@@ -140,7 +141,8 @@ async def think(
             "image_prompt": "A lone prince on a dark stage, bright outline on black",
             "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
         }
-    try:
+    _ai_sig = inspect.signature(_ai_think)
+    if "passage_match" in _ai_sig.parameters:
         return await _ai_think(
             command,
             page_text,
@@ -148,8 +150,7 @@ async def think(
             model=model,
             passage_match=passage_match,
         )
-    except TypeError:
-        return await _ai_think(command, page_text, session_id, model=model)
+    return await _ai_think(command, page_text, session_id, model=model)
 
 
 async def draw(image_prompt: str, session_id: str) -> str | None:
@@ -356,21 +357,13 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             "sources": [],
         }
     else:
-        try:
-            answer = await timed(think(
-                think_prompt,
-                page_text,
-                invoke.session_id,
-                model=_reason_model if _reason_model != "stub" else None,
-                passage_match=passage_match,
-            ))
-        except TypeError:
-            answer = await timed(think(
-                think_prompt,
-                page_text,
-                invoke.session_id,
-                model=_reason_model if _reason_model != "stub" else None,
-            ))
+        answer = await timed(think(
+            think_prompt,
+            page_text,
+            invoke.session_id,
+            model=_reason_model if _reason_model != "stub" else None,
+            passage_match=passage_match,
+        ))
 
     await send_stage("drawing")
     # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit

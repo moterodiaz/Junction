@@ -113,7 +113,10 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_sources_populated_and_reason_model_reported(self):
         """Live path: card.sources mirrors Gemini sources; models.reason is DEFAULT_MODEL_REASON."""
-        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+        # Use a real Hamlet passage so ground_passage verifies it and passage_match is not None;
+        # sources are only preserved when a passage is verified (Thread 2 fix).
+        hamlet_page = "To be, or not to be, that is the question"
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=hamlet_page):
             card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(len(card.sources), 1)
         self.assertEqual(card.sources[0].url, "https://www.gutenberg.org/ebooks/1524")
@@ -132,7 +135,8 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
             ],
         })
         set_reasoning_client(stub)
-        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+        hamlet_page = "To be, or not to be, that is the question"
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=hamlet_page):
             card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(len(card.sources), 2)
         self.assertEqual(card.sources[0].url, "https://example.com/good")
@@ -160,7 +164,8 @@ class PipelineRunLivePathTest(unittest.IsolatedAsyncioTestCase):
             ],
         })
         set_reasoning_client(stub)
-        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="page text"):
+        hamlet_page = "To be, or not to be, that is the question"
+        with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value=hamlet_page):
             card = await pipeline.run(self._invoke, _noop_send_stage)
         self.assertEqual(len(card.sources), 1)
         self.assertEqual(card.sources[0].url, "https://example.com/ok")

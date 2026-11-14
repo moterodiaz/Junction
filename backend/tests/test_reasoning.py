@@ -574,5 +574,68 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         parsed2 = parse_reasoning_json(json.dumps(payload_hallucinated), session)
         self.assertEqual(parsed2["sources"], [])
 
+    def test_ground_passage_rejects_short_text(self):
+        """Thread 1 (PRRT_kwDOVtZPtc63ic67): short text must not trigger a book change."""
+        self.assertIsNone(ground_passage("He."))
+        self.assertIsNone(ground_passage("To be."))
+        self.assertIsNone(ground_passage("not to be"))  # 3 words
+        # Four words still below threshold
+        self.assertIsNone(ground_passage("To be or not"))
+        # Long enough passage still matches
+        self.assertIsNotNone(ground_passage("To be, or not to be, that is the question"))
+
+    def test_no_passage_match_forces_empty_sources(self):
+        """Thread 2 (PRRT_kwDOVtZPtc63ic6_): absence of passage_match forces sources==[] regardless of title/URL."""
+        # parse_reasoning_json with Hamlet book, no passage_match, model returned Hamlet URL
+        session = BookSession("s-thread2-parse")
+        payload = {
+            "title": "Hamlet, Act 3, Scene 1",
+            "caption": "Test caption.",
+            "speech_text": "Test speech.",
+            "image_prompt": "Test prompt, black background (#000000).",
+            "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+            "sources": [{"title": "Hamlet", "url": "https://www.gutenberg.org/ebooks/1524"}],
+        }
+        parsed = parse_reasoning_json(json.dumps(payload), session, passage_match=None)
+        self.assertEqual(parsed["sources"], [], "parse_reasoning_json must return [] when passage_match is None")
+
+    async def test_no_passage_match_forces_empty_sources_in_think(self):
+        """Thread 2 (PRRT_kwDOVtZPtc63ic6_): think() forces sources==[] when passage_match stays None."""
+        # Text that won't match any play (non-Shakespeare gibberish with enough words)
+        page = "xyzzy quux corge thud wibble wobble flob nope unrecognized filler text completely."
+        answer = await think("What is happening?", page, "sess-thread2-think",
+                             client=StubGeminiClient())
+        self.assertEqual(answer["sources"], [], "think must return sources=[] when no passage_match")
+
+    async def test_compat_fallback_uses_inspect_not_retry(self):
+        """Thread 3 (PRRT_kwDOVtZPtc63ic7D): think() uses inspect.signature, not try/except TypeError."""
+        class LegacyClient:
+            """Client whose generate_reasoning lacks passage_match parameter."""
+            async def generate_reasoning(self, command, page_text, session, model=DEFAULT_MODEL_REASON):
+                return {
+                    "title": "Hamlet, Act 3, Scene 1",
+                    "caption": "Legacy caption.",
+                    "speech_text": "Legacy speech.",
+                    "image_prompt": "Legacy prompt, black background (#000000).",
+                    "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+                    "sources": [],
+                }
+
+        # LegacyClient has no passage_match param; think() must call it without that arg, no retry
+        answer = await think("What happens?", "xyzzy quux corge thud wibble nope unrecognized here.",
+                             "sess-thread3-legacy", client=LegacyClient())
+        self.assertIn("title", answer)
+
+        class RaisesInternalTypeError:
+            """Client that raises TypeError inside the call body (not from wrong signature)."""
+            async def generate_reasoning(self, command, page_text, session,
+                                         model=DEFAULT_MODEL_REASON, passage_match=None):
+                raise TypeError("internal bug not signature mismatch")
+
+        with self.assertRaises(TypeError):
+            await think("test", "some text with enough words here now ok.", "sess-thread3-err",
+                        client=RaisesInternalTypeError())
+
+
 if __name__ == "__main__":
     unittest.main()

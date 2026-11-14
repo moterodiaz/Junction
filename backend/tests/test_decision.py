@@ -305,7 +305,8 @@ class GeminiDecisionClientIntegrationTest(unittest.IsolatedAsyncioTestCase):
         mock_genai_client = mock.Mock()
         mock_genai_client.aio.decisions = mock_aio_decisions
 
-        with mock.patch("google.genai.Client", return_value=mock_genai_client):
+        with mock.patch("google.genai.Client", return_value=mock_genai_client), \
+             mock.patch.dict(os.environ, {"MODEL_REASON": "", "MODEL_REASON_FAST": "", "MODEL_REASON_DEEP": ""}):
             res = await client.decide(
                 utterance="explain the passage",
                 page_text="To be or not to be",
