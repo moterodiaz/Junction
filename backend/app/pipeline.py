@@ -38,8 +38,10 @@ class PipelineError(Exception):
         self.retryable = retryable
 
 
-# Longest any one stage may run before the phone gets a retryable model_timeout.
-STAGE_TIMEOUT_S = float(os.environ.get("STAGE_TIMEOUT_S", "60"))
+# Both limits sit inside the phone's deadlines (ios/.../Deadline.swift: 30 s without a server
+# message, 90 s overall), so the phone always receives model_timeout instead of hanging up.
+STAGE_TIMEOUT_S = float(os.environ.get("STAGE_TIMEOUT_S", "25"))
+REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "85"))
 
 # A timed-out transcription cannot be stopped, so cap how many can run (and hold audio) at once.
 _STT_WORKERS = 2
@@ -144,6 +146,15 @@ def _image_model() -> str:
 
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
+    """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
+    try:
+        async with asyncio.timeout(REQUEST_TIMEOUT_S):
+            return await _run(invoke, send_stage)
+    except TimeoutError as exc:
+        raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
+
+
+async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run every stage in order, reporting each one before it starts.
 
     An unknown command fails before the page is read, so no model call is wasted on it.
