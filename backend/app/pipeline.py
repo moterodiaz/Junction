@@ -570,13 +570,19 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
                      fallback=bool(models["image"] == "stub") and not clarify)
 
         if audio_url:
-            try:
-                from .config import get_settings
-                tts_model_name = get_settings().model_tts
-            except Exception:
-                tts_model_name = os.environ.get("MODEL_TTS", "")
-            tts_model = (tts_model_name or "").strip() or getattr(stt.speak, "DEFAULT_MODEL_TTS", "gemini-3.8-flash-tts")
-            _safe_record("tts", tts_model, fallback=False)
+            _speech_client = stt.speak.active_speech_client()
+            tts_model = getattr(_speech_client, "model", None)
+            if tts_model:
+                _configured = getattr(_speech_client, "_configured_model", tts_model)
+                _safe_record("tts", tts_model, fallback=bool(tts_model != _configured))
+            else:
+                try:
+                    from .config import get_settings
+                    tts_model_name = get_settings().model_tts
+                except Exception:
+                    tts_model_name = os.environ.get("MODEL_TTS", "")
+                tts_model = (tts_model_name or "").strip() or getattr(stt.speak, "DEFAULT_MODEL_TTS", "gemini-3.8-flash-tts")
+                _safe_record("tts", tts_model, fallback=False)
         else:
             _safe_record("tts", "stub", fallback=True)
 
