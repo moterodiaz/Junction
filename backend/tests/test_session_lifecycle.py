@@ -83,14 +83,40 @@ class SessionLifecycleTest(unittest.TestCase):
         self.assertIsNotNone(default_session_store.get("busy"))
 
     def test_an_idle_session_expires_on_the_next_request_and_starts_fresh(self):
-        self.seed("ended")
-        pipeline._touch("ended")
+        # Drive an actual request through run() so that removing sweep_expired() from run()
+        # would cause this test to fail (not just a direct sweep_expired() call).
+        from app.messages import Card, Book, Invoke, Frame
+
+        clip, img_id = self.seed("stale")
+        # Age the session so it looks idle to the next run() call
+        pipeline._SESSION_SEEN["stale"] = time.monotonic() - 100
+
+        dummy_card = Card(
+            request_id="req1", title="T", caption="C", image_url=None, speech_text="S",
+            book=Book(title="Hamlet", author="William Shakespeare", location="Act 1"),
+            sources=[], models={"read": "stub", "reason": "stub", "image": "stub"},
+        )
+        invoke = Invoke(
+            type="invoke", request_id="req1", session_id="stale",
+            frame=Frame(mime="image/jpeg", b64="AAAA"), text="explain",
+        )
+
+        async def fake_run(*_a, **_kw):
+            return dummy_card
+
+        async def noop_stage(_stage):
+            pass
+
         with mock.patch.object(pipeline, "SESSION_IDLE_TTL_S", 60):
-            expired = pipeline.sweep_expired(now=time.monotonic() + 61)
-        self.assertIn("ended", expired)
-        fresh = default_session_store.get_or_create("ended")
+            with mock.patch.object(pipeline, "_run", fake_run):
+                asyncio.run(pipeline.run(invoke, noop_stage))
+
+        # run() swept the stale session, so its old history and media are gone
+        fresh = default_session_store.get_or_create("stale")
         self.assertEqual(fresh.history, [])
-        self.assertEqual(fresh.book.title, "Hamlet")  # the default book, not the abandoned Macbeth
+        self.assertEqual(fresh.book.title, "Hamlet")  # default book, not the abandoned Macbeth
+        self.assertIsNone(speak.get(clip))
+        self.assertIsNone(image.get_image(img_id))
 
     def test_a_recent_session_is_kept(self):
         self.seed("active")

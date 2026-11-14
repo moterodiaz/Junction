@@ -36,6 +36,7 @@ clock = time.monotonic
 # clip id -> (session id, wav, stored at); oldest first
 _clips: OrderedDict[str, tuple[Optional[str], bytes, float]] = OrderedDict()
 _epochs: dict[str, int] = {}  # bumped when a session ends; speech started before is dropped
+_MAX_EPOCH_ENTRIES = 1000  # ponytail: replace with TTL-based pruning if sessions exceed 1000 at peak
 _lock = threading.Lock()  # the sweeper thread and the event loop both touch _clips
 _sweeper: Optional[threading.Thread] = None
 _sweep_now = threading.Event()  # wakes the sweeper early (tests)
@@ -167,6 +168,10 @@ def cleanup_session(session_id: str) -> int:
     _expire()
     with _lock:
         _epochs[session_id] = _epochs.get(session_id, 0) + 1
+        if len(_epochs) > _MAX_EPOCH_ENTRIES:
+            # Drop the oldest session so the dict stays bounded; that session ended at least
+            # _MAX_EPOCH_ENTRIES cleanups ago, so any in-flight speak() for it has long resolved.
+            _epochs.pop(next(iter(_epochs)))
         ids = [clip_id for clip_id, (sid, _, _) in _clips.items() if sid == session_id]
         for clip_id in ids:
             del _clips[clip_id]

@@ -349,6 +349,10 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
                     # an answer the student did not see.
                     _restore_session_state(session, before)
                     raise
+                finally:
+                    # Refresh last-seen after the request so time spent answering is not counted as
+                    # idle time (a 65 s answer with SESSION_IDLE_TTL_S=60 must not look expired).
+                    _touch(invoke.session_id)
     except TimeoutError as exc:
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
 
