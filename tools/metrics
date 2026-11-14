@@ -113,11 +113,16 @@ def introduced_by(body):
     """PR numbers named on `Introduced-by:` lines of an escape issue."""
     return sorted({int(n) for line in INTRODUCED_BY.findall(body or "") for n in re.findall(r"#(\d+)", line)})
 
-def escape_issues():
-    out = gh("issue", "list", "-R", REPO, "--label", "escape", "--state", "all", "--limit", "500",
+def escape_issues(state="all", limit=500):
+    out = gh("issue", "list", "-R", REPO, "--label", "escape", "--state", state, "--limit", str(limit),
              "--json", "number,state,body")
+    issues = json.loads(out)
+    if len(issues) >= limit:
+        # A full page may hide older escapes; the gate must not pass on an incomplete read.
+        print(f"metrics: escape list hit the {limit}-issue limit and may be incomplete", file=sys.stderr)
+        sys.exit(1)
     return [{"number": i["number"], "open": i["state"] == "OPEN", "prs": introduced_by(i["body"])}
-            for i in json.loads(out)]
+            for i in issues]
 
 def withdrawn_areas(areas, open_escapes_by_area):
     """Areas of this PR whose trust is withdrawn, with the open escapes that withdrew it."""
@@ -126,7 +131,7 @@ def withdrawn_areas(areas, open_escapes_by_area):
 def open_escapes_by_area():
     """area -> open escape issues, from the files of each open escape's introducing PRs."""
     out = {}
-    for e in escape_issues():
+    for e in escape_issues("open", 5000):
         if not e["open"]:
             continue
         for n in e["prs"]:
