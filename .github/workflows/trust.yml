@@ -1,0 +1,67 @@
+name: trust
+
+# Posts the commit status `trust` on each open PR's head (REQ-PROC-02, #186). It fails while the PR touches an
+# area with an open `escape` issue and neither that area's owner nor the lead has approved the head commit
+# (tools/metrics --gate). Required in the main-protect ruleset, it holds auto-merge, claude-fix's included.
+# The job is not named `trust`: a job's own check run would carry that name and pass even when the status fails.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  # Opening, closing or editing an escape changes trust for every open PR in its area.
+  issues:
+    types: [opened, edited, closed, reopened, labeled, unlabeled]
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to evaluate (empty = every open PR)
+        required: false
+
+jobs:
+  evaluate:
+    # Fork PRs get a read-only token and cannot post a status; issue events matter only for escapes.
+    if: >-
+      (github.event_name != 'pull_request' && github.event_name != 'pull_request_review' && github.event_name != 'issues') ||
+      (github.event_name == 'issues' && (contains(github.event.issue.labels.*.name, 'escape') || github.event.label.name == 'escape')) ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      METRICS_REPO: ${{ github.repository }}
+      EVENT_PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      # The default branch, not the PR head: the script runs with a write token.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Post trust status
+        run: |
+          set -euo pipefail
+          if [ -n "$EVENT_PR" ]; then
+            prs="$EVENT_PR"
+          else
+            prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number --jq '.[].number')"
+          fi
+          for pr in $prs; do
+            [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $pr"; exit 1; }
+            sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)"
+            code=0; out="$(tools/metrics --gate "$pr" 2>&1)" || code=$?
+            case "$code" in
+              0) state=success ;;
+              3) state=failure ;;
+              *) state=error; out="could not evaluate, so held: $(tail -n1 <<<"$out")" ;;  # fails closed
+            esac
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$sha" -f state="$state" -f context=trust \
+              -f description="${out:0:140}" -f target_url="$RUN_URL" >/dev/null
+            echo "#$pr ($sha): $state: $out"
+          done

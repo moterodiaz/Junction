@@ -44,3 +44,7 @@ jobs:
           for d in ios backend contracts; do
             if [ -x "$d/test.sh" ]; then (cd "$d" && ./test.sh); fi
           done
+      - name: Trust gate tests
+        run: |
+          tools/metrics --selftest
+          tools/tests/trust_gate.test.sh
