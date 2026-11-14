@@ -83,8 +83,8 @@ See [`backend/README.md`](backend/README.md) (Modal).
 ## Privacy
 
 - One frame and one audio clip per invocation, only after the user asks.
-- The frame and the audio are processed in memory and dropped once the card is built. They are never written to disk.
-- The generated image is kept for the session so the lens can load it, then deleted.
+- The backend processes the frame and audio in memory and drops them once the card is built, without writing them to disk. On the phone, enabling "Keep a sample frame for the reading test" saves captured photos in the app's Documents folder.
+- Generated images stay in backend memory so the lens can load them. Closing the connection or starting a new book does not delete them. Later image requests remove images for sessions idle longer than `IMAGE_SESSION_TTL_SECONDS` (one hour by default).
 - The book session holds text only: book, position, earlier questions and answers.
 - If a frame has no readable text, MetaLab says so and discards it.
 
