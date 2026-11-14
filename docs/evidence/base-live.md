@@ -2,9 +2,58 @@
 
 Requirements: REQ-INT-01, REQ-BASE-01. PRD §§7, 12.2, 14.1.
 
-**Not yet validated.** The live endpoint returns cards for typed and spoken
-requests, but the strict success check fails on grounding and spoken output (see
-"Live run, 2026-11-14"). The iOS round trip on hardware has not run.
+**Not yet validated.** After the v5 redeploy (2026-11-14, `5d1a6ee`), the strict
+success check passes on stages, the illustration, book grounding and the source
+citation, for both typed and spoken requests. It still fails on spoken output:
+`audio_url` is null because Gemini speech synthesis returns a client error (see
+"Live rerun after redeploy"). An unknown book gets no invented citation, but the card
+names it as Hamlet. The iOS round trip on hardware has not run.
+
+## Live rerun after redeploy, 2026-11-14 (authorized by the lead, no glasses)
+
+| Item | Value |
+|---|---|
+| Deployment | Modal app `metalab`, version **v5**, commit **`5d1a6ee`** (origin/main), deployed by `oterodiazmateo1` with `modal deploy backend/app/modal_app.py`. Previous: v4 at `38cd91a` |
+| Endpoint | `wss://junction26-vision--metalab-web.us-east.modal.run/ws` (`/health`: HTTP 200 `{"ok":true}` in 9.1 s, cold) |
+| Test-client revision | `5d1a6ee`, `contracts/test.sh` on macOS (darwin 25.5.0) |
+| Page input | `backend/ai/sample_frames/hamlet_act1_scene2.jpg`, as in the first run |
+| Spoken input | "Explain this page." synthesized with macOS `say` to 16 kHz 16-bit WAV. No human voice |
+| Expected grounding (independent) | `Hamlet` / `William Shakespeare` / `Act 1, Scene 2, lines 135-138`. The four sample lines ("O, that this too too solid flesh would melt" … "His canon 'gainst self-slaughter") are lines 135–138 of Act 1, Scene 2 in `backend/ai/data/plays/hamlet.json`. I found them by reading that file directly, not through the matcher. Source `Hamlet, public-domain text` / `https://www.gutenberg.org/ebooks/1524` |
+| Unknown-book input | A rendered page of the *Moby-Dick* opening ("Call me Ishmael…"), 1280×1280 JPEG |
+
+Inputs lived only in `/tmp` outside Git. No response text, transcript or media is kept here.
+
+### Commands and outcomes
+
+1. `env WS_URL=<endpoint> WS_SUCCESS_CASES=/tmp/<cases>.json WS_TIMEOUT_S=300 PIP_NO_INDEX=1 PIP_DRY_RUN=1 contracts/test.sh`
+   ran 40 tests in 77.4 s, with **2 failures**. Both are in the strict live success check, and each fails on one thing only:
+   - Strict typed case: `reading → thinking → drawing`, then one card. Book, location and
+     source match exactly, and `image_url` is HTTPS. **Failed** only on `audio_url` null.
+     Server latency: reading 1.4 s, thinking 5.0 s, drawing 13.9 s, total 20.2 s.
+   - Strict audio case: `transcribing → reading → thinking → drawing`, then one card, with
+     the same exact grounding. **Failed** only on `audio_url` null. Server latency:
+     transcribing 2.7 s, reading 1.2 s, thinking 5.5 s, drawing 14.0 s, total 23.4 s.
+2. Server logs for both requests show `speech synthesis failed, the phone will use its
+   own voice: ClientError` (`backend/stt/speak.py`, model default
+   `gemini-3.8-flash-tts`). The log records only the exception type, so the HTTP status
+   and reason are not known yet.
+3. Unknown-book typed probe (metadata only), in 24.2 s: stages `reading → thinking →
+   drawing`, one card. `sources` = `[]` and `location` = `No source text`, so there is
+   no invented citation (#218). But `book.title` = `Hamlet`, `author` =
+   `William Shakespeare`, and the card title = `Hamlet`. A new session starts with
+   Hamlet as its book (`backend/ai/session.py`), and nothing on this path replaces it.
+   `models` = read `nemotron-3.5-super-vl`, reason `gemini-4-hydrogen`, image
+   `gemini-nano-banana-2.1`.
+
+### Open blockers after the rerun
+
+- **Spoken output:** the Gemini TTS call fails with a client error on the deployed
+  build. The next step is logging the status and reason, without content, and then
+  fixing the request or model (`backend/stt/`, @Ahm3d-KA; TTS lane #185, @Marcus228).
+- **Unknown-book label:** the no-source path keeps the session's default Hamlet title
+  for a page from another book (`backend/ai/`, @Marcus228).
+- **Not checked:** audible playback, display of the illustration on the glasses, and the
+  iOS round trip on hardware with @maksymmatviievskyi.
 
 ## Live run, 2026-11-14 (authorized by the lead, no glasses)
 
@@ -59,17 +108,17 @@ text, transcript or media is kept here.
 
 ## Required evidence before closing #81
 
-- [ ] Record deployment revision (the test-client revision is recorded above).
+- [x] Record deployment revision: v5, `5d1a6ee` (see "Live rerun after redeploy").
 - [x] Obtain permission for live endpoint/model usage and cleared test inputs.
 - [x] Run `contracts/test.sh` locally with no live environment variables.
 - [x] Run schema-only remote conformance with `WS_URL`.
 - [x] Run the strict typed/audio cases with both `WS_URL` and `WS_SUCCESS_CASES`.
-  They ran and **failed** (above). Repeat after #129, #185 and a redeploy.
+  The first run failed on grounding and audio. After the v5 redeploy, they fail only on `audio_url`.
 - [ ] Verify generated illustration retrieval/display and audible answer playback.
   Retrieval passed. Display and playback were not checked.
 - [ ] Record actual latency, model attribution, Hamlet citations and unknown-book
-  no-source behavior. Latency and attribution are recorded above. Citations are wrong
-  today, and unknown-book behaviour is not checked.
+  no-source behavior. Latency, attribution and exact Hamlet citations are recorded for v5.
+  The unknown-book card has no citation, but it is mislabelled as Hamlet.
 - [ ] Obtain Maksym's real iOS typed/audio round-trip evidence, including device,
   SDK/client revision, status progression, resulting card and recovery limitations.
 - [x] Record failures and missing checks, not only successful outcomes.
