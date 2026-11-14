@@ -903,5 +903,34 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Act 1, Scene 5, line 40", user_content_env)
 
 
+    async def test_asks_future_spoiler_whole_word_matching(self):
+        """REQ-VOICE-02: spoiler keywords match whole words only (\\b boundaries)."""
+        from ai.reasoning import _SPOILER_RE
+
+        # True-positives: "die" and inflections as whole words
+        for phrase in ["does hamlet die?", "hamlet dies", "hamlet died", "hamlet dying"]:
+            self.assertIsNotNone(_SPOILER_RE.search(phrase), f"expected match: {phrase!r}")
+
+        # False-positive guard: "die" embedded inside "soldier", "end" in "friend"/"attend"/"pretend"
+        for phrase in ["explain what the soldier said", "friend", "attend", "pretend"]:
+            self.assertIsNone(_SPOILER_RE.search(phrase), f"unexpected match: {phrase!r}")
+
+        # Integration: "Does Hamlet die?" still routes to Act 5 stub branch (guard off)
+        stub = StubGeminiClient()
+        store = SessionStore()
+        ans_die = await think(
+            "Does Hamlet die?", "passage", "s-spoiler-wbdy-die",
+            client=stub, session_store=store, spoiler_guard=False,
+        )
+        self.assertIn("Act 5", ans_die["caption"])
+
+        # Integration: command containing "soldier" (with embedded "die") does NOT trigger spoiler
+        ans_soldier = await think(
+            "explain what the soldier said", "passage", "s-spoiler-wbdy-soldier",
+            client=stub, session_store=store, spoiler_guard=False,
+        )
+        self.assertNotIn("Act 5", ans_soldier["caption"])
+
+
 if __name__ == "__main__":
     unittest.main()

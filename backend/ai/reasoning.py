@@ -80,6 +80,13 @@ DEFAULT_HAMLET_SOURCES = [
     }
 ]
 
+# ponytail: whole-word spoiler keywords; inflections added for die/kill/end only
+_SPOILER_RE = re.compile(
+    r"\b(?:die[sd]?|dying|death|kill(?:s|ed|ing)?|fate|end(?:s|ed|ing)?|"
+    r"spoiler|what\s+happens\s+to|act\s+[45]|act\s+iv|act\s+v)\b",
+    re.IGNORECASE,
+)
+
 
 def is_spoiler_guard_enabled(spoiler_guard: bool = False) -> bool:
     """Check if spoiler guard is enabled via parameter or environment variable."""
@@ -298,12 +305,7 @@ class StubGeminiClient:
                 location = m.group(1).title()
 
         cmd_lower = command.lower()
-        asks_future_spoiler = any(
-            w in cmd_lower for w in [
-                "die", "death", "kill", "fate", "end", "ending", "spoiler",
-                "what happens to", "act 4", "act 5", "act iv", "act v",
-            ]
-        )
+        asks_future_spoiler = bool(_SPOILER_RE.search(cmd_lower))
 
         q_count = len(session.history) + 1
         if is_hamlet:
