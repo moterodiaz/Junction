@@ -60,6 +60,8 @@ class StoredImage:
 _lock = threading.Lock()
 _images: dict[str, StoredImage] = {}
 _session_images: dict[str, set[str]] = defaultdict(set)
+# Bumped on cleanup so in-flight generations for an ended session can be discarded
+_session_epochs: dict[str, int] = defaultdict(int)
 
 # Billing state cache: None = not checked yet, True/False = cached check result
 _billing_checked: bool = False
@@ -110,6 +112,7 @@ def delete_image(image_id: str) -> bool:
 def cleanup_session(session_id: str) -> int:
     """Delete all images associated with session_id. Returns number of deleted images."""
     with _lock:
+        _session_epochs[session_id] += 1
         ids_to_delete = list(_session_images.pop(session_id, set()))
         count = 0
         for img_id in ids_to_delete:
@@ -234,7 +237,8 @@ class GeminiImageClient:
             raise RuntimeError("Gemini image response contained no image data")
         except Exception as exc:
             msg = str(exc).lower()
-            if any(term in msg for term in ("billing", "quota", "payment", "tier", "permission")):
+            # "quota" / rate limits are transient: let them surface as ordinary errors
+            if any(term in msg for term in ("billing", "payment", "tier", "permission")):
                 raise BillingNotEnabledError(str(exc)) from exc
             raise
 
@@ -335,6 +339,8 @@ async def draw(
         model_name = os.environ.get("MODEL_IMAGE", DEFAULT_MODEL_IMAGE)
 
     # 4. Generate image
+    with _lock:
+        start_epoch = _session_epochs[session_id] if session_id else 0
     try:
         image_bytes = await active_client.generate_image(
             model=model_name,
@@ -362,6 +368,13 @@ async def draw(
         return None
 
     # 5. Store image in memory for session lifecycle
+    if session_id:
+        with _lock:
+            ended = _session_epochs[session_id] != start_epoch
+        if ended:
+            log.info("Discarding generated image: session ended during generation.")
+            return None
+
     image_id = uuid.uuid4().hex[:16]
     store_image(
         image_id=image_id,
