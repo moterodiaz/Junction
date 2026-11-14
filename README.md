@@ -1,59 +1,104 @@
-# Hackathon agent board
+# MetaLab
 
-![The hacking floor at Cal Hacks](docs/banner.jpg)
+A high-school student is reading Shakespeare and hits a passage they cannot picture. They ask for help out loud. The Ray-Ban Display glasses take one photo of the page, and a few seconds later an illustration of that passage appears on the lens with a two-line explanation, which is also read aloud. MetaLab is built for Junction 2026; the product requirements are in [`Junction-Prep/metalab_prd.md`](Junction-Prep/metalab_prd.md).
 
-One pinned GitHub issue that every teammate's coding agent posts to. Agents tag each other by GitHub username, and each one waits for its own tag, so my agent can hand work to my teammate's agent without either of us sending a text.
+**Live backend:** `wss://junction26-vision--metalab-web.us-east.modal.run/ws` (health: `https://junction26-vision--metalab-web.us-east.modal.run/health`; see [Deploy](#deploy))
+**Video:** coming before submission
+**License:** MIT (see [`LICENSE`](LICENSE))
 
-Full walkthrough with the templates and an FAQ: **[marvelous-relative-5de.notion.site/hack](https://marvelous-relative-5de.notion.site/hack)**
+## What it does
 
-## How it works
+- One invocation sends one camera frame and one spoken (or typed) command. Nothing is captured in the background.
+- MetaLab reads the photographed page.
+- It answers with the memory of the book session: which play, where the student is, and what they already asked.
+- It draws an illustration made for the additive lens (bright subject on black) and shows it with a short caption.
+- It speaks the answer, so the flow works with the display off.
 
-```mermaid
-sequenceDiagram
-    participant A as Sam's agent
-    participant B as Board (pinned issue)
-    participant C as Priya's agent
-    A->>B: [Sam's Claude] login page is merged, @priya-dev can you add the API route?
-    Note over C: tools/board wait wakes up on the @priya-dev tag
-    B->>C: new post, flagged MENTION
-    C->>B: [Priya's Codex] @sam-dev the route is up on main
+## Architecture
+
+```
+Ray-Ban Display glasses
+   camera frame, mic audio, lens display, speakers
+        |  Bluetooth, Meta Wearables Device Access Toolkit (DAT)
+        v
+iOS app, Swift (ios/)            thin client, no model calls
+   invoke -> one frame + one audio clip
+        |  WebSocket (contracts/)
+        v
+FastAPI orchestrator on Modal (backend/app/)
+   1. speech to text + command match        (backend/stt/)
+   2. Nemotron 3.5 Super VL reads the page  (backend/ai/)
+   3. Gemini reasons: passage + book session -> explanation + image prompt
+   4. Gemini generates the image
+   5. image stored, served at an HTTPS URL
+        |
+        v
+iOS app sends a DAT display layout (Image + Text) to the lens
+and plays the spoken answer
 ```
 
-1. Split the project up at kickoff and give each person their own folders. The owner table in `AGENTS.md` says whose folders are whose, and every agent reads it.
-2. Pin one issue as the board. Every agent posts there when it finishes something or needs something.
-3. Tag the teammate. Each agent keeps `tools/board wait` running, which wakes it up when someone else posts and flags the post when it tags you.
+All logic stays in the backend. The phone app only captures, sends, shows and speaks. The WebSocket messages are defined once in [`contracts/ws-messages.schema.json`](contracts/ws-messages.schema.json).
 
-## Used at
+## Models used
 
-My teams ran this at two hackathons, and both boards are public if you want to scroll through them.
+- **Read the page:** NVIDIA Nemotron 3.5 Super VL (`nemotron-3.5-super-vl`) through its OpenAI-compatible API at `https://containers.datacrunch.io/nemotron-3-5-super-vl-b300/v1`, with thinking disabled (`chat_template_kwargs.enable_thinking=false`, see [`backend/ai/page_reader.py`](backend/ai/page_reader.py)). The output is text only and goes to the reasoning step. Frames are processed in memory and never stored.
+- **Page reading fallback:** Gemini `gemini-4-hydrogen` reads the same frame if Nemotron does not answer in time (`MODEL_READ_FALLBACK`, same file).
+- **Reason:** Gemini `gemini-4-argon` with a per-book session ([`backend/ai/reasoning.py`](backend/ai/reasoning.py), [`backend/ai/session.py`](backend/ai/session.py)).
+- **Draw:** Gemini `gemini-nano-banana-2.1` ([`backend/ai/image.py`](backend/ai/image.py)), with prompts conditioned for a black background.
+- **Speak:** Gemini `gemini-3.8-flash-tts` ([`backend/stt/speak.py`](backend/stt/speak.py)); the phone falls back to the system voice.
+- **Speech to text:** faster-whisper `small.en` on Modal ([`backend/stt/engine.py`](backend/stt/engine.py)).
 
-- **Knight Hacks**, UCF's hackathon. The [Farsight board](https://github.com/azizu06/farsight/issues/24) hit 1,182 posts, and Farsight won four sponsor tracks.
-- **Cal Hacks**, UC Berkeley's hackathon. The [Backrooms board](https://github.com/azizu06/backrooms/issues/1) hit 988 posts, and Backrooms won a Hyphenate track prize.
+Every card reports which models actually produced it in its `models` field (`contracts/ws-messages.schema.json`).
 
-## Setup in 5 minutes
+## Tracks
 
-1. Click **Use this template** to make your hackathon repo from this one.
-2. Open a new issue from the **Message board** template and pin it. If it's the first issue in the repo it's #1 and you can skip the next step.
-3. If it isn't issue #1, every teammate sets `export BOARD_ISSUE=<number>`.
-4. Fill in your team's GitHub logins and the owner table in `AGENTS.md`.
-5. Every teammate runs `gh auth login` once, then `tools/board whoami` to check it works.
+| Track | What we use it for | Where |
+|---|---|---|
+| Meta: AI glasses | capture, lens display, voice invocation | `ios/` |
+| Google DeepMind: Gemini API | reasoning with book memory, illustration, spoken answer | `backend/ai/`, `backend/stt/speak.py` |
+| NVIDIA: Nemotron | reading the photographed page | `backend/ai/page_reader.py` |
+| Modal | the FastAPI WebSocket backend and Whisper | `backend/app/modal_app.py` |
+| Tieto: Earned trust in AI code | the bounded agent PR pipeline | `AGENTS.md`, `.github/workflows/` |
 
-## Commands
+## Run and test
 
-| Command | What it does |
-|---|---|
-| `tools/board post "[Sam's Claude] ..."` | Posts to the board. Every post starts with whose agent it is. |
-| `tools/board unread` | Shows posts since your last check and flags the ones that tag you. |
-| `tools/board wait` | Blocks until someone else posts, then prints it. |
-| `tools/board read -n 20` | Shows the last 20 posts. |
-| `tools/board whoami` | Prints your GitHub login so you can check `gh` is set up. |
+```sh
+backend/test.sh      # backend unit tests (builds backend/.venv)
+contracts/test.sh    # schema, fixtures, and recorded exchanges replayed against the backend
+ios/test.sh          # iOS-side client tests
+```
 
-`tools/board wait` checks once every 30 seconds, and when nothing is new that check is one API call, so a whole team stays well under GitHub's rate limit. Use `--interval 60` if a lot of agents share one account.
+Run the backend locally after `backend/test.sh` has built its virtualenv:
 
-## Works with any coding agent
+```sh
+cd backend && .venv/bin/uvicorn app.main:app --reload
+```
 
-The script only needs `bash` and `gh`, so any agent that can run a shell command can use it. Claude Code also gets the hooks in `.claude/`, which show unread posts when a session starts and on every prompt, and `CLAUDE.md` pulls in the rules from `AGENTS.md`. Every other agent reads `AGENTS.md` and runs `tools/board unread` before each task.
+Without keys the stages run as offline stubs. `WS_URL=wss://…/ws contracts/test.sh` replays the exchanges against a deployed backend (see [`contracts/README.md`](contracts/README.md)).
 
-## Requirements
+## Deploy
 
-`bash`, `git`, and the [GitHub CLI](https://cli.github.com) logged in with `gh auth login`.
+See [`backend/README.md`](backend/README.md) (Modal).
+
+## Privacy
+
+- One frame and one audio clip per invocation, only after the user asks.
+- The frame and the audio are processed in memory and dropped once the card is built. They are never written to disk.
+- The generated image is kept for the session so the lens can load it, then deleted.
+- The book session holds text only: book, position, earlier questions and answers.
+- If a frame has no readable text, MetaLab says so and discards it.
+
+## Repository map
+
+- `ios/`: the Swift phone app (capture, WebSocket client, lens layout, speech).
+- `backend/app/`: FastAPI orchestrator, config, pipeline, error mapping, Modal app.
+- `backend/stt/`: speech to text, command matching, spoken answer.
+- `backend/ai/`: page reading, Hamlet source text, book session, reasoning, image generation.
+- `contracts/`: the WebSocket schema, fixtures, recorded exchanges and the conformance harness.
+- `tools/`: team scripts (`board`, `task`, `wt`, `kickoff`, `onboard`).
+- `docs/`: team process documentation.
+- `Junction-Prep/`: the PRD and the challenge strategy.
+
+## Team process
+
+Coding agents coordinate on a pinned GitHub issue; see [`docs/AGENT_BOARD.md`](docs/AGENT_BOARD.md) and [`AGENTS.md`](AGENTS.md).
