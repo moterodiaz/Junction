@@ -298,6 +298,18 @@
         {"op":"invoke","session":"s","request":"a","at_ms":2},
         {"op":"tick","at_ms":1}
       ]
+    },
+    {
+      "name": "fresh-connection-may-reuse-prior-connection-request-id",
+      "events": [
+        {"op":"invoke","session":"s1","request":"r1"},
+        {"op":"complete","request":"r1","out":["card:r1"]},
+        {"op":"disconnect"},
+        {"op":"connect","context":"owner-b"},
+        {"op":"invoke","session":"s2","request":"r1"},
+        {"op":"complete","request":"r1","out":["card:r1"]},
+        {"op":"invoke","session":"s2","request":"r1","out":["duplicate_request:r1"]}
+      ]
     }
   ]
 }

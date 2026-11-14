@@ -27,9 +27,16 @@ def wire_allowed(message: dict, direction: str, negotiated: bool) -> bool:
     types = CLIENT_TYPES if direction == "client" else SERVER_TYPES
     if message.get("type") not in types:
         return False
-    return LEGACY_VALIDATOR.is_valid(message) or (
+    if not (LEGACY_VALIDATOR.is_valid(message) or (
         negotiated and LIFECYCLE_VALIDATOR.is_valid(message)
-    )
+    )):
+        return False
+    if negotiated and message.get("type") == "invoke":
+        for field in ("request_id", "session_id"):
+            val = message.get(field, "")
+            if not (isinstance(val, str) and val.strip()):
+                return False
+    return True
 
 
 def handshake(case: dict) -> tuple[bool, bool, int | None]:
@@ -64,6 +71,7 @@ class ProposedLifecycleModel:
         self.sessions: dict[str, dict] = {}
         self.requests: dict[str, dict] = {}
         self.end_ids: dict[str, str] = {}
+        self.conn_ids: set[str] = set()
 
     def session(self, sid: str) -> dict:
         return self.sessions.setdefault(sid, {
@@ -110,12 +118,13 @@ class ProposedLifecycleModel:
             session = self.session(sid)
             if session["deleted"] or session["owner"] != self.context:
                 out.append(f"session_unavailable:{rid}")
-            elif rid in self.requests or rid in self.end_ids:
+            elif rid in self.conn_ids:
                 out.append(f"duplicate_request:{rid}")
             else:
                 session["last"] = now
                 session["staged"].append(rid)
                 self.requests[rid] = {"session": sid, "result": "pending"}
+                self.conn_ids.add(rid)
         elif op == "cancel":
             assert self.connected, "cancel on closed socket"
             request = self.requests.get(rid)
@@ -151,10 +160,11 @@ class ProposedLifecycleModel:
                 session = self.session(sid)
             if session["owner"] != self.context:
                 out.append(f"session_unavailable:{rid}")
-            elif rid in self.requests or (rid in self.end_ids and self.end_ids[rid] != sid):
+            elif rid in self.conn_ids and not (rid in self.end_ids and self.end_ids[rid] == sid):
                 out.append(f"duplicate_request:{rid}")
             else:
                 self.end_ids[rid] = sid
+                self.conn_ids.add(rid)
                 if not session["deleted"]:
                     self.delete(sid, out)
                 if session["clean"]:
@@ -179,6 +189,7 @@ class ProposedLifecycleModel:
             assert not self.connected
             self.connected = True
             self.context = event.get("context", self.context)
+            self.conn_ids = set()
         elif op == "resume":
             assert self.connected
             allowed = session is not None and not session["deleted"] and session["owner"] == self.context
@@ -235,6 +246,14 @@ class ProposedLifecycleSchemaTests(unittest.TestCase):
                 with self.subTest(fixture=path.name, v2=negotiated):
                     self.assertTrue(wire_allowed(message, direction, negotiated))
                     self.assertFalse(LIFECYCLE_VALIDATOR.is_valid(message))
+
+    def test_v2_invoke_rejects_whitespace_ids(self) -> None:
+        base = json.loads((ROOT / "fixtures" / "valid" / "invoke.json").read_text())
+        for field in ("request_id", "session_id"):
+            blank = {**base, field: "   "}
+            with self.subTest(field=field):
+                self.assertFalse(wire_allowed(blank, "client", negotiated=True))
+                self.assertTrue(wire_allowed(blank, "client", negotiated=False))
 
     def test_lifecycle_fields_do_not_leak_into_legacy_messages(self) -> None:
         for name, extra in (
