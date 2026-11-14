@@ -71,6 +71,11 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         card = await pipeline.run(invoke, send_stage)
     except WebSocketDisconnect:
         raise
+    except pipeline.PipelineError as exc:
+        log.info("request %s failed: %s", invoke.request_id, exc.code)
+        await send(websocket, Error(request_id=invoke.request_id, code=exc.code,
+                                    message=exc.message, retryable=exc.retryable))
+        return
     except PageReadError as exc:
         log.exception("page reading failed for %s", invoke.request_id)
         messages = {
