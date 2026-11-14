@@ -170,11 +170,27 @@ async def think(
     return _mark_ungrounded(answer)
 
 
-async def draw(image_prompt: str, session_id: str) -> str | None:
+def _draw_accepts_style_preset(fn: Any) -> bool:
+    try:
+        sig = inspect.signature(fn)
+        return "style_preset" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+    except (ValueError, TypeError):
+        return False
+
+
+async def draw(
+    image_prompt: str,
+    session_id: str,
+    style_preset: Optional[str] = None,
+) -> str | None:
     # Offline/test path: preserve deterministic contract fixtures without an API key.
     if not os.environ.get("GEMINI_API_KEY", "").strip():
         return None
     try:
+        if style_preset is not None:
+            return await image.draw(image_prompt, session_id=session_id, style_preset=style_preset)
         return await image.draw(image_prompt, session_id=session_id)
     except Exception as exc:
         log.warning("Image generation unavailable: %s", type(exc).__name__)
@@ -449,8 +465,10 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             return None
 
     # A slow image costs only the picture: the card still ships with text and speech (PRD section 9).
-    async def _draw() -> str | None:
+    async def _draw(style_preset: Optional[str] = None) -> str | None:
         try:
+            if style_preset is not None and _draw_accepts_style_preset(draw):
+                return await timed(draw(answer["image_prompt"], invoke.session_id, style_preset=style_preset))
             return await timed(draw(answer["image_prompt"], invoke.session_id))
         except PipelineError as exc:
             if exc.code != "model_timeout":
@@ -464,7 +482,8 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         if skip_draw:
             image_url = None
         else:
-            image_url = await _draw()
+            style_preset = getattr(decision, "style_preset", None) if decision is not None else None
+            image_url = await _draw(style_preset)
     except BaseException:
         # The request fails, so its clip would never reach the phone: stop or delete it (#109).
         speaking.cancel()
