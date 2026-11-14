@@ -216,26 +216,26 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     if lock is None:
         lock = _SESSION_LOCKS[invoke.session_id] = asyncio.Lock()
     before: list = []
-    before_clarifying = getattr(session, "awaiting_book_clarification", False)
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
             # One request per session at a time, so a cancel only ever undoes its own exchange.
             async with lock:
                 before = list(history)
+                # Capture and restore the flag only while holding the lock, so a request that
+                # never ran cannot undo a book reply accepted by the one that did.
                 before_clarifying = getattr(session, "awaiting_book_clarification", False)
-                return await _run(invoke, send_stage)
+                try:
+                    return await _run(invoke, send_stage)
+                except BaseException:
+                    session.awaiting_book_clarification = before_clarifying
+                    raise
     except asyncio.CancelledError:
         # The phone hung up: forget what this request recorded (think saves before drawing), nothing else.
         for exchange in [e for e in history if not any(e is b for b in before)]:
             history.remove(exchange)
-        session.awaiting_book_clarification = before_clarifying
         raise
     except TimeoutError as exc:
-        session.awaiting_book_clarification = before_clarifying
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
-    except Exception:
-        session.awaiting_book_clarification = before_clarifying
-        raise
 
 
 _HTTPS_URL = re.compile(r"^https://[^\s/?#]+[^\s]*$")  # the contract's httpsUrl pattern
