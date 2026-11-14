@@ -111,10 +111,16 @@ one audio invocation. Each case has exactly:
   "sources": [{"title": "...", "url": "https://..."}]}`. Grounding expectations
   must come from independent known passages/citations, **not** the returned card.
 
-The check requires one schema-valid card with matching request ID, ordered stages,
+The check requires one schema-valid card with matching request ID, the complete
+`reading → thinking → drawing` stage sequence (preceded by `transcribing` for audio),
 non-null HTTPS image/audio URLs, the exact expected book/position and all expected
 source entries. An error terminal, missing media, wrong grounding, duplicate
-terminal or trailing status fails. Diagnostics contain no response payloads.
+terminal or trailing status observed within the post-terminal window fails.
+`WS_SUCCESS_EXTRA_WAIT_S` controls that window: default 1 second, greater than 0
+and at most 30 seconds, finite. The socket is closed after that wait or the first
+extra reply; replies arriving later are **not checked**. This finite observation
+does not prove the server can never send another response. The schema-only mode
+keeps its existing 0.5-second window. Diagnostics contain no response payloads.
 The input file is limited to 16 MiB; the check does not save inputs or replies.
 
 This proves only response-level assertions. URLs alone do not prove actual image

@@ -8,16 +8,28 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from pathlib import Path
+import time
 import unittest
 from unittest import mock
 from urllib.parse import urlsplit
 
-from test_conformance import VALIDATOR, expected_request_id, load
+from test_conformance import STAGES, VALIDATOR, expected_request_id, load
 from test_remote import drive_remote, fake_backend, remote_timeout
 
 MAX_CASE_BYTES = 16 * 1024 * 1024
+
+
+def success_extra_wait() -> float:
+    try:
+        value = float(os.environ.get("WS_SUCCESS_EXTRA_WAIT_S", "1"))
+        if math.isfinite(value) and 0 < value <= 30:
+            return value
+    except ValueError:
+        pass
+    raise ValueError("WS_SUCCESS_EXTRA_WAIT_S must be finite and greater than 0, at most 30 seconds")
 
 
 def https_url(value) -> bool:
@@ -84,7 +96,10 @@ def success_problems(case: dict, replies: list[dict]) -> list[str]:
     """Strict one-invocation success; diagnostics never include user content."""
     problems = []
     want_id = expected_request_id(case["send"][0])
-    stages = ["transcribing", "reading", "thinking", "drawing"]
+    stages = STAGES
+    invoke = next(iter(case["send"][0].values()))
+    expected_stages = stages if invoke.get("audio") is not None else stages[1:]
+    received_stages = []
     last_stage = -1
     terminals = 0
     for index, reply in enumerate(replies):
@@ -96,6 +111,7 @@ def success_problems(case: dict, replies: list[dict]) -> list[str]:
         if terminals:
             problems.append(f"reply {index}: response after terminal")
         if reply["type"] == "status":
+            received_stages.append(reply["stage"])
             stage = stages.index(reply["stage"])
             if stage <= last_stage:
                 problems.append(f"reply {index}: stage out of order")
@@ -115,12 +131,14 @@ def success_problems(case: dict, replies: list[dict]) -> list[str]:
                     problems.append(f"reply {index}: expected source citation missing")
     if terminals != 1:
         problems.append("expected exactly one terminal card")
+    if received_stages != expected_stages:
+        problems.append("missing or unexpected progress stages for input mode")
     return problems
 
 
 def check_success(url: str, case: dict, timeout: float) -> list[str]:
     try:
-        replies = drive_remote(url, case, timeout)
+        replies = drive_remote(url, case, timeout, extra_reply_wait=success_extra_wait())
     except Exception as exc:
         # Existing schema-only mode may print payloads; this mode never does.
         return [f"success exchange failed: {type(exc).__name__}"]
@@ -139,6 +157,9 @@ class LiveSuccessTests(unittest.TestCase):
 
 class OfflineSuccessAssertionTests(unittest.TestCase):
     def setUp(self) -> None:
+        env = mock.patch.dict(os.environ, {"WS_SUCCESS_EXTRA_WAIT_S": "1"})
+        env.start()
+        self.addCleanup(env.stop)
         self.replies = load("text-invoke")["receive"]
         card = self.replies[-1]
         self.case = {
@@ -180,6 +201,48 @@ class OfflineSuccessAssertionTests(unittest.TestCase):
                         [self.replies[1], self.replies[0], *self.replies[2:]]):
             with self.subTest(sequence_length=len(replies)):
                 self.assertTrue(success_problems(self.case, replies))
+
+    def test_every_stage_is_required_for_typed_and_audio_success(self) -> None:
+        for mode in ("text", "audio"):
+            case = copy.deepcopy(self.case)
+            case["send"] = load(f"{mode}-invoke")["send"]
+            replies = copy.deepcopy(self.replies)
+            if mode == "audio":
+                replies.insert(0, {"type": "status", "request_id": replies[-1]["request_id"],
+                                   "stage": "transcribing"})
+            with self.subTest(mode=mode, missing="none"):
+                self.assertEqual(success_problems(case, replies), [])
+            for i in range(len(replies) - 1):
+                with self.subTest(mode=mode, missing=replies[i]["stage"]):
+                    self.assertTrue(success_problems(case, replies[:i] + replies[i + 1:]))
+            with self.subTest(mode=mode, missing="all"):
+                self.assertTrue(success_problems(case, replies[-1:]))
+
+    def test_delayed_extra_reply_is_observed_over_socket(self) -> None:
+        for extra in (self.replies[-1], self.replies[0]):
+            def delayed(message):
+                yield from self.replies
+                time.sleep(0.7)  # Deliberately beyond the legacy 0.5 s observation.
+                yield extra
+            with self.subTest(extra=extra["type"]), mock.patch.dict(
+                os.environ, {"WS_SUCCESS_EXTRA_WAIT_S": "1.2"}
+            ):
+                with fake_backend(delayed) as url:
+                    problems = check_success(url, self.case, 2)
+                self.assertTrue(any("after terminal" in p for p in problems), problems)
+
+    def test_extra_reply_window_validation(self) -> None:
+        for value in ("0", "-1", "31", "nan", "inf", "invalid", ""):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"WS_SUCCESS_EXTRA_WAIT_S": value}
+            ), mock.patch("test_live_success.drive_remote") as driver:
+                self.assertTrue(check_success("unused", self.case, 1))
+                driver.assert_not_called()
+        for value in ("0.05", "1", "30"):
+            with self.subTest(value=value), mock.patch.dict(
+                os.environ, {"WS_SUCCESS_EXTRA_WAIT_S": value}
+            ):
+                self.assertEqual(success_extra_wait(), float(value))
 
     def test_diagnostics_do_not_echo_content(self) -> None:
         marker = "PRIVATE-TEST-CONTENT"

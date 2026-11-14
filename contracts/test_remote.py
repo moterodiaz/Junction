@@ -51,10 +51,13 @@ def send_remote(ws, frame: dict) -> None:
         ws.send(json.dumps(frame["text"]))
 
 
-def drive_remote(url: str, exchange: dict, timeout: float) -> list[dict]:
+def drive_remote(url: str, exchange: dict, timeout: float, *,
+                 extra_reply_wait: float = EXTRA_REPLY_WAIT_S) -> list[dict]:
     """Send the exchange's frames to url and read replies until each send has ended in a card or
     error, plus any extra reply that arrives shortly after. Raises TimeoutError when a receive
-    waits longer than `timeout`, and ValueError on a reply that is not a JSON object."""
+    waits longer than `timeout`, and ValueError on a reply that is not a JSON object.
+    After the terminal, observe one extra reply for at most `extra_reply_wait` seconds
+    (legacy default 0.5 s); later replies are outside this finite observation."""
     replies: list[dict] = []
     max_replies = MAX_REPLIES_PER_SEND * len(exchange["send"])
     with connect(url, open_timeout=min(timeout, CONNECT_TIMEOUT_S), max_size=MAX_MESSAGE_BYTES) as ws:
@@ -68,7 +71,7 @@ def drive_remote(url: str, exchange: dict, timeout: float) -> list[dict]:
             replies.append(reply)
             done += reply.get("type") in ("card", "error")
         try:
-            replies.append(parse(ws.recv(timeout=EXTRA_REPLY_WAIT_S)))
+            replies.append(parse(ws.recv(timeout=extra_reply_wait)))
         except (TimeoutError, ConnectionClosed):
             pass
     return replies
