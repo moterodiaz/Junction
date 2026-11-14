@@ -174,7 +174,12 @@
       "required": ["type", "request_id", "code", "message", "retryable"],
       "properties": {
         "type": { "const": "error" },
-        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "request_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonEmptyString" },
+            { "type": "null" }
+          ]
+        },
         "code": { "$ref": "#/$defs/errorCode" },
         "message": { "$ref": "#/$defs/nonEmptyString" },
         "retryable": { "type": "boolean" }
