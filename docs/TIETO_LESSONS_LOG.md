@@ -73,3 +73,9 @@ Real incidents from building MetaLab with AI agents on 2026-11-14 (times UTC), e
 **Why.** The fixer may edit any file the review mentions; nothing checks the owner table.
 **What we changed.** The PR author's revert and handoff are the pattern we follow. The `claude-fix` path guard (#120) refuses changes to protected paths before it pushes, but another owner's product folder (like `backend/ai/`) is not protected; there the owner's tests and review are the check. That gap is open.
 **Rubric lesson.** Practicality: a named human owns each folder, and the AI should hand off rather than cross that line.
+
+## 13. The fixer and the author's agent fixed the same threads at once  (#189, and about 20:12 on #211)
+**What happened.** On #211 (backend core), Greptile reviewed at 20:10:58. `claude-fix` pushed its fix at 20:12, while the author's agent was fixing the same threads locally, and the bot's commit also touched `backend/app/pipeline.py`, which that PR was not allowed to touch before a handoff. The author kept their own fix and dropped the bot's commit at merge. The same race happened earlier on #189.
+**Why.** `claude-fix` starts as soon as Greptile posts and does not check whether the author is already answering.
+**What we changed (#213).** `claude-fix` now skips a run when the author pushed after Greptile's latest review (Greptile re-reviews the new head, which starts a fresh run). It does not push if the head moved while it worked. It also leaves alone any thread that already has a non-Greptile reply. A sweeper or manual dispatch still always runs. The gap that remains: if the author is still working locally and has neither pushed nor replied, the bot can still push first.
+**Rubric lesson.** Practicality: when two agents can act on the same finding, the owner's agent goes first.

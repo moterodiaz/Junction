@@ -117,6 +117,22 @@ jobs:
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          # The author's agent may already be fixing the threads Greptile raised. If it pushed after the
+          # latest Greptile review, both would push competing fixes; skip, and Greptile re-reviews the new
+          # head, which triggers a fresh run. A manual or sweeper dispatch is explicit, so it always runs.
+          if [[ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ]]; then
+            reviewed="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews?per_page=100" \
+              | jq -rs '[.[][] | select(.user.login == "greptile-apps[bot]") | .commit_id] | last // empty')"
+            head_msg="$(gh api "repos/$REPO/commits/$head_sha" --jq .commit.message)"
+            if [[ -n "$reviewed" && "$reviewed" != "$head_sha" && "$head_msg" != "fix: address greptile review"* ]]; then
+              msg="The author pushed $head_sha after Greptile reviewed $reviewed; claude-fix skips this run."
+              echo "$msg"
+              echo "$msg" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           echo "head-ref=$head_ref" >> "$GITHUB_OUTPUT"
           echo "proceed=true" >> "$GITHUB_OUTPUT"
 
@@ -149,6 +165,8 @@ jobs:
             List unresolved review threads with `gh api graphql` and read
             summaries with
             `gh pr view ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }} --repo ${{ github.repository }} --comments`.
+            Skip any thread that already has a reply from someone other than
+            greptile-apps: the PR author's agent is handling it.
             For each valid finding, make the smallest fix. For each invalid
             finding, reply on its thread with the reason. Run the repository's
             tests and lint when present, and do not push failing changes.
@@ -220,6 +238,24 @@ jobs:
           else
             echo "push=true" >> "$GITHUB_OUTPUT"
           fi
+      # The author may push while Claude works; pushing on top would race their fix (or fail as non-fast-forward).
+      - name: Recheck head
+        id: head
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ steps.before.outputs.sha }}
+        run: |
+          set -euo pipefail
+          now="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [ "$now" != "$BEFORE_SHA" ]; then
+            msg="The PR head moved from $BEFORE_SHA to $now during this run; claude-fix does not push."
+            echo "$msg"
+            echo "$msg" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            echo "moved=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "moved=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Recheck integration-paused
         id: recheck
         if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true'
@@ -238,7 +274,7 @@ jobs:
             echo "paused=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Push fixes
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.head.outputs.moved != 'true' && steps.recheck.outputs.paused != 'true'
         env:
           BOT_PUSH_TOKEN: ${{ secrets.BOT_PUSH_TOKEN }}
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
@@ -247,7 +283,7 @@ jobs:
       # Pushes made with GITHUB_TOKEN do not trigger pull_request workflows, so the
       # required `ci` check would stay pending on the new head. Dispatch it explicitly.
       - name: Re-run ci on the fixed head
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.head.outputs.moved != 'true' && steps.recheck.outputs.paused != 'true'
         env:
           HEAD_REF: ${{ steps.pr.outputs.head-ref }}
         run: gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
@@ -255,7 +291,7 @@ jobs:
       # Done in the workflow, not by the model (its tool list denies `gh pr merge`). AGENTS.md §3 rule 9:
       # auto-merge only when no protected path changed; GitHub still waits for the required checks.
       - name: Enable auto-merge when review threads are resolved
-        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.recheck.outputs.paused != 'true'
+        if: steps.pr.outputs.proceed == 'true' && steps.guard.outputs.push == 'true' && steps.head.outputs.moved != 'true' && steps.recheck.outputs.paused != 'true'
         shell: bash  # pipefail: a failed graphql call must fail the step, not read as 0 open threads
         env:
           BEFORE_SHA: ${{ steps.before.outputs.sha }}

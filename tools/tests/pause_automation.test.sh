@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Offline tests: claude-fix and pr-sweeper leave PRs labelled integration-paused alone.
+# Offline tests: claude-fix and pr-sweeper leave PRs labelled integration-paused alone,
+# and claude-fix does not race the PR author's own fix.
 # Each workflow step's `run:` script is extracted and run against a fake gh (tools/tests/fake_gh.py).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -77,6 +78,8 @@ reset() { # paused_issue_open(true/false)
       "repos/o/r/pulls/7": .[0], "repos/o/r/pulls/8": .[1],
       "repos/o/r/issues/7": .[0], "repos/o/r/issues/8": .[1],
       "repos/o/r/pulls/7/commits": [], "repos/o/r/pulls/8/commits": [],
+      "repos/o/r/pulls/7/reviews": [], "repos/o/r/pulls/8/reviews": [],
+      "repos/o/r/commits/s": {commit: {message: "feat: x"}},
       "repos/o/r/pulls/7/files": [{filename: "backend/app/x.py"}],
       "repos/o/r/issues/1/comments": [], "repos/o/r/issues/7/comments": [], "repos/o/r/issues/8/comments": [],
       "repos/o/r/pulls/7/comments": [], "repos/o/r/pulls/8/comments": [],
@@ -106,6 +109,35 @@ reset true
 PR_NUMBER=8 run_step "$CF" "Resolve PR and enforce loop cap"
 out_has "proceed=true" && ok || bad "normal PR: fix job should proceed: $(cat "$GITHUB_OUTPUT"; cat "$TMP/stdout")"
 
+# Author-push race: skip when the author pushed after Greptile's latest review (#213).
+db_set() { jq "$1" "$FAKE_GH_DB" > "$TMP/d" && mv "$TMP/d" "$FAKE_GH_DB"; }
+reset true
+db_set '.api["repos/o/r/pulls/8/reviews"] = [{user: {login: "greptile-apps[bot]"}, commit_id: "old"}]'
+PR_NUMBER=8 GITHUB_EVENT_NAME=pull_request_review run_step "$CF" "Resolve PR and enforce loop cap"
+out_has "proceed=false" && ok || bad "author pushed after review: should skip: $(cat "$GITHUB_OUTPUT")"
+grep -q "claude-fix skips this run" "$TMP/stdout" && ok || bad "author pushed after review: skip reason not logged"
+reset true
+db_set '.api["repos/o/r/pulls/8/reviews"] = [{user: {login: "greptile-apps[bot]"}, commit_id: "old"}, {user: {login: "greptile-apps[bot]"}, commit_id: "s"}]'
+PR_NUMBER=8 GITHUB_EVENT_NAME=pull_request_review run_step "$CF" "Resolve PR and enforce loop cap"
+out_has "proceed=true" && ok || bad "review of the current head: should proceed: $(cat "$GITHUB_OUTPUT")"
+reset true
+db_set '.api["repos/o/r/pulls/8/reviews"] = [{user: {login: "greptile-apps[bot]"}, commit_id: "old"}] | .api["repos/o/r/commits/s"].commit.message = "fix: address greptile review (#8)"'
+PR_NUMBER=8 GITHUB_EVENT_NAME=pull_request_review run_step "$CF" "Resolve PR and enforce loop cap"
+out_has "proceed=true" && ok || bad "head is the bot's own fix: should proceed: $(cat "$GITHUB_OUTPUT")"
+reset true
+db_set '.api["repos/o/r/pulls/8/reviews"] = [{user: {login: "greptile-apps[bot]"}, commit_id: "old"}]'
+PR_NUMBER=8 GITHUB_EVENT_NAME=workflow_dispatch run_step "$CF" "Resolve PR and enforce loop cap"
+out_has "proceed=true" && ok || bad "dispatch (sweeper retry) always runs: $(cat "$GITHUB_OUTPUT")"
+check_not "dispatch reads no reviews" 'pulls/8/reviews'
+
+# Head moved during the run: no push.
+reset true
+PR_NUMBER=8 BEFORE_SHA=s run_step "$CF" "Recheck head"
+out_has "moved=false" && ok || bad "recheck head: unchanged head should output moved=false"
+reset true
+PR_NUMBER=8 BEFORE_SHA=earlier run_step "$CF" "Recheck head"
+out_has "moved=true" && ok || bad "recheck head: moved head should output moved=true"
+grep -qE "steps\.head\.outputs\.moved != 'true'" "$CF" && ok || bad "push steps must gate on steps.head.outputs.moved"
 reset true
 db_resolved() { jq '.api.graphql.data.repository.pullRequest.reviewThreads.nodes = []' "$FAKE_GH_DB" > "$TMP/d" && mv "$TMP/d" "$FAKE_GH_DB"; }
 db_resolved
