@@ -1,4 +1,4 @@
-"""Backend AI module for MetaLab: book session and reasoning with Gemini."""
+"""Backend AI module: page reading, source text, book session and reasoning, image generation."""
 
 from .session import (
     BookInfo,
@@ -18,6 +18,15 @@ from .reasoning import (
     set_reasoning_client,
     think,
 )
+from .page_reader import (
+    NemotronClient,
+    NoTextFoundError,
+    PageReadError,
+    PageReadTimeoutError,
+    StubNemotronClient,
+    extract_frame_data,
+    read_page,
+)
 
 __all__ = [
     "BookInfo",
@@ -34,4 +43,11 @@ __all__ = [
     "parse_reasoning_json",
     "set_reasoning_client",
     "think",
+    "NemotronClient",
+    "NoTextFoundError",
+    "PageReadError",
+    "PageReadTimeoutError",
+    "StubNemotronClient",
+    "extract_frame_data",
+    "read_page",
 ]
