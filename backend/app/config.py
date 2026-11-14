@@ -1,7 +1,8 @@
 """Backend configuration: every environment variable the backend reads.
 
 On Modal the values come from the Modal secret named in MODAL_SECRET_NAME;
-locally they come from the shell or a .env file (see backend/.env.example).
+locally they must be exported in the shell (names listed in backend/.env.example;
+this module does not read .env files).
 Secrets never live in the repo.
 """
 
@@ -54,7 +55,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             f"Missing required environment variable(s): {', '.join(missing)}. "
             f"On Modal, add them to the '{MODAL_SECRET_NAME}' secret; "
-            "locally, export them or copy backend/.env.example to backend/.env."
+            "locally, export them in your shell (see backend/.env.example for the names); "
+            "this module does not read .env files."
         )
 
     return Settings(
