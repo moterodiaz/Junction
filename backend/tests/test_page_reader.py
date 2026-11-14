@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
+import logging
 import os
+import sys
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
+
+import httpx
 
 from ai.page_reader import (
     DEFAULT_MODEL_READ,
     DEFAULT_NVIDIA_BASE_URL,
+    GeminiPageReader,
     NemotronClient,
     NoTextFoundError,
     PageReadError,
@@ -140,6 +148,216 @@ class PageReaderTest(unittest.TestCase):
             msg_content = payload["messages"][0]["content"]
             self.assertEqual(msg_content[0]["type"], "image_url")
             self.assertEqual(msg_content[0]["image_url"]["url"], "data:image/jpeg;base64,QUFBQQ==")
+
+
+class LogCaptureContext:
+    def __init__(self, logger_name: str = ""):
+        self.logger = logging.getLogger(logger_name)
+        self.stream = io.StringIO()
+        self.handler = logging.StreamHandler(self.stream)
+
+    def __enter__(self):
+        self.logger.addHandler(self.handler)
+        return self
+
+    def __exit__(self, *args):
+        self.logger.removeHandler(self.handler)
+
+    @property
+    def output(self) -> str:
+        return self.stream.getvalue()
+
+
+class PageReaderPrivacyLeakTest(unittest.IsolatedAsyncioTestCase):
+    """Verify that HTTP error bodies, network error strings, and timeouts carrying secrets
+
+    never leak into PageReadError / PageReadTimeoutError messages or logs (REQ-PRIV-02).
+    """
+
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ", {"NVIDIA_API_KEY": "test-key", "GEMINI_API_KEY": "test-gemini-key"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = NemotronClient(api_key="test-key")
+        self.gemini = GeminiPageReader(api_key="test-gemini-key")
+
+    async def test_nemotron_httpx_http_error_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://api.nvidia.com/v1/chat/completions")
+        resp = httpx.Response(500, text='{"error": "SECRET_NEMOTRON_BODY"}', request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(return_value=resp)):
+                with self.assertRaises(PageReadError) as ctx:
+                    await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+        self.assertIn("HTTP 500", err_str)
+
+    async def test_nemotron_httpx_network_error_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://api.nvidia.com/v1/chat/completions")
+        err = httpx.ConnectError("SECRET_NETWORK_REASON", request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(side_effect=err)):
+                with self.assertRaises(PageReadError) as ctx:
+                    await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+        self.assertIn("ConnectError", err_str)
+
+    async def test_nemotron_httpx_timeout_error_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://api.nvidia.com/v1/chat/completions")
+        err = httpx.ReadTimeout("SECRET_TIMEOUT_REASON", request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(side_effect=err)):
+                with self.assertRaises(PageReadTimeoutError) as ctx:
+                    await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "model_timeout")
+        self.assertIn("ReadTimeout", err_str)
+
+    async def test_nemotron_httpx_invalid_json_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://api.nvidia.com/v1/chat/completions")
+        resp = httpx.Response(200, text='{SECRET_INVALID_JSON', request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(return_value=resp)):
+                with self.assertRaises(PageReadError) as ctx:
+                    await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+
+    async def test_nemotron_urllib_http_error_does_not_leak_secret(self):
+        err = urllib.error.HTTPError(
+            "https://api.nvidia.com/v1/chat/completions",
+            500,
+            "Internal Server Error",
+            {},
+            io.BytesIO(b"SECRET_URLLIB_HTTP_BODY"),
+        )
+        with mock.patch.dict(sys.modules, {"httpx": None}):
+            with LogCaptureContext() as log_ctx:
+                with mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                    with self.assertRaises(PageReadError) as ctx:
+                        await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+        self.assertIn("HTTP 500", err_str)
+
+    async def test_nemotron_urllib_network_error_does_not_leak_secret(self):
+        err = urllib.error.URLError("SECRET_URLLIB_NETWORK_REASON")
+        with mock.patch.dict(sys.modules, {"httpx": None}):
+            with LogCaptureContext() as log_ctx:
+                with mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                    with self.assertRaises(PageReadTimeoutError) as ctx:
+                        await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "model_timeout")
+        self.assertIn("URLError", err_str)
+
+    async def test_nemotron_urllib_timeout_error_does_not_leak_secret(self):
+        err = TimeoutError("SECRET_URLLIB_TIMEOUT_REASON")
+        with mock.patch.dict(sys.modules, {"httpx": None}):
+            with LogCaptureContext() as log_ctx:
+                with mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                    with self.assertRaises(PageReadTimeoutError) as ctx:
+                        await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "model_timeout")
+        self.assertIn("TimeoutError", err_str)
+
+    async def test_nemotron_urllib_invalid_json_does_not_leak_secret(self):
+        class MockUrllibResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def read(self):
+                return b"{SECRET_INVALID_JSON"
+
+        with mock.patch.dict(sys.modules, {"httpx": None}):
+            with LogCaptureContext() as log_ctx:
+                with mock.patch.object(urllib.request, "urlopen", return_value=MockUrllibResponse()):
+                    with self.assertRaises(PageReadError) as ctx:
+                        await self.client.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+
+    async def test_gemini_http_error_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent")
+        resp = httpx.Response(500, text='{"error": "SECRET_GEMINI_BODY"}', request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(return_value=resp)):
+                with self.assertRaises(PageReadError) as ctx:
+                    await self.gemini.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+        self.assertIn("HTTP 500", err_str)
+
+    async def test_gemini_network_error_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent")
+        err = httpx.ConnectError("SECRET_GEMINI_NETWORK_REASON", request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(side_effect=err)):
+                with self.assertRaises(PageReadError) as ctx:
+                    await self.gemini.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
+        self.assertIn("ConnectError", err_str)
+
+    async def test_gemini_timeout_error_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent")
+        err = httpx.ReadTimeout("SECRET_GEMINI_TIMEOUT_REASON", request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(side_effect=err)):
+                with self.assertRaises(PageReadTimeoutError) as ctx:
+                    await self.gemini.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "model_timeout")
+        self.assertIn("ReadTimeout", err_str)
+
+    async def test_gemini_invalid_json_does_not_leak_secret(self):
+        req = httpx.Request("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent")
+        resp = httpx.Response(200, text='{SECRET_INVALID_JSON', request=req)
+        with LogCaptureContext() as log_ctx:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(return_value=resp)):
+                with self.assertRaises(PageReadError) as ctx:
+                    await self.gemini.complete("QUFBQQ==")
+        err_str = str(ctx.exception)
+        self.assertNotIn("SECRET", err_str)
+        self.assertNotIn("SECRET", ctx.exception.message)
+        self.assertNotIn("SECRET", log_ctx.output)
+        self.assertEqual(ctx.exception.code, "internal")
 
 
 if __name__ == "__main__":

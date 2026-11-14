@@ -236,14 +236,25 @@ class NemotronClient:
                     resp = await client.post(url, json=payload, headers=headers)
                     if resp.is_error:
                         raise PageReadError(
-                            f"Nemotron API returned HTTP {resp.status_code}: {resp.text}",
+                            f"Nemotron API returned HTTP {resp.status_code}",
                             code="internal",
                         )
-                    return resp.json()
+                    try:
+                        return resp.json()
+                    except ValueError as exc:
+                        raise PageReadError(
+                            "Nemotron API returned invalid JSON.",
+                            code="internal",
+                        ) from exc
             except httpx.TimeoutException as exc:
-                raise PageReadTimeoutError(f"Nemotron API request timed out: {exc}") from exc
+                raise PageReadTimeoutError(
+                    f"Nemotron API request timed out: {type(exc).__name__}"
+                ) from exc
             except (httpx.RequestError, ConnectionError) as exc:
-                raise PageReadError(f"Nemotron API network error: {exc}", code="internal") from exc
+                raise PageReadError(
+                    f"Nemotron API network error: {type(exc).__name__}",
+                    code="internal",
+                ) from exc
 
         def _sync_call() -> dict[str, Any]:
             req = urllib.request.Request(
@@ -254,15 +265,22 @@ class NemotronClient:
             )
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    return json.loads(resp.read().decode("utf-8"))
+                    try:
+                        return json.loads(resp.read().decode("utf-8"))
+                    except ValueError as exc:
+                        raise PageReadError(
+                            "Nemotron API returned invalid JSON.",
+                            code="internal",
+                        ) from exc
             except urllib.error.HTTPError as exc:
-                body = exc.read().decode("utf-8", errors="replace")
                 raise PageReadError(
-                    f"Nemotron API returned HTTP {exc.code}: {body}",
+                    f"Nemotron API returned HTTP {exc.code}",
                     code="internal",
                 ) from exc
             except (urllib.error.URLError, TimeoutError) as exc:
-                raise PageReadTimeoutError(f"Nemotron API request failed: {exc}") from exc
+                raise PageReadTimeoutError(
+                    f"Nemotron API request failed: {type(exc).__name__}"
+                ) from exc
 
         return await asyncio.to_thread(_sync_call)
 
@@ -429,7 +447,7 @@ class GeminiPageReader:
         except (httpx.RequestError, ConnectionError) as exc:
             raise PageReadError(f"Gemini page reader network error: {type(exc).__name__}") from exc
         if resp.is_error:
-            raise PageReadError(f"Gemini page reader returned HTTP {resp.status_code}: {resp.text[:300]}")
+            raise PageReadError(f"Gemini page reader returned HTTP {resp.status_code}")
         try:
             data = resp.json()
         except ValueError as exc:
