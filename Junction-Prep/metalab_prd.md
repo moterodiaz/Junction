@@ -362,7 +362,7 @@ The lead paused the integration backlog (issues labelled `integration-paused`; r
 
 **Backlog ownership (lead decision, 2026-11-14).** Every open `integration-paused` issue is assigned to the lead, @moterodiaz. That changes who does the work, not who owns which area: the area owners in AGENTS.md §4 stay. Before editing another owner's folders, the lead agrees a handoff with that owner on the board. Paused work also waits behind overlapping priority-lane work: #129, and #139 after it, wait for Marcus's #194, which wires `backend/app/pipeline.py` grounding first. The lead handed #133 back to Ahmed as a lane task (2026-11-14); #139 still depends on it. The lead still respects every `blocked` label, `## Depends on` and evidence gate.
 
-**DeepMind Priority Lane Sequence (@Marcus228, Order 1–7):**
+**DeepMind Priority Lane Sequence (@Marcus228, Order 1–8):**
 1. **#185 (`LANE-C1`, Order 1):** Gemini voice feedback and output with a decision model in the workflow (`REQ-VOICE-02`).
 2. **#194 (`LANE-C2`, Order 2):** Ground Hamlet locally and classify active book mid-session (`REQ-SRC-01`, `REQ-INTENT-01`).
 3. **#195 (`LANE-C3`, Order 3):** Classify book visual style via Gemini Decisions with soft style conditioning (`REQ-IMG-01`, `REQ-VOICE-02`).
@@ -370,6 +370,7 @@ The lead paused the integration backlog (issues labelled `integration-paused`; r
 5. **#197 (`LANE-C5`, Order 5):** Modular DecisionQuestionSpec toggle for anti-spoiler reading horizon (`REQ-REASON-01`, `REQ-VOICE-02`).
 6. **#198 (`LANE-C6`, Order 6):** Track model-choice distribution counters safely without user content (`REQ-OBS-01`, `REQ-LAT-01`, `REQ-PRIV-02`).
 7. **#199 (`LANE-C7`, Order 7):** Optional Gemini transcription (`gemini-3.5-transcribe`) & status earcon polish (`REQ-VOICE-02`, `REQ-STT-01`).
+8. **#231 (`LANE-C8`, Order 8):** Final item of Marcus's priority lane, after #199 (`REQ-PROC-01`).
 
 **Cross-Area Takeover Override:**
 By explicit lead agreement (@moterodiaz, 2026-11-14), @Marcus228 has cross-area takeover authority for priority-lane issues #185 and #194–#199 across `backend/ai/`, `backend/app/pipeline.py`, `backend/stt/`, client status earcons, and documentation, ensuring seamless end-to-end delivery of the DeepMind priority lane without blocked handoff delays.

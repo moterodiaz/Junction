@@ -28,9 +28,9 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 |---|---|---|---|
 | B / Maksym, @maksymmatviievskyi | LANE-B1 | REQ-IOS-03 | #184: get MetaLab working with the Meta web app SDK |
 | A / Ahmed, @Ahm3d-KA | LANE-A2 | REQ-PROC-01, REQ-PROC-02 | #182 (PR #183) escapes and per-area trust, then #186 pipeline enforcement |
-| C / Marcus, @Marcus228 | DeepMind priority lane | REQ-VOICE-02, REQ-SRC-01, REQ-INTENT-01, REQ-IMG-01, REQ-PROC-01, REQ-REASON-01, REQ-OBS-01, REQ-STT-01 | Order 1–7 (#185, #194–#199) |
+| C / Marcus, @Marcus228 | DeepMind priority lane | REQ-VOICE-02, REQ-SRC-01, REQ-INTENT-01, REQ-IMG-01, REQ-PROC-01, REQ-REASON-01, REQ-OBS-01, REQ-STT-01 | Order 1–8 (#185, #194–#199, #231) |
 
-### DeepMind Priority Lane Tasks (Order 1–7, @Marcus228)
+### DeepMind Priority Lane Tasks (Order 1–8, @Marcus228)
 
 1. **#185 (`LANE-C1`, Order 1, P0):** [LANE-C1] backend-ai: Gemini voice feedback and output with a decision model in the workflow (`REQ-VOICE-02`).
    - Single-pass `gemini-decision-1` Decisions API routing (`v1beta` `decisions.create`), `gemini-3.8-flash-tts` output at `card.audio_url` (Kore voice, 24kHz mono PCM WAV), client earcons without contract changes, graceful fallback to L0 matcher and system voice.
@@ -46,6 +46,7 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
    - In-memory telemetry in `backend/ai/decision.py` / `backend/app/latency.py` recording distribution counts across models (`decision`, `read`, `reason`, `image`, `tts`, and fallbacks) without user text, audio, or prompts.
 7. **#199 (`LANE-C7`, Order 7, P3):** [LANE-C7] backend: Optional Gemini transcription (`gemini-3.5-transcribe`) & status earcon polish (`REQ-VOICE-02`, `REQ-STT-01`).
    - Optional `gemini-3.5-transcribe` under `STT_ENGINE=whisper|gemini` in `backend/stt/engine.py` with Shakespeare vocabulary biasing and fallback to whisper, plus client-side status stage earcons in `ios/MetaLab/AnswerSpeaker.swift` preserving `contracts/ws-messages.schema.json`.
+8. **#231 (`LANE-C8`, Order 8):** Final item of Marcus's priority lane, after #199 (`REQ-PROC-01`).
 
 **Cross-Area Takeover Override:**
 By agreement with the lead (@moterodiaz), @Marcus228 is authorized for cross-area delivery across `backend/ai/`, `backend/app/pipeline.py`, `backend/stt/`, and client earcons for the DeepMind priority lane issues (#185, #194–#199) to avoid blocking priority execution.
