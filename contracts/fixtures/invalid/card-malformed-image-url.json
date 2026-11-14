@@ -1,0 +1,25 @@
+{
+  "type": "card",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "Hamlet, Act 3, Scene 1",
+  "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+  "image_url": "https:// ",
+  "speech_text": "Hamlet is alone, weighing whether to keep living through suffering or end it.",
+  "audio_url": null,
+  "book": {
+    "title": "Hamlet",
+    "author": "William Shakespeare",
+    "location": "Act 3, Scene 1"
+  },
+  "sources": [
+    {
+      "title": "Hamlet, public-domain text",
+      "url": "https://www.gutenberg.org/ebooks/1524"
+    }
+  ],
+  "models": {
+    "read": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+    "reason": "gemini-4-argon",
+    "image": "gemini-nano-banana-2.1"
+  }
+}
