@@ -1,8 +1,19 @@
 import asyncio
+import json
+import os
+from pathlib import Path
 import re
 import unittest
+from unittest import mock
 
+from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
+
+from app.main import app
+import app.pipeline as pipeline
 from ai.reasoning import (
+    DEFAULT_MODEL_REASON,
+    HttpGeminiClient,
     ReasoningError,
     StubGeminiClient,
     parse_reasoning_json,
@@ -15,6 +26,37 @@ from ai.session import (
     SessionStore,
     default_session_store,
 )
+
+SCHEMA = Draft202012Validator(
+    json.loads(
+        (Path(__file__).resolve().parents[2] / "contracts" / "ws-messages.schema.json").read_text()
+    )
+)
+FRAME = {"mime": "image/jpeg", "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"}
+
+
+class RealParserGeminiClient:
+    """Client that passes a Gemini response payload to HttpGeminiClient._parse_gemini_response."""
+
+    def __init__(self, raw_candidate_text: str):
+        self.raw_candidate_text = raw_candidate_text
+
+    async def generate_reasoning(
+        self,
+        command: str,
+        page_text: str,
+        session: BookSession,
+        model: str = DEFAULT_MODEL_REASON,
+    ):
+        raw_api_payload = json.dumps({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": self.raw_candidate_text}]
+                }
+            }]
+        })
+        client = HttpGeminiClient(api_key="mock-gemini-key")
+        return client._parse_gemini_response(raw_api_payload, session)
 
 
 class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
@@ -202,6 +244,132 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.history[0].answer,
                          "A richer spoken explanation with extra detail.")
         self.assertNotEqual(session.history[0].answer, "A short caption.")
+
+    def test_parse_reasoning_json_with_blank_whitespace_null_caption(self):
+        """#175: blank, whitespace, or null caption falls back to usable speech_text."""
+        session = BookSession("s-blank-caption")
+        speech = "Hamlet wonders whether enduring his pain is nobler than dying."
+
+        cases = [
+            {"caption": ""},
+            {"caption": "   \n\t  "},
+            {"caption": None},
+            {},
+        ]
+
+        for payload_override in cases:
+            payload = {
+                "title": "Hamlet, Act 3, Scene 1",
+                "speech_text": speech,
+                "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+                **payload_override,
+            }
+            parsed = parse_reasoning_json(json.dumps(payload), session)
+            self.assertEqual(parsed["caption"], speech)
+            self.assertEqual(parsed["speech_text"], speech)
+            self.assertIn(f"Illustration of {speech}", parsed["image_prompt"])
+
+    def test_parse_reasoning_json_with_blank_or_missing_speech_text(self):
+        """#175: blank or missing speech_text falls back to usable caption."""
+        session = BookSession("s-blank-speech")
+        caption = "Hamlet is contemplating life and death."
+
+        cases = [
+            {"speech_text": ""},
+            {"speech_text": "   "},
+            {"speech_text": None},
+            {},
+        ]
+
+        for payload_override in cases:
+            payload = {
+                "title": "Hamlet, Act 3, Scene 1",
+                "caption": caption,
+                "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+                **payload_override,
+            }
+            parsed = parse_reasoning_json(json.dumps(payload), session)
+            self.assertEqual(parsed["caption"], caption)
+            self.assertEqual(parsed["speech_text"], caption)
+            self.assertIn(f"Illustration of {caption}", parsed["image_prompt"])
+
+    def test_parse_reasoning_json_raises_when_both_caption_and_speech_blank(self):
+        """#175: parse_reasoning_json raises ReasoningError only when both caption and speech_text are blank/missing."""
+        session = BookSession("s-both-blank")
+
+        cases = [
+            {"caption": "", "speech_text": ""},
+            {"caption": "   ", "speech_text": "\t \n"},
+            {"caption": None, "speech_text": None},
+            {},
+        ]
+
+        for payload in cases:
+            with self.subTest(payload=payload):
+                with self.assertRaises(ReasoningError) as ctx:
+                    parse_reasoning_json(json.dumps(payload), session)
+                self.assertIn("missing both caption and speech text", str(ctx.exception).lower())
+
+    def test_parse_reasoning_json_sanitizes_errors_without_model_text_leak(self):
+        """REQ-PRIV-02: invalid model output never leaks raw text into ReasoningError."""
+        session = BookSession("s-leak-check")
+        secret_text = "SECRET_TOKEN_DO_NOT_LEAK"
+        malformed = f"Not valid JSON with {secret_text}"
+
+        with self.assertRaises(ReasoningError) as ctx:
+            parse_reasoning_json(malformed, session)
+        self.assertNotIn(secret_text, str(ctx.exception))
+
+    def test_e2e_websocket_blank_caption_yields_valid_card(self):
+        """#175 (REQ-WS-01): end-to-end /ws test invoking real parse_reasoning_json with blank caption yields valid Card."""
+        model_json = json.dumps({
+            "title": "Hamlet, Act 3, Scene 1",
+            "caption": "   ",
+            "speech_text": "Hamlet questions whether to endure life's troubles or take arms against them.",
+            "book": {
+                "title": "Hamlet",
+                "author": "William Shakespeare",
+                "location": "Act 3, Scene 1",
+            },
+            "sources": [
+                {
+                    "title": "Hamlet Text",
+                    "url": "https://www.gutenberg.org/ebooks/1524",
+                }
+            ],
+        })
+
+        client = RealParserGeminiClient(model_json)
+        set_reasoning_client(client)
+        self.addCleanup(set_reasoning_client, None)
+
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "mock-api-key", "NVIDIA_API_KEY": ""}), \
+             mock.patch.object(pipeline, "draw", mock.AsyncMock(return_value=None)), \
+             TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_json({
+                "type": "invoke",
+                "request_id": "req-175-card",
+                "session_id": "session-175-card",
+                "frame": FRAME,
+                "audio": None,
+                "text": "explain",
+            })
+            while (reply := ws.receive_json())["type"] == "status":
+                pass
+
+        self.assertEqual(reply["type"], "card", reply)
+        schema_errors = [e.message for e in SCHEMA.iter_errors(reply)]
+        self.assertEqual(schema_errors, [])
+        self.assertEqual(
+            reply["caption"],
+            "Hamlet questions whether to endure life's troubles or take arms against them.",
+        )
+        self.assertEqual(
+            reply["speech_text"],
+            "Hamlet questions whether to endure life's troubles or take arms against them.",
+        )
+        self.assertEqual(reply["title"], "Hamlet, Act 3, Scene 1")
+        self.assertEqual(reply["book"]["title"], "Hamlet")
 
 
 if __name__ == "__main__":

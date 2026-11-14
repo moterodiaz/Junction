@@ -128,16 +128,19 @@ class HttpGeminiClient:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     return resp.read().decode("utf-8")
             except urllib.error.HTTPError as exc:
-                body = exc.read().decode("utf-8", errors="replace")
-                raise ReasoningError(f"Gemini API HTTP {exc.code}: {body}") from exc
+                raise ReasoningError(f"Gemini API HTTP {exc.code}") from exc
             except urllib.error.URLError as exc:
                 if isinstance(exc.reason, TimeoutError):
-                    raise TimeoutError(f"Gemini request timed out: {exc}") from exc
-                raise ReasoningError(f"Gemini API network error: {exc}") from exc
-            except TimeoutError:
-                raise
+                    raise TimeoutError("Gemini request timed out") from exc
+                raise ReasoningError(
+                    f"Gemini API network error: {type(exc.reason).__name__}"
+                ) from exc
+            except TimeoutError as exc:
+                raise TimeoutError("Gemini request timed out") from exc
             except Exception as exc:
-                raise ReasoningError(f"Gemini request failed: {exc}") from exc
+                raise ReasoningError(
+                    f"Gemini request failed: {type(exc).__name__}"
+                ) from exc
 
         raw_response = await asyncio.to_thread(_execute_http)
         return self._parse_gemini_response(raw_response, session)
@@ -145,16 +148,17 @@ class HttpGeminiClient:
     def _parse_gemini_response(self, raw_json: str, session: BookSession) -> Dict[str, Any]:
         try:
             data = json.loads(raw_json)
-            candidates = data.get("candidates", [])
-            if not candidates:
-                raise ReasoningError("Gemini returned no candidates")
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if not parts:
-                raise ReasoningError("Gemini candidate has no parts")
-            text = parts[0].get("text", "")
-            return parse_reasoning_json(text, session)
         except json.JSONDecodeError as exc:
-            raise ReasoningError(f"Invalid JSON from Gemini API: {exc}") from exc
+            raise ReasoningError("Invalid JSON from Gemini API") from exc
+
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise ReasoningError("Gemini returned no candidates")
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            raise ReasoningError("Gemini candidate has no parts")
+        text = parts[0].get("text", "")
+        return parse_reasoning_json(text, session)
 
 
 class StubGeminiClient:
@@ -246,19 +250,26 @@ def parse_reasoning_json(text: str, session: BookSession) -> Dict[str, Any]:
         # Fallback regex extraction if surrounded by extra text
         match = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if match:
-            data = json.loads(match.group(0))
+            try:
+                data = json.loads(match.group(0))
+            except json.JSONDecodeError as exc:
+                raise ReasoningError("Could not parse JSON from model output") from exc
         else:
-            raise ReasoningError(f"Could not parse JSON from model output: {text[:200]}")
+            raise ReasoningError("Could not parse JSON from model output")
 
     if not isinstance(data, dict):
         raise ReasoningError("Model output JSON is not an object")
 
     title = str(data.get("title") or f"{session.book.title}, {session.book.location}").strip()
     caption = str(data.get("caption") or "").strip()
+    speech_text = str(data.get("speech_text") or "").strip()
+    if not caption and not speech_text:
+        raise ReasoningError("Model output is missing both caption and speech text")
     if not caption:
-        raise ReasoningError("Model output is missing a caption")
-    speech_text = str(data.get("speech_text") or caption).strip()
-    image_prompt = str(data.get("image_prompt") or f"Illustration of {caption}").strip()
+        caption = speech_text
+    elif not speech_text:
+        speech_text = caption
+    image_prompt = str(data.get("image_prompt") or f"Illustration of {caption or speech_text}").strip()
 
     # Enforce optical lens conditioning on image_prompt if missing
     if "black background" not in image_prompt.lower():
