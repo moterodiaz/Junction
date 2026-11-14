@@ -13,7 +13,7 @@ on:
   issues:
     types: [opened, edited, closed, reopened, labeled, unlabeled]
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -27,8 +27,9 @@ jobs:
       (github.event_name != 'pull_request' && github.event_name != 'pull_request_review' && github.event_name != 'issues') ||
       (github.event_name == 'issues' && (contains(github.event.issue.labels.*.name, 'escape') || github.event.label.name == 'escape')) ||
       github.event.pull_request.head.repo.full_name == github.repository
-    # Job-level, so runs skipped by the condition above never take a queue slot. One writer at a time, and every
-    # run re-evaluates every open PR, so the last run posts the newest decision and a replaced queued run loses nothing.
+    # Job-level, so runs skipped by the condition above never take a queue slot. One writer at a time;
+    # pull_request and pull_request_review events evaluate only their own PR, while schedule and issues
+    # sweep all open PRs. A replaced queued run loses nothing.
     concurrency:
       group: trust-status
       cancel-in-progress: false
@@ -52,13 +53,25 @@ jobs:
       - name: Post trust status
         run: |
           set -euo pipefail
-          # Paginated: a capped list would leave older PRs with a stale passing status.
-          prs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '.[].number')"
-          if [ -n "${EVENT_PR:-}" ]; then prs="$(printf '%s\n%s\n' "$prs" "$EVENT_PR" | sed '/^$/d' | sort -un)"; fi
+          # pull_request and pull_request_review always set EVENT_PR; evaluate only that PR.
+          # schedule / issues / workflow_dispatch without pr_number: sweep every open PR.
+          if [ -n "${EVENT_PR:-}" ]; then
+            prs="${EVENT_PR}"
+          else
+            # Paginated: a capped list would leave older PRs with a stale passing status.
+            prs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '.[].number')"
+          fi
           for pr in $prs; do
             [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number: $pr"; exit 1; }
             sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)"
             code=0; out="$(tools/metrics --gate "$pr" 2>&1)" || code=$?
+            if [ "$code" -ne 0 ] && [ "$code" -ne 3 ]; then
+              for _r in 1 2; do
+                sleep 20
+                code=0; out="$(tools/metrics --gate "$pr" 2>&1)" || code=$?
+                [ "$code" -eq 0 ] || [ "$code" -eq 3 ] && break
+              done
+            fi
             case "$code" in
               0) state=success ;;
               3) state=failure ;;
