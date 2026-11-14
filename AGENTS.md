@@ -10,7 +10,7 @@ Every agent reads this file first. The flow, in order:
 2. **The PRD is the source of truth** for what we build: `Junction-Prep/metalab_prd.md`. Every task cites a PRD section. If a task issue and the PRD disagree, the PRD wins; change the PRD only by PR.
 3. **Get work from the issue board.** `tools/task next` shows the next unclaimed task; `tools/task claim <N>` takes it. Never start work without a claimed task issue.
 4. **Ship on your own time.** When a feature is done, open a PR to `main` from your worktree (`Closes #N`).
-5. **PRs run themselves.** Greptile reviews, `claude-fix` fixes its comments and pushes, `ci` runs, and GitHub auto-merges. Do not hand-fix bot threads or approve a PR; never use `--admin`. One exception: a PR that changes `.github/workflows/**` or `.claude/settings.json` needs one human merge.
+5. **PRs run themselves.** Greptile reviews, `claude-fix` fixes its comments and pushes, `ci` runs, and GitHub auto-merges. Do not hand-fix bot threads or approve a PR; never use `--admin`. Who may merge what is §3 rule 9; PRs touching `.github/`, `.claude/`, `.agents/` or `contracts/` need their owner's merge.
 6. **Never idle.** After opening a PR, run `tools/task next` and claim the next task. If the queue is below 3, run `tools/task fill` and file more tasks from the PRD.
 7. **Conflicts go on the board**, not to a human: see section 6.
 
@@ -41,8 +41,11 @@ Humans over agents. Only the team lead reassigns work between teammates. If anyo
 2. Small commits. Stage only your own files (no `git add -A`).
 3. Open a PR with `Closes #N`, ready for review, not draft (Greptile skips drafts). Post its link on the board and move on.
 4. Bots push to PR branches, so before pushing run `git pull --no-rebase`. Resolve conflicts by merging `origin/main` into your branch. Never rebase or force-push a pushed branch.
-5. Agents may merge a team PR with `gh pr merge --squash --auto` once it is ready: GitHub holds the merge until every required check (`ci`) passes and all review threads are resolved, and `claude-fix` also enables it. Never use `--admin`, never merge a PR with failing or pending checks, and never approve a PR (`gh pr review --approve`). The board pings you on conflicts, `needs human`, and merge.
+5. Merging follows rule 9. GitHub holds an auto-merge until every required check (`ci`) passes and all review threads are resolved. The board pings you on conflicts, `needs human`, and merge.
 6. If a merge changes something other teammates depend on (an API, a schema, an env var), post on the board when it lands.
+7. Every task issue and PR names a requirement id from `docs/REQUIREMENTS.md` (`REQ-...`). No id, no claim; add a row there first if none fits.
+8. Never resolve a review thread without a reply: `Fixed in <sha>` or `Not changing: <reason>`. A thread resolved in silence counts as an unreviewed change in `tools/metrics`.
+9. **Merge authority** (the only statement of this rule). Any agent, and `claude-fix`, may enable auto-merge (`gh pr merge --squash --auto`) once `ci` and `Greptile Review` pass and every review thread has a written reply (rule 8). No agent approves a review (`gh pr review --approve`), uses `--admin`, or merges a PR with failing or pending checks. A PR that touches `.github/`, `.claude/`, `.agents/` or `contracts/` is merged by its owner (section 4; the lead owns `.github/`, `.claude/` and `.agents/`): agents do not enable auto-merge on it, and the `claude-fix` workflow refuses to push to those paths or to enable auto-merge on such a PR (#120; until it merges, this last part is a team rule).
 
 ## 4. Who owns what
 
