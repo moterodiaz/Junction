@@ -336,7 +336,7 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         set_reasoning_client(client)
         self.addCleanup(set_reasoning_client, None)
 
-        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "mock-api-key", "NVIDIA_API_KEY": ""}), \
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "mock-api-key", "NVIDIA_API_KEY": "", "IMAGE_BASE_URL": ""}), \
              mock.patch.object(pipeline, "draw", mock.AsyncMock(return_value=None)), \
              TestClient(app).websocket_connect("/ws") as ws:
             ws.send_json({
