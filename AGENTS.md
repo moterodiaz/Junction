@@ -2,6 +2,8 @@
 
 ## START HERE
 
+New here or kickoff day? Read KICKOFF.md, then run tools/onboard.
+
 Every agent reads this file first. The flow, in order:
 
 1. **Own worktree.** `tools/wt <issue#>-<slug>` creates your branch from fresh `origin/main` in a sibling folder; work only there. Never edit in the shared checkout or on `main`. After your PR merges, `tools/wt rm <slug>`.
