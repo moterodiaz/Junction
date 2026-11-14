@@ -11,8 +11,13 @@ from pathlib import Path
 
 import modal
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
 REMOTE_BACKEND = "/root/backend"
+
+# Locally this file is backend/app/modal_app.py; in the container Modal runs it as
+# /root/modal_app.py next to the uploaded /root/backend. Use whichever holds the app.
+_HERE = Path(__file__).resolve().parent
+BACKEND_DIR = next(path for path in (_HERE.parent, _HERE / "backend")
+                   if (path / "app" / "config.py").is_file())
 
 sys.path.insert(0, str(BACKEND_DIR))
 from app.config import MODAL_SECRET_NAME  # noqa: E402
