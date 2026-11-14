@@ -4,8 +4,9 @@ import os
 /// One WebSocket for one question. The payload is the invoke message and nothing else:
 /// no API key, no frame after the send completes.
 final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
-    var onText: (@Sendable (String) -> Void)?
-    var onDisconnect: (@Sendable () -> Void)?
+    /// Each callback carries the token `connect` returned, so a caller can drop replies from an older socket.
+    var onText: (@Sendable (String, Int) -> Void)?
+    var onDisconnect: (@Sendable (Int) -> Void)?
 
     private struct State {
         var session: URLSession?
@@ -15,7 +16,8 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    func connect(url: URL) {
+    @discardableResult
+    func connect(url: URL) -> Int {
         disconnect()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = true
@@ -29,6 +31,7 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
         task.resume()
         receive(on: task, token: token)
+        return token
     }
 
     func send(_ data: Data) async throws {
@@ -57,15 +60,15 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             guard token == current else { return }
             switch result {
             case .success(.string(let text)):
-                self.onText?(text)
+                self.onText?(text, token)
                 self.receive(on: task, token: token)
             case .success(.data(let data)):
                 if let text = String(data: data, encoding: .utf8) {
-                    self.onText?(text)
+                    self.onText?(text, token)
                 }
                 self.receive(on: task, token: token)
             case .failure:
-                self.onDisconnect?()
+                self.onDisconnect?(token)
             @unknown default:
                 self.receive(on: task, token: token)
             }

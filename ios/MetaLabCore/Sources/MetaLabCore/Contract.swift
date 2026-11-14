@@ -143,7 +143,8 @@ public enum ServerErrorCode: String, Codable, Sendable, Equatable, CaseIterable 
 
 public struct ErrorMessage: Equatable, Sendable {
     public var type: String
-    public var requestId: String
+    /// Null when the server could not parse the invoke it is answering (PRD section 7).
+    public var requestId: String?
     public var code: ServerErrorCode
     public var message: String
     public var retryable: Bool
@@ -151,7 +152,7 @@ public struct ErrorMessage: Equatable, Sendable {
     public var rawCode: String
 
     public init(
-        requestId: String,
+        requestId: String?,
         code: ServerErrorCode,
         message: String,
         retryable: Bool,
@@ -170,6 +171,32 @@ public enum ServerEvent: Equatable, Sendable {
     case status(StatusMessage)
     case card(CardMessage)
     case error(ErrorMessage)
+}
+
+/// Decides whether a decoded server event answers the request the phone is waiting for.
+public enum ResponseFilter {
+    /// A reply counts only when it comes from the socket carrying the active request and belongs to it.
+    public static func accepts(
+        _ event: ServerEvent, fromSocket socket: Int, activeSocket: Int?, activeRequest: String?
+    ) -> Bool {
+        guard let activeSocket, socket == activeSocket else { return false }
+        return belongs(event, to: activeRequest)
+    }
+
+    public static func belongs(_ event: ServerEvent, to activeRequest: String?) -> Bool {
+        guard let activeRequest else { return false }
+        switch event {
+        case .status(let status):
+            return status.requestId == activeRequest
+        case .card(let card):
+            return card.requestId == activeRequest
+        case .error(let error):
+            // `request_id` is null only when the server could not parse the invoke. Each question
+            // has its own socket, and the caller drops replies from older sockets, so a null-id
+            // error on the current socket can only be about the active request.
+            return error.requestId == nil || error.requestId == activeRequest
+        }
+    }
 }
 
 public enum ContractError: Error, Equatable, Sendable {
@@ -304,7 +331,7 @@ extension ErrorMessage: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         type = try container.decodeIfPresent(String.self, forKey: .type) ?? "error"
-        requestId = try container.decode(String.self, forKey: .requestId)
+        requestId = try container.decodeIfPresent(String.self, forKey: .requestId)
         let raw = try container.decode(String.self, forKey: .code)
         rawCode = raw
         code = ServerErrorCode(rawValue: raw) ?? .internalError
@@ -315,7 +342,11 @@ extension ErrorMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(type, forKey: .type)
-        try container.encode(requestId, forKey: .requestId)
+        if let requestId {
+            try container.encode(requestId, forKey: .requestId)
+        } else {
+            try container.encodeNil(forKey: .requestId)
+        }
         try container.encode(rawCode, forKey: .code)
         try container.encode(message, forKey: .message)
         try container.encode(retryable, forKey: .retryable)
