@@ -156,8 +156,18 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     answer = await timed(think(command, page_text, invoke.session_id))
 
     await send_stage("drawing")
-    image_url = await timed(draw(answer["image_prompt"], invoke.session_id))
-    audio_url = await speak(answer["speech_text"])  # None on any failure: the phone speaks the text
+    # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit
+    # would see. It is optional: None on any failure or timeout, and the phone speaks the text.
+    async def _speak() -> str | None:
+        try:
+            return await asyncio.wait_for(speak(answer["speech_text"]), STAGE_TIMEOUT_S)
+        except Exception as exc:
+            log.warning("Speech unavailable: %s", exc)
+            return None
+
+    image_url, audio_url = await asyncio.gather(
+        timed(draw(answer["image_prompt"], invoke.session_id)), _speak()
+    )
 
     return Card(
         request_id=invoke.request_id,
