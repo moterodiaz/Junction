@@ -12,6 +12,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -358,6 +359,12 @@ def _token_similarity(s1: str, s2: str) -> float:
     return len(intersection) / len(tokens1)
 
 
+@lru_cache(maxsize=262144)
+def _word_ratio(a: str, b: str) -> float:
+    """Memoized SequenceMatcher ratio; windows overlap so pairs repeat heavily."""
+    return SequenceMatcher(None, a, b).ratio()
+
+
 def _fuzzy_token_similarity(query_words: List[str], window_norm: str, threshold: float = 0.5) -> float:
     """Fraction of query words with a best per-word SequenceMatcher ratio >= threshold."""
     # ponytail: O(q*w) per window; fine for <=4-word queries; switch to index if longer
@@ -366,7 +373,7 @@ def _fuzzy_token_similarity(query_words: List[str], window_norm: str, threshold:
         return 0.0
     matched = sum(
         1 for qw in query_words
-        if max(SequenceMatcher(None, qw, ww).ratio() for ww in window_words) >= threshold
+        if max(_word_ratio(qw, ww) for ww in set(window_words)) >= threshold
     )
     return matched / len(query_words)
 
