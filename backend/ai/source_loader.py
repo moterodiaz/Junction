@@ -115,6 +115,20 @@ class FlatLineIndex:
     speaker: str
     text: str
     norm: str
+    words_set: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass
+class SceneIndex:
+    act: int
+    scene: int
+    act_roman: str
+    scene_roman: str
+    scene_desc: str
+    start_idx: int
+    end_idx: int
+    norm_text: str
+    words_set: frozenset[str]
 
 
 @dataclass
@@ -127,31 +141,55 @@ class Play:
     license: str
     acts: List[Act] = field(default_factory=list)
     _indexed_lines: List[FlatLineIndex] = field(default_factory=list, repr=False)
+    _scenes: List[SceneIndex] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
-        if not self._indexed_lines:
+        if not self._indexed_lines or not getattr(self, "_scenes", None):
             self._build_index()
 
     def _build_index(self) -> None:
         flat: List[FlatLineIndex] = []
+        scenes: List[SceneIndex] = []
         for act in self.acts:
             for scene in act.scenes:
+                scene_start = len(flat)
+                scene_lines_flat: List[FlatLineIndex] = []
                 for line in scene.lines:
                     if line.type == "line" and line.text:
-                        flat.append(
-                            FlatLineIndex(
-                                act=act.act,
-                                scene=scene.scene,
-                                act_roman=act.act_roman,
-                                scene_roman=scene.scene_roman,
-                                scene_desc=scene.location_desc,
-                                line=line.line,
-                                speaker=line.speaker,
-                                text=line.text,
-                                norm=normalize_text(line.text),
-                            )
+                        norm = normalize_text(line.text)
+                        item = FlatLineIndex(
+                            act=act.act,
+                            scene=scene.scene,
+                            act_roman=act.act_roman,
+                            scene_roman=scene.scene_roman,
+                            scene_desc=scene.location_desc,
+                            line=line.line,
+                            speaker=line.speaker,
+                            text=line.text,
+                            norm=norm,
+                            words_set=frozenset(norm.split()),
                         )
+                        flat.append(item)
+                        scene_lines_flat.append(item)
+                if scene_lines_flat:
+                    scene_end = len(flat)
+                    norm_text = " " + " ".join(item.norm for item in scene_lines_flat) + " "
+                    scene_words = frozenset().union(*(item.words_set for item in scene_lines_flat))
+                    scenes.append(
+                        SceneIndex(
+                            act=act.act,
+                            scene=scene.scene,
+                            act_roman=act.act_roman,
+                            scene_roman=scene.scene_roman,
+                            scene_desc=scene.location_desc,
+                            start_idx=scene_start,
+                            end_idx=scene_end,
+                            norm_text=norm_text,
+                            words_set=scene_words,
+                        )
+                    )
         self._indexed_lines = flat
+        self._scenes = scenes
 
     @property
     def total_lines(self) -> int:
@@ -451,39 +489,49 @@ def find_passage(
     max_window_lines = max(max_window_lines, min(len(query_words) // 2 + 2, 60))
 
     # 2. Multi-line window search (exact normalized substring)
-    total = len(lines)
-    for window_size in range(2, max_window_lines + 1):
-        for i in range(total - window_size + 1):
-            # Must be within the same scene
-            if lines[i].act != lines[i + window_size - 1].act or lines[i].scene != lines[i + window_size - 1].scene:
+    if 0.92 >= min_score and getattr(loaded_play, "_scenes", None):
+        for sc in loaded_play._scenes:
+            if padded_query not in sc.norm_text:
                 continue
-            window_norm = " ".join(lines[i + k].norm for k in range(window_size))
-            if 0.92 >= min_score and padded_query in f" {window_norm} ":
-                matched_lines = lines[i : i + window_size]
-                first = matched_lines[0]
-                last = matched_lines[-1]
-                loc_str = (
-                    f"Act {first.act}, Scene {first.scene}, line {first.line}"
-                    if first.line == last.line
-                    else f"Act {first.act}, Scene {first.scene}, lines {first.line}-{last.line}"
-                )
-                combined_text = "\n".join(l.text for l in matched_lines)
-                return PassageMatch(
-                    play_id=loaded_play.id,
-                    play_title=loaded_play.title,
-                    author=loaded_play.author,
-                    act=first.act,
-                    scene=first.scene,
-                    act_roman=first.act_roman,
-                    scene_roman=first.scene_roman,
-                    line_start=first.line,
-                    line_end=last.line,
-                    speaker=first.speaker or None,
-                    text=combined_text,
-                    location=loc_str,
-                    score=0.92,
-                    source=loaded_play.get_source_citation(),
-                )
+            sc_lines = lines[sc.start_idx : sc.end_idx]
+            n_sc = len(sc_lines)
+            max_w = min(max_window_lines, n_sc)
+            first_word = query_words[0]
+
+            for window_size in range(2, max_w + 1):
+                for i in range(n_sc - window_size + 1):
+                    # To be the shortest matching window, the first line must contain the first word
+                    if first_word not in sc_lines[i].norm:
+                        continue
+                    window_norm = " ".join(sc_lines[i + k].norm for k in range(window_size))
+                    if padded_query in f" {window_norm} ":
+                        global_start = sc.start_idx + i
+                        global_end = global_start + window_size
+                        matched_lines = lines[global_start:global_end]
+                        first = matched_lines[0]
+                        last = matched_lines[-1]
+                        loc_str = (
+                            f"Act {first.act}, Scene {first.scene}, line {first.line}"
+                            if first.line == last.line
+                            else f"Act {first.act}, Scene {first.scene}, lines {first.line}-{last.line}"
+                        )
+                        combined_text = "\n".join(l.text for l in matched_lines)
+                        return PassageMatch(
+                            play_id=loaded_play.id,
+                            play_title=loaded_play.title,
+                            author=loaded_play.author,
+                            act=first.act,
+                            scene=first.scene,
+                            act_roman=first.act_roman,
+                            scene_roman=first.scene_roman,
+                            line_start=first.line,
+                            line_end=last.line,
+                            speaker=first.speaker or None,
+                            text=combined_text,
+                            location=loc_str,
+                            score=0.92,
+                            source=loaded_play.get_source_citation(),
+                        )
 
     # 3. Fuzzy token overlap / SequenceMatcher window search for OCR errors or partial speech
     best_candidate: Optional[Tuple[float, int, int]] = None  # (score, start_idx, end_idx)
@@ -494,51 +542,110 @@ def find_passage(
     # ponytail: _best_score tightens as we find better candidates, pruning hopeless windows early
     _best_score = min_score
 
-    # Outer loop by start index; inner loop by window_size allows incremental window building
-    # and early break when the window crosses a scene boundary.
-    for i in range(total):
-        window_norm = ""
-        window_words_set: set = set()
+    if getattr(loaded_play, "_scenes", None):
+        scenes_to_search = loaded_play._scenes
+    else:
+        # Fallback if _scenes was not initialized
+        scenes_to_search = [
+            SceneIndex(
+                act=lines[0].act,
+                scene=lines[0].scene,
+                act_roman=lines[0].act_roman,
+                scene_roman=lines[0].scene_roman,
+                scene_desc=lines[0].scene_desc,
+                start_idx=0,
+                end_idx=len(lines),
+                norm_text=" " + " ".join(l.norm for l in lines) + " ",
+                words_set=frozenset().union(*(l.words_set for l in lines)),
+            )
+        ]
 
-        for window_size in range(1, max_window_lines + 1):
-            j = i + window_size - 1
-            if j >= total:
+    if _is_short_query:
+        for sc in scenes_to_search:
+            sc_lines = lines[sc.start_idx : sc.end_idx]
+            n_sc = len(sc_lines)
+            max_w = min(max_window_lines, n_sc)
+            for i in range(n_sc):
+                window_norm = ""
+                for window_size in range(1, max_w + 1):
+                    j = i + window_size - 1
+                    if j >= n_sc:
+                        break
+                    line_j = sc_lines[j]
+                    window_norm = (window_norm + " " + line_j.norm) if window_norm else line_j.norm
+                    if not window_norm:
+                        continue
+                    len_w = len(window_norm)
+                    real_quick = 2.0 * min(len_query_chars, len_w) / (len_query_chars + len_w)
+                    if 0.6 + 0.4 * real_quick < _best_score:
+                        continue
+                    seq_ratio = SequenceMatcher(None, norm_query, window_norm).ratio()
+                    fuzzy_tok_sim = _fuzzy_token_similarity(query_words, window_norm)
+                    combined_score = 0.6 * fuzzy_tok_sim + 0.4 * seq_ratio
+                    if combined_score >= min_score:
+                        if best_candidate is None or combined_score > best_candidate[0]:
+                            best_candidate = (combined_score, sc.start_idx + i, sc.start_idx + i + window_size)
+                            _best_score = combined_score
+    else:
+        needed_words = int(0.4 * len(query_words_set))
+        scene_candidates = []
+        for sc in scenes_to_search:
+            overlap = len(query_words_set & sc.words_set) / len(query_words_set)
+            if 0.6 * overlap + 0.4 >= _best_score:
+                scene_candidates.append((overlap, sc))
+
+        # Sort scenes with highest word overlap first to establish a tight _best_score quickly
+        scene_candidates.sort(key=lambda s: s[0], reverse=True)
+
+        for overlap, sc in scene_candidates:
+            if 0.6 * overlap + 0.4 <= _best_score:
                 break
-            line_j = lines[j]
-            if lines[i].act != line_j.act or lines[i].scene != line_j.scene:
-                break  # extending the window further won't re-enter this scene
 
-            # Incremental window text: avoids O(window_size) join per window
-            window_norm = (window_norm + " " + line_j.norm) if window_norm else line_j.norm
-            if not window_norm:
-                continue
-            window_words_set.update(line_j.norm.split())
+            sc_lines = lines[sc.start_idx : sc.end_idx]
+            n_sc = len(sc_lines)
+            max_w = min(max_window_lines, n_sc)
+            start_offset = sc.start_idx
+            line_query_counts = [len(l.words_set & query_words_set) for l in sc_lines]
 
-            tok_sim = len(query_words_set & window_words_set) / len(query_words_set)
+            candidates = []
+            for i in range(n_sc):
+                running_q_count = 0
+                len_w = 0
+                window_words_set: set = set()
+                for w in range(1, max_w + 1):
+                    j = i + w - 1
+                    if j >= n_sc:
+                        break
+                    line_j = sc_lines[j]
+                    len_w = (len_w + 1 + len(line_j.norm)) if len_w else len(line_j.norm)
+                    running_q_count += line_query_counts[j]
+                    window_words_set.update(line_j.words_set)
+                    if running_q_count < needed_words:
+                        continue
+                    tok_sim = len(query_words_set & window_words_set) / len(query_words_set)
+                    if tok_sim < 0.4:
+                        continue
+                    real_quick = 2.0 * min(len_query_chars, len_w) / (len_query_chars + len_w)
+                    upper_bound = 0.6 * tok_sim + 0.4 * real_quick
+                    if upper_bound > _best_score:
+                        candidates.append((upper_bound, tok_sim, real_quick, i, w, len_w))
 
-            if _is_short_query:
-                seq_ratio = SequenceMatcher(None, norm_query, window_norm).ratio()
-                fuzzy_tok_sim = _fuzzy_token_similarity(query_words, window_norm)
-                combined_score = 0.6 * fuzzy_tok_sim + 0.4 * seq_ratio
-            else:
-                if tok_sim < 0.4:
-                    continue
-                # real_quick_ratio = 2*min(len_a,len_b)/(len_a+len_b) is a proven upper bound
-                # of SequenceMatcher.ratio(); prune before the expensive ratio() call.
-                len_w = len(window_norm)
-                real_quick = 2.0 * min(len_query_chars, len_w) / (len_query_chars + len_w)
-                if 0.6 * tok_sim + 0.4 * real_quick < _best_score:
-                    continue
+            # Sort candidate windows by upper bound descending, tie-breaking by i ascending, w ascending
+            candidates.sort(key=lambda c: (-c[0], c[3], c[4]))
+
+            for upper_bound, tok_sim, real_quick, i, w, len_w in candidates:
+                if upper_bound <= _best_score:
+                    break
+                window_norm = " ".join(sc_lines[k].norm for k in range(i, i + w))
                 sm = SequenceMatcher(None, norm_query, window_norm)
                 if 0.6 * tok_sim + 0.4 * sm.quick_ratio() < _best_score:
                     continue
                 seq_ratio = sm.ratio()
                 combined_score = 0.6 * tok_sim + 0.4 * seq_ratio
-
-            if combined_score >= min_score:
-                if best_candidate is None or combined_score > best_candidate[0]:
-                    best_candidate = (combined_score, i, i + window_size)
-                    _best_score = combined_score  # tighten pruning threshold
+                if combined_score >= min_score:
+                    if best_candidate is None or combined_score > best_candidate[0]:
+                        best_candidate = (combined_score, start_offset + i, start_offset + i + w)
+                        _best_score = combined_score
 
     if best_candidate is not None:
         score, start_idx, end_idx = best_candidate

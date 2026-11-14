@@ -344,6 +344,17 @@ class SourceLoaderTest(unittest.TestCase):
         self.assertEqual(match.line_end, 93)
         self.assertLess(elapsed, 3.0, f"queston query took {elapsed:.2f}s, expected < 3s")
 
+    def test_unknown_book_raises_file_not_found(self) -> None:
+        """Unknown-book calls must raise FileNotFoundError rather than inventing coordinates or returning Hamlet citation."""
+        with self.assertRaises(FileNotFoundError):
+            load_play("Unknown Book")
+
+        with self.assertRaises(FileNotFoundError):
+            get_source_citation("Unknown Book")
+
+        with self.assertRaises(FileNotFoundError):
+            find_passage("To be, or not to be", play="Unknown Book")
+
 
 if __name__ == "__main__":
     unittest.main()
