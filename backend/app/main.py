@@ -102,17 +102,18 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
                                     message=exc.message, retryable=exc.retryable))
         return
     except PageReadError as exc:
-        log.exception("page reading failed for %s", invoke.request_id)
+        pipeline.log_failure("page reading failed for %s", exc, invoke.request_id)
         messages = {
             "no_text_found": "No readable text was found on the page.",
             "model_timeout": "Page reading timed out. Try again.",
             "internal": "Page reading failed. Try again.",
         }
-        await send(websocket, Error(request_id=invoke.request_id, code=exc.code,
-                                    message=messages[exc.code], retryable=exc.retryable))
+        code = exc.code if exc.code in messages else "internal"  # unknown codes still reach the phone
+        await send(websocket, Error(request_id=invoke.request_id, code=code,
+                                    message=messages[code], retryable=exc.retryable))
         return
-    except Exception:
-        log.exception("pipeline failed for %s", invoke.request_id)
+    except Exception as exc:
+        pipeline.log_failure("pipeline failed for %s", exc, invoke.request_id)
         await send(websocket, Error(request_id=invoke.request_id, code="internal",
                                     message="Something went wrong. Try again.", retryable=True))
         return

@@ -1,5 +1,5 @@
-"""Pipeline stages (PRD section 3, step 4). Stubs that later tasks replace:
-read_page -> #28, think -> #30, draw -> #31. Speech to text lives in backend/stt/ (#27).
+"""Pipeline stages (PRD section 3, step 4): transcribe (backend/stt/), read the page,
+think and draw (backend/ai/), plus the spoken answer. Offline stubs run when keys are absent.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ import base64
 import logging
 import os
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Awaitable, Callable, Optional, TypeVar
 
@@ -26,6 +27,13 @@ from .messages import Book, Card, ErrorCode, Invoke, Media, Source, Stage
 SendStage = Callable[[Stage], Awaitable[None]]
 T = TypeVar("T")
 log = logging.getLogger("metalab.pipeline")
+
+
+def log_failure(what: str, exc: BaseException, *args: object) -> None:
+    """Log a failure's type and stack, never its message: upstream errors can quote page
+    text or model output, and logs must not hold user text (PRD section 6)."""
+    frames = "".join(traceback.format_tb(exc.__traceback__))
+    log.error(what + ": %s\n%s", *args, type(exc).__name__, frames)
 
 
 class PipelineError(Exception):
@@ -76,7 +84,7 @@ async def transcribe(audio: Media) -> str:
     except TimeoutError:
         raise  # timed() turns it into model_timeout
     except Exception as exc:
-        log.exception("speech engine failed on a %d byte %s clip", len(clip), audio.mime)
+        log_failure("speech engine failed on a %d byte %s clip", exc, len(clip), audio.mime)
         raise PipelineError("stt_failed", "Speech recognition failed. Try again.", True) from exc
 
 
@@ -133,7 +141,7 @@ async def draw(image_prompt: str, session_id: str) -> str | None:
     try:
         return await image.draw(image_prompt, session_id=session_id)
     except Exception as exc:
-        log.warning("Image generation unavailable: %s", exc)
+        log.warning("Image generation unavailable: %s", type(exc).__name__)
         return None
 
 
@@ -203,12 +211,20 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         try:
             return await asyncio.wait_for(speak(answer["speech_text"]), STAGE_TIMEOUT_S)
         except Exception as exc:
-            log.warning("Speech unavailable: %s", exc)
+            log.warning("Speech unavailable: %s", type(exc).__name__)
             return None
 
-    image_url, audio_url = await asyncio.gather(
-        timed(draw(answer["image_prompt"], invoke.session_id)), _speak()
-    )
+    # A slow image costs only the picture: the card still ships with text and speech (PRD section 9).
+    async def _draw() -> str | None:
+        try:
+            return await timed(draw(answer["image_prompt"], invoke.session_id))
+        except PipelineError as exc:
+            if exc.code != "model_timeout":
+                raise
+            log.warning("Image generation timed out; sending the card without a picture")
+            return None
+
+    image_url, audio_url = await asyncio.gather(_draw(), _speak())
 
     return Card(
         request_id=invoke.request_id,

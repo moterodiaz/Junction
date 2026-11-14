@@ -91,16 +91,19 @@ class SpokenInvokeTest(unittest.TestCase):
         self.assertTrue(replies[1]["retryable"])
 
     def test_engine_crash_is_logged_without_audio(self):
+        message = " ".join(["gpu", "on", "fire"])  # built at runtime: logged frames show source lines
+
         def broken(audio):
-            raise RuntimeError("gpu on fire")
+            raise RuntimeError(message)
 
         stt.set_engine(broken)
         with self.assertLogs("metalab", "ERROR") as logs:
             with self.assertRaises(pipeline.PipelineError):
                 asyncio.run(pipeline.transcribe(pipeline.Media(**AUDIO)))
-        record = logs.records[0]
-        self.assertIsNotNone(record.exc_info)
-        self.assertIn("gpu on fire", logs.output[0])
+        # Type and stack frames for debugging; never the message, which can quote user text (#102).
+        self.assertIn("RuntimeError", logs.output[0])
+        self.assertIn("in broken", logs.output[0])
+        self.assertNotIn("gpu on fire", logs.output[0])
         self.assertNotIn("RIFF", logs.output[0])
         self.assertNotIn(AUDIO["b64"], logs.output[0])
 
