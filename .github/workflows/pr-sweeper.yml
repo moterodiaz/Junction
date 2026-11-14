@@ -6,7 +6,16 @@ name: PR Sweeper
 on:
   schedule:
     - cron: "*/15 * * * *"
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: ["Claude Fix Bot Reviews"]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      chain:
+        type: number
+        default: 0
   pull_request:
     types: [closed]
 
@@ -24,6 +33,10 @@ jobs:
   sweep:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: pr-sweeper
+      cancel-in-progress: false
     steps:
       - name: Sweep open PRs
         shell: bash
@@ -52,7 +65,12 @@ jobs:
             fi
 
             # 2. Conflicts with main: auto-merge is blocked until the author resolves them.
-            if [ "$(jq -r .mergeStateStatus <<<"$j")" = DIRTY ] && ! seen "PR #$n conflicts"; then
+            mss="$(jq -r .mergeStateStatus <<<"$j")"
+            if [ "$mss" = UNKNOWN ]; then
+              sleep 15
+              mss="$(gh pr view "$n" -R "$REPO" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null)" || mss=UNKNOWN
+            fi
+            if [ "$mss" = DIRTY ] && ! seen "PR #$n conflicts"; then
               board "@$a PR #$n conflicts with main. Run git pull --no-rebase, merge origin/main (no rebase, no force-push), then push."
             fi
 
@@ -164,6 +182,24 @@ jobs:
               board "@$author PR #$n needs human: sweeper gave up: $count thread(s) still open after 2 claude-fix retries" || true
             fi
           done
+
+  heartbeat:
+    needs: sweep
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Heartbeat
+        env:
+          chain: ${{ inputs.chain || 0 }}
+        shell: bash
+        run: |
+          dirty="$(gh pr list -R "$REPO" --state open --json number,mergeStateStatus,isDraft \
+            --jq '[.[] | select(.isDraft | not) | select(.mergeStateStatus != "CLEAN")] | length' 2>/dev/null)" || dirty=0
+          if [ "${dirty:-0}" -gt 0 ] && [ "${chain:-0}" -lt 36 ]; then
+            sleep 600
+            gh workflow run pr-sweeper.yml -R "$REPO" -f chain="$((chain+1))" || true
+          fi
 
   merged:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
