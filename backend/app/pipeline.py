@@ -8,6 +8,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import threading
 import traceback
 import weakref
@@ -186,6 +187,43 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
 
 
+_HTTPS_URL = re.compile(r"^https://[^\s/?#]+[^\s]*$")  # the contract's httpsUrl pattern
+
+
+def _text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _https(value: object) -> str | None:
+    return value if isinstance(value, str) and _HTTPS_URL.fullmatch(value) else None  # $ alone allows a final "\n"
+
+
+def contract_card(request_id: str, answer: dict, image_url: str | None, audio_url: str | None,
+                  models: dict[str, str]) -> Card:
+    """Build a card whose text and sources meet the contract (#112): blank text gets a plain
+    default and sources without a valid https URL are dropped. Model ids are passed through."""
+    speech = _text(answer.get("speech_text")) or _text(answer.get("caption")) or "Here is what this passage is about."
+    book = answer.get("book") if isinstance(answer.get("book"), dict) else {}
+    sources = [
+        Source(title=_text(s.get("title")) or "Source", url=s["url"])
+        for s in answer.get("sources") or []
+        if isinstance(s, dict) and _https(s.get("url"))
+    ]
+    return Card(
+        request_id=request_id,
+        title=_text(answer.get("title")) or _text(book.get("title")) or "Your page",
+        caption=_text(answer.get("caption")) or speech,
+        image_url=image_url,
+        speech_text=speech,
+        audio_url=audio_url,
+        book=Book(title=_text(book.get("title")) or "Unknown book",
+                  author=_text(book.get("author")) or "Unknown author",
+                  location=_text(book.get("location")) or "Unknown location"),
+        sources=sources,
+        models=models,
+    )
+
+
 async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run every stage in order, reporting each one before it starts.
 
@@ -218,12 +256,6 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         model=_reason_model if _reason_model != "stub" else None,
     ))
 
-    raw_sources = answer.get("sources") or []
-    sources = [
-        Source(title=s.get("title") or "Source", url=s["url"])
-        for s in raw_sources
-        if isinstance(s, dict) and str(s.get("url") or "").startswith("https://")
-    ]
 
     await send_stage("drawing")
     # Speech runs alongside drawing so it adds no wait the phone's 30 s silence limit
@@ -256,18 +288,6 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         raise
     audio_url = await speaking
 
-    return Card(
-        request_id=invoke.request_id,
-        title=answer["title"],
-        caption=answer["caption"],
-        image_url=image_url,
-        speech_text=answer["speech_text"],
-        audio_url=audio_url,
-        book=Book(**answer["book"]),
-        sources=sources,
-        models={
-            "read": _read_model,
-            "reason": _reason_model,
-            "image": _image_model() if image_url else "stub",
-        },
-    )
+    models = {"read": _read_model, "reason": _reason_model,
+              "image": _image_model() if image_url else "stub"}
+    return contract_card(invoke.request_id, answer, image_url, audio_url, models)
