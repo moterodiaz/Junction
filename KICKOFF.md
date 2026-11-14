@@ -17,7 +17,7 @@ MetaLab session bootstrap: get every teammate's agent running in its own worktre
 
 ## Lead: split the work
 
-Run `tools/kickoff assign <area> <login>` for ios, backend, contracts, then open the PR.
+Edit the owner table in `AGENTS.md` section 4 by hand: set the GitHub login for the ios, backend and contracts rows, then open the PR.
 
 Suggested default (not a rule): lead = contracts + integration; one person backend core (config, latency, stt, errors); one person backend AI (reading, reasoning, image, sources); one person ios.
 

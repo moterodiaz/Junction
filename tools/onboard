@@ -55,27 +55,31 @@ check_scripts() {
 }
 
 check_hooks() {
-  local root="$1" settings hooks_dir hook all_ok
+  local root="$1" settings hooks_dir hook name all_ok
   settings="$root/.claude/settings.json"
   if [ ! -f "$settings" ]; then
     fail ".claude/settings.json missing — fix: git pull"
-  elif ! python3 -c "import json; json.load(open('$settings'))" 2>/dev/null; then
+  elif ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$settings" 2>/dev/null; then
     fail ".claude/settings.json invalid JSON — fix: repair $settings"
   else
     ok ".claude/settings.json valid JSON"
   fi
   hooks_dir="$root/.claude/hooks"
-  if [ -d "$hooks_dir" ]; then
-    all_ok=1
-    for hook in "$hooks_dir"/*.sh; do
-      [ -f "$hook" ] || continue
-      if ! bash -n "$hook" 2>/dev/null; then
-        fail "hook $(basename "$hook") bash syntax error — fix: inspect $hook"
-        all_ok=0
-      fi
-    done
-    [ "$all_ok" -eq 1 ] && ok ".claude/hooks/*.sh bash-clean"
-  fi
+  all_ok=1
+  for name in no-edit-on-main bash-guard board-session-start board-prompt; do
+    hook="$hooks_dir/$name.sh"
+    if [ ! -f "$hook" ]; then
+      fail "hook $name.sh missing — fix: git pull"
+      all_ok=0
+    elif [ ! -x "$hook" ]; then
+      fail "hook $name.sh not executable — fix: chmod +x $hook"
+      all_ok=0
+    elif ! bash -n "$hook" 2>/dev/null; then
+      fail "hook $name.sh bash syntax error — fix: inspect $hook"
+      all_ok=0
+    fi
+  done
+  [ "$all_ok" -eq 1 ] && ok ".claude/hooks/*.sh present, executable, bash-clean"
 }
 
 check_branch() {
@@ -94,7 +98,7 @@ check_user_settings() {
     warn "$usf not found — fix: create it with the user settings block from KICKOFF.md"
     return
   fi
-  if ! python3 -c "import json; json.load(open('$usf'))" 2>/dev/null; then
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$usf" 2>/dev/null; then
     warn "$usf invalid JSON — fix: replace with the user settings block from KICKOFF.md"
     return
   fi
@@ -130,7 +134,7 @@ check_task() {
   if "$root/tools/task" next >/dev/null 2>&1; then
     ok "tools/task next works"
   else
-    warn "tools/task next returned an error — check gh auth or network; fix: gh auth login"
+    fail "tools/task next returned an error — fix: run tools/task next and resolve the reported error"
   fi
 }
 
