@@ -58,7 +58,7 @@ Every card reports which models actually produced it in its `models` field (`con
 | Google DeepMind: Gemini API | reasoning with book memory, illustration, spoken answer | `backend/ai/`, `backend/stt/speak.py` |
 | NVIDIA: Nemotron | reading the photographed page | `backend/ai/page_reader.py` |
 | Modal | the FastAPI WebSocket backend and Whisper | `backend/app/modal_app.py` |
-| Tieto: Earned trust in AI code | the bounded agent PR pipeline | `AGENTS.md`, `.github/workflows/` |
+| Tieto: Earned trust in AI code | the bounded agent PR pipeline | [`docs/TIETO_CONCEPT_CARD.md`](docs/TIETO_CONCEPT_CARD.md), [`docs/TIETO_LESSONS_LOG.md`](docs/TIETO_LESSONS_LOG.md), `AGENTS.md`, `.github/workflows/` |
 
 ## Run and test
 
