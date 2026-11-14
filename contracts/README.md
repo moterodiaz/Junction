@@ -2,6 +2,22 @@
 
 `ws-messages.schema.json` is the authoritative JSON Schema (Draft 2020-12) for PRD Section 7 WebSocket messages exchanged between `ios/` and `backend/`.
 
+## Proposed lifecycle extension (not runtime implementation)
+
+[LIFECYCLE.md](LIFECYCLE.md) specifies the opt-in `metalab.v2` subprotocol for
+REQ-WS-04 / REQ-PRIV-03 ([#128](https://github.com/moterodiaz/Junction/issues/128)).
+Its separate `ws-lifecycle.schema.json` does **not** widen the existing schema.
+Clients must observe successful v2 negotiation before sending new controls;
+legacy clients never receive v2 messages. Cancellation, explicit-end cleanup,
+15-minute monotonic expiry with a five-second cleanup bound, and default-off
+WSS handshake auth are proposed contracts, not claims about deployed behavior.
+
+`test_lifecycle.py` validates synthetic protocol fixtures/traces and auth rollout
+scenarios. `test_legacy_lifecycle.py` checks actual legacy rejection against the
+current backend. These run through `./test.sh` alongside the existing legacy
+conformance tests. Backend/iOS implementation and compatibility approval remain
+with Ahmed/Maksym; runtime flags/auth remain off.
+
 ## Message Types
 
 ### Phone to Backend
