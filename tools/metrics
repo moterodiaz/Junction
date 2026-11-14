@@ -9,7 +9,7 @@
 # Env: METRICS_REPO (default: the current gh repo); METRICS_TABLE, a file holding a pre-rendered repo-wide table for --pr. Definitions: docs/TIETO_CONCEPT_CARD.md section 5.
 set -euo pipefail
 command -v gh >/dev/null 2>&1 || { echo "metrics: gh not found (https://cli.github.com)" >&2; exit 1; }
-REPO="${METRICS_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
+if [ "${1:-}" = "--selftest" ]; then REPO="${METRICS_REPO:-selftest/selftest}"; else REPO="${METRICS_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"; fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export REPO ROOT
 exec python3 - "$@" <<'PY'
@@ -44,10 +44,17 @@ def graphql(query, **vars):
     return json.loads(gh(*args))["data"]["repository"]
 
 THREADS = "reviewThreads(first:100){totalCount nodes{isResolved path line comments(first:30){nodes{author{login} body url}}}}"
-PR_FIELDS = f"""number title body state createdAt mergedAt author{{login}} files(first:100){{nodes{{path}}}}
+PR_FIELDS = f"""number title body state createdAt mergedAt author{{login}} files(first:100){{totalCount nodes{{path}}}}
   commits(first:100){{nodes{{commit{{message}}}}}}
   comments(first:100){{nodes{{author{{login}} body url}}}}
   {THREADS}"""
+
+def pr_files(p):
+    """Paths of a PR; pages through REST when GraphQL returned only the first 100 files."""
+    if p["files"]["totalCount"] > len(p["files"]["nodes"]):
+        return [f for f in gh("api", "--paginate", f"repos/{REPO}/pulls/{p['number']}/files?per_page=100",
+                              "--jq", ".[] | .filename, (.previous_filename // empty)").splitlines() if f]
+    return [f["path"] for f in p["files"]["nodes"]]
 
 def all_prs():
     # 50 PRs per page keeps the query far below GitHub's 500,000-node limit (never ask gh pr list for commits).
@@ -117,7 +124,7 @@ def open_escapes_by_area():
         if not e["open"]:
             continue
         for n in e["prs"]:
-            files = gh("api", "--paginate", f"repos/{REPO}/pulls/{n}/files?per_page=100", "--jq", ".[].filename").split()
+            files = gh("api", "--paginate", f"repos/{REPO}/pulls/{n}/files?per_page=100", "--jq", ".[] | .filename, (.previous_filename // empty)").split()
             for area in pr_areas(files):
                 out.setdefault(area, set()).add(e["number"])
     return out
@@ -138,6 +145,11 @@ def repo_metrics(since):
     merged_numbers = {p["number"] for p in merged}
     escapes = [e for e in escape_issues() if set(e["prs"]) & merged_numbers]
     escaped_prs = {n for e in escapes for n in e["prs"]} & merged_numbers
+    # A revert undoes an earlier PR: count the affected PR once, not the PR and its revert.
+    affected = set(escaped_prs)
+    for p in reverts:
+        undone = {int(n) for n in re.findall(r"#(\d+)", p["title"] + " " + (p["body"] or ""))} & merged_numbers
+        affected |= (undone - {p["number"]}) or {p["number"]}
     with_req = [p for p in prs if REQ.search(p["title"] + " " + (p["body"] or ""))]
     fixer = sum(fixer_commits(p) for p in prs)
     runs = json.loads(gh("run", "list", "-R", REPO, "--workflow", "ci.yml", "--limit", "100", "--json", "conclusion"))
@@ -167,7 +179,7 @@ def repo_metrics(since):
         "escapes_open": sum(e["open"] for e in escapes),
         "prs_with_escape": len(escaped_prs),
         # Outcome, not activity: merged PRs that were reverted or let a defect reach main past review.
-        "escape_rate_pct": pct(len(reverts) + len(escaped_prs), len(merged)),
+        "escape_rate_pct": pct(len(affected), len(merged)),
         "prs_with_req_id": len(with_req),
         "req_id_coverage_pct": pct(len(with_req), len(prs)),
         "ci_runs_success_pct": pct(sum(r["conclusion"] == "success" for r in done), len(done)),
@@ -223,9 +235,10 @@ def area_metrics(since):
     """Track record per owner area (CODEOWNERS), with trust earned or withdrawn."""
     merged = [p for p in all_prs() if p["number"] >= since and p["mergedAt"]]
     escapes = escape_issues()
+    open_now = open_escapes_by_area()  # current trust uses every open escape, whatever --since says
     areas = {}
     for p in merged:
-        for owner in pr_areas([f["path"] for f in p["files"]["nodes"]]):
+        for owner in pr_areas(pr_files(p)):
             a = areas.setdefault(owner, {"prs": set(), "ttm": [], "kinds": []})
             a["prs"].add(p["number"])
             a["ttm"].append((ts(p["mergedAt"]) - ts(p["createdAt"])).total_seconds() / 60)
@@ -233,7 +246,7 @@ def area_metrics(since):
     rows = []
     for owner, a in sorted(areas.items()):
         mine = [e for e in escapes if set(e["prs"]) & a["prs"]]
-        open_ = [e["number"] for e in mine if e["open"]]
+        open_ = sorted(open_now.get(owner, set()))
         k = a["kinds"]
         rows.append({"area": owner, "prs_merged": len(a["prs"]), "ttm_median_min": round(statistics.median(a["ttm"]), 1),
                      "threads": len(k), "fixed": k.count("fixed"), "rejected": k.count("rejected"),
