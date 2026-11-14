@@ -177,6 +177,7 @@ struct RootView: View {
                 .accessibilityLabel("Backend WebSocket URL")
 
             Toggle("Show the lens", isOn: displayBinding)
+            Toggle("Status chimes", isOn: $model.earconsEnabled)
             Toggle("High-quality photo fallback", isOn: $model.useStandalonePhoto)
             Toggle("Keep a sample frame for the reading test", isOn: $model.keepSampleFrames)
             if let url = model.sampleFrameURL {

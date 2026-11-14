@@ -17,6 +17,7 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertEqual(s.model_reason_fast, DEFAULTS["MODEL_REASON_FAST"])
         self.assertEqual(s.model_reason_deep, DEFAULTS["MODEL_REASON_DEEP"])
         self.assertEqual(s.dynamic_model_routing, DEFAULTS["DYNAMIC_MODEL_ROUTING"])
+        self.assertEqual(s.stt_engine, DEFAULTS["STT_ENGINE"])
 
     def test_overrides_win(self):
         s = load_settings({
@@ -26,12 +27,14 @@ class LoadSettingsTest(unittest.TestCase):
             "MODEL_REASON_FAST": "gemini-fast-custom",
             "MODEL_REASON_DEEP": "gemini-deep-custom",
             "DYNAMIC_MODEL_ROUTING": "true",
+            "STT_ENGINE": "gemini",
         })
         self.assertEqual(s.model_reason, "gemini-4-hydrogen")
         self.assertEqual(s.model_decision, "custom-decision")
         self.assertEqual(s.model_reason_fast, "gemini-fast-custom")
         self.assertEqual(s.model_reason_deep, "gemini-deep-custom")
         self.assertEqual(s.dynamic_model_routing, "true")
+        self.assertEqual(s.stt_engine, "gemini")
 
     def test_positional_settings_backward_compatibility(self):
         # Existing callers instantiating Settings with 7 positional fields
@@ -41,6 +44,16 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertEqual(s.model_reason_fast, "gemini-3.5-flash-lite")
         self.assertEqual(s.model_reason_deep, "gemini-4-carbon")
         self.assertEqual(s.dynamic_model_routing, "false")
+        self.assertEqual(s.stt_engine, "whisper")
+
+    def test_stt_engine_default_and_override(self):
+        self.assertEqual(DEFAULTS["STT_ENGINE"], "whisper")
+        s_default = load_settings(KEYS)
+        self.assertEqual(s_default.stt_engine, "whisper")
+        s_gemini = load_settings({**KEYS, "STT_ENGINE": "gemini"})
+        self.assertEqual(s_gemini.stt_engine, "gemini")
+        s_blank = load_settings({**KEYS, "STT_ENGINE": "   "})
+        self.assertEqual(s_blank.stt_engine, "whisper")
 
     def test_blank_override_falls_back_to_default(self):
         s = load_settings({**KEYS, "MODEL_IMAGE": "  "})

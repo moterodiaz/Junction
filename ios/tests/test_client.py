@@ -8,6 +8,22 @@ import unittest
 STAGES = ("transcribing", "reading", "thinking", "drawing")
 ERROR_CODES = ("no_text_found", "stt_failed", "model_timeout", "internal")
 
+STAGE_FREQUENCIES = {
+    "transcribing": 523.25,
+    "reading": 659.25,
+    "thinking": 783.99,
+    "drawing": 1046.50,
+}
+
+
+def should_play_earcon(stage, earcons_enabled=True, is_speaking=False):
+    """Client-side gate for status earcon cues."""
+    if not earcons_enabled:
+        return False
+    if is_speaking:
+        return False
+    return stage in STAGES
+
 
 def capture_steps(display_enabled, typed_command):
     typed = bool(typed_command and typed_command.strip())
@@ -149,6 +165,23 @@ class ClientTests(unittest.TestCase):
         self.assertTrue(timed_out(40, 30))
         self.assertFalse(timed_out(80, 5))
         self.assertTrue(timed_out(90, 1))
+
+    def test_status_earcon_cues_for_pipeline_stages(self):
+        # Every server pipeline stage maps to a valid earcon chime cue
+        for stage in STAGES:
+            self.assertTrue(should_play_earcon(stage, earcons_enabled=True, is_speaking=False))
+            self.assertIn(stage, STAGE_FREQUENCIES)
+            self.assertGreater(STAGE_FREQUENCIES[stage], 0)
+
+        # Gated by optional toggle (default enabled)
+        self.assertFalse(should_play_earcon("reading", earcons_enabled=False, is_speaking=False))
+
+        # Safe non-blocking: suppressed when card arrives or TTS/voice is speaking
+        self.assertFalse(should_play_earcon("reading", earcons_enabled=True, is_speaking=True))
+        self.assertFalse(should_play_earcon("thinking", earcons_enabled=True, is_speaking=True))
+
+        # Unknown stage does not trigger an earcon
+        self.assertFalse(should_play_earcon("invalid_stage", earcons_enabled=True, is_speaking=False))
 
 
 if __name__ == "__main__":

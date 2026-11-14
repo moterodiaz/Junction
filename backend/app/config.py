@@ -30,6 +30,7 @@ DEFAULTS = {
     "MODEL_REASON_FAST": "gemini-3.5-flash-lite",
     "MODEL_REASON_DEEP": "gemini-4-carbon",
     "DYNAMIC_MODEL_ROUTING": "false",
+    "STT_ENGINE": "whisper",
 }
 
 
@@ -121,6 +122,19 @@ def config_problems(env: Mapping[str, str]) -> list[str]:
     raw = env.get("WS_MAX_CONNECTIONS", "").strip()
     if raw and (not raw.isdigit() or int(raw) < 1):
         problems.append("WS_MAX_CONNECTIONS must be a whole number of at least 1")
+
+    raw_gemini_timeout = env.get("GEMINI_TIMEOUT_MS", "").strip()
+    if raw_gemini_timeout:
+        try:
+            if int(raw_gemini_timeout) <= 0:
+                problems.append("GEMINI_TIMEOUT_MS must be a finite positive integer in milliseconds")
+        except ValueError:
+            problems.append("GEMINI_TIMEOUT_MS must be a finite positive integer in milliseconds")
+
+    raw_stt = env.get("STT_ENGINE", "").strip().lower()
+    if raw_stt and raw_stt not in ("whisper", "gemini"):
+        problems.append("STT_ENGINE must be 'whisper' or 'gemini'")
+
     return problems
 
 
@@ -137,6 +151,7 @@ class Settings:
     model_reason_fast: str = "gemini-3.5-flash-lite"
     model_reason_deep: str = "gemini-4-carbon"
     dynamic_model_routing: str = "false"
+    stt_engine: str = "whisper"
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
