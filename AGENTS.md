@@ -37,10 +37,9 @@ TEMPLATE split, not final. The team will agree owners together; until then ask t
 
 | Area | Owner (GitHub login) | Folders |
 |---|---|---|
-| Pi edge capture (motion gate, I2S mic, WS server) | TBD | `pi/` |
-| iPhone orchestrator (STT, prompt router, Claude calls) | TBD | `ios/` |
-| HUD renderer | TBD | `hud/` |
-| Shared contracts (WS message schema) | @moterodiaz (lead) | `contracts/` |
+| iOS app: thin client, Meta Wearables DAT capture and display, WebSocket client | TBD | `ios/` |
+| Backend: FastAPI orchestrator on Modal, speech to text, page reading and reasoning, image generation | TBD | `backend/` |
+| Shared contracts (WebSocket message schema, PRD section 7) | @moterodiaz (lead) | `contracts/` |
 
 ## 5. Supervisor + sub-agents
 

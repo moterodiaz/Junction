@@ -14,9 +14,9 @@ jobs:
       - name: Shell syntax
         run: |
           for f in tools/board tools/wt .claude/hooks/*.sh; do bash -n "$f"; done
-      # ponytail: placeholder areas; each area drops in an executable test.sh, add real jobs when pi/ios/hud need more.
+      # ponytail: placeholder areas; each area drops in an executable test.sh, add real jobs when ios/backend/contracts need more.
       - name: Area tests
         run: |
-          for d in pi ios hud contracts; do
+          for d in ios backend contracts; do
             if [ -x "$d/test.sh" ]; then (cd "$d" && ./test.sh); fi
           done
