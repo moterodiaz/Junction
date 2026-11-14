@@ -487,34 +487,58 @@ def find_passage(
 
     # 3. Fuzzy token overlap / SequenceMatcher window search for OCR errors or partial speech
     best_candidate: Optional[Tuple[float, int, int]] = None  # (score, start_idx, end_idx)
-    min_tokens = len(query_words)
     # ponytail: short-query threshold ≤ 4 words; raise if OCR errors regularly span longer passages
     _is_short_query = len(query_words) <= 4
+    len_query_chars = len(norm_query)
+    query_words_set = set(query_words)
+    # ponytail: _best_score tightens as we find better candidates, pruning hopeless windows early
+    _best_score = min_score
 
-    # Determine candidate window range
-    for window_size in range(1, max_window_lines + 1):
-        for i in range(total - window_size + 1):
-            if lines[i].act != lines[i + window_size - 1].act or lines[i].scene != lines[i + window_size - 1].scene:
-                continue
+    # Outer loop by start index; inner loop by window_size allows incremental window building
+    # and early break when the window crosses a scene boundary.
+    for i in range(total):
+        window_norm = ""
+        window_words_set: set = set()
 
-            window_norm = " ".join(lines[i + k].norm for k in range(window_size))
+        for window_size in range(1, max_window_lines + 1):
+            j = i + window_size - 1
+            if j >= total:
+                break
+            line_j = lines[j]
+            if lines[i].act != line_j.act or lines[i].scene != line_j.scene:
+                break  # extending the window further won't re-enter this scene
+
+            # Incremental window text: avoids O(window_size) join per window
+            window_norm = (window_norm + " " + line_j.norm) if window_norm else line_j.norm
             if not window_norm:
                 continue
+            window_words_set.update(line_j.norm.split())
 
-            tok_sim = _token_similarity(norm_query, window_norm)
-            if not _is_short_query and tok_sim < 0.4:
-                continue
+            tok_sim = len(query_words_set & window_words_set) / len(query_words_set)
 
-            seq_ratio = SequenceMatcher(None, norm_query, window_norm).ratio()
             if _is_short_query:
+                seq_ratio = SequenceMatcher(None, norm_query, window_norm).ratio()
                 fuzzy_tok_sim = _fuzzy_token_similarity(query_words, window_norm)
                 combined_score = 0.6 * fuzzy_tok_sim + 0.4 * seq_ratio
             else:
-                combined_score = (tok_sim * 0.6) + (seq_ratio * 0.4)
+                if tok_sim < 0.4:
+                    continue
+                # real_quick_ratio = 2*min(len_a,len_b)/(len_a+len_b) is a proven upper bound
+                # of SequenceMatcher.ratio(); prune before the expensive ratio() call.
+                len_w = len(window_norm)
+                real_quick = 2.0 * min(len_query_chars, len_w) / (len_query_chars + len_w)
+                if 0.6 * tok_sim + 0.4 * real_quick < _best_score:
+                    continue
+                sm = SequenceMatcher(None, norm_query, window_norm)
+                if 0.6 * tok_sim + 0.4 * sm.quick_ratio() < _best_score:
+                    continue
+                seq_ratio = sm.ratio()
+                combined_score = 0.6 * tok_sim + 0.4 * seq_ratio
 
             if combined_score >= min_score:
                 if best_candidate is None or combined_score > best_candidate[0]:
                     best_candidate = (combined_score, i, i + window_size)
+                    _best_score = combined_score  # tighten pruning threshold
 
     if best_candidate is not None:
         score, start_idx, end_idx = best_candidate

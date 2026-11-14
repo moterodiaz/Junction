@@ -319,5 +319,31 @@ class SourceLoaderTest(unittest.TestCase):
             self.assertNotEqual(match.line_start, 1)
 
 
+    def test_ocr_30line_passage_queston(self) -> None:
+        """30-line passage with one OCR error (question→queston) must locate Act 3, Scene 1, lines 64-93."""
+        import time
+        play = load_play("Hamlet")
+        lines_data = []
+        for act in play.acts:
+            if act.act == 3:
+                for scene in act.scenes:
+                    if scene.scene == 1:
+                        for line in scene.lines:
+                            if line.type == "line" and 64 <= line.line <= 93:
+                                lines_data.append(line.text)
+        self.assertEqual(len(lines_data), 30)
+        query = "\n".join(lines_data).replace("question", "queston")
+        t0 = time.time()
+        match = find_passage(query, play="Hamlet")
+        elapsed = time.time() - t0
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertEqual(match.line_start, 64)
+        self.assertEqual(match.line_end, 93)
+        self.assertLess(elapsed, 3.0, f"queston query took {elapsed:.2f}s, expected < 3s")
+
+
 if __name__ == "__main__":
     unittest.main()
