@@ -74,11 +74,23 @@ jobs:
             gh issue edit "$n" -R "$REPO" --remove-label in-progress || true
           done < <(gh issue list -R "$REPO" --state closed --label in-progress --json number --jq '.[].number')
 
-          count="$(gh issue list -R "$REPO" --label task --state open \
+          count=0
+          while IFS=$'\t' read -r _ b64body; do
+            body="$(base64 --decode <<<"$b64body")"
+            deps="$(awk '/^## Depends on[[:space:]]*$/{f=1;next} f&&/^## /{exit} f{while(match($0, /#[0-9]+/)){print substr($0,RSTART+1,RLENGTH-1);$0=substr($0,RSTART+RLENGTH)}}' <<<"$body")"
+            ready=true
+            while read -r d; do
+              [ -z "$d" ] && continue
+              state="$(gh issue view "$d" -R "$REPO" --json state --jq .state 2>/dev/null)" || state=""
+              [ "$state" != "CLOSED" ] && ready=false && break
+            done <<<"$deps"
+            [ "$ready" = "true" ] && (( ++count )) || true
+          done < <(gh issue list -R "$REPO" --label task --state open \
             --search 'no:assignee -label:blocked -label:in-progress' \
-            --json number --jq length)"
+            --limit 100 --json number,body \
+            --jq '.[] | [.number, (.body | @base64)] | @tsv')
           if [[ "$count" =~ ^[0-9]+$ ]] && (( count < 3 )) && ! seen "task queue low"; then
-            board "task queue low ($count unclaimed). Run tools/task fill and file tasks from Junction-Prep/metalab_prd.md."
+            board "task queue low ($count ready). Run tools/task fill and file tasks from Junction-Prep/metalab_prd.md."
           fi
 
   merged:
