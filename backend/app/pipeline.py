@@ -241,32 +241,46 @@ def _is_dynamic_routing_active() -> bool:
 _SESSION_LOCKS: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 
 
+def _session_state(session) -> tuple:
+    """What a request may change in its book session: the history, which book is active, the
+    candidate list, each book's fields (set_active_book and update_location edit them in place)
+    and the pending book question."""
+    books = {id(b): b for b in (session.book, *session.candidate_books)}
+    return (list(session.history), session.book, list(session.candidate_books),
+            [(b, b.title, b.author, b.location) for b in books.values()],
+            getattr(session, "awaiting_book_clarification", False))
+
+
+def _restore_session_state(session, state: tuple) -> None:
+    history, book, candidates, fields, clarifying = state
+    session.history[:] = history
+    for b, title, author, location in fields:
+        b.title, b.author, b.location = title, author, location
+    session.book = book
+    session.candidate_books[:] = candidates
+    session.awaiting_book_clarification = clarifying
+
+
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     """Run the request under REQUEST_TIMEOUT_S; running out of time becomes model_timeout."""
     session = default_session_store.get_or_create(invoke.session_id)
-    history = session.history
     lock = _SESSION_LOCKS.get(invoke.session_id)
     if lock is None:
         lock = _SESSION_LOCKS[invoke.session_id] = asyncio.Lock()
-    before: list = []
     try:
         async with asyncio.timeout(REQUEST_TIMEOUT_S):
-            # One request per session at a time, so a cancel only ever undoes its own exchange.
+            # One request per session at a time, so a failure only ever undoes its own changes.
             async with lock:
-                before = list(history)
-                # Capture and restore the flag only while holding the lock, so a request that
-                # never ran cannot undo a book reply accepted by the one that did.
-                before_clarifying = getattr(session, "awaiting_book_clarification", False)
+                # Snapshot while holding the lock, so a request that never ran cannot undo one that did.
+                before = _session_state(session)
                 try:
                     return await _run(invoke, send_stage)
                 except BaseException:
-                    session.awaiting_book_clarification = before_clarifying
+                    # No card reaches the phone (error, timeout or hang-up): forget everything this
+                    # request recorded (think saves before drawing), so follow-ups never build on
+                    # an answer the student did not see.
+                    _restore_session_state(session, before)
                     raise
-    except asyncio.CancelledError:
-        # The phone hung up: forget what this request recorded (think saves before drawing), nothing else.
-        for exchange in [e for e in history if not any(e is b for b in before)]:
-            history.remove(exchange)
-        raise
     except TimeoutError as exc:
         raise PipelineError("model_timeout", "That took too long. Try again.", True) from exc
 
@@ -484,16 +498,19 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         else:
             style_preset = getattr(decision, "style_preset", None) if decision is not None else None
             image_url = await _draw(style_preset)
+        audio_url = await speaking
+        if clarify:
+            session.awaiting_book_clarification = True
+        models = {"read": _read_model, "reason": _reason_model,
+                  "image": _image_model() if image_url else "stub"}
+        return contract_card(invoke.request_id, answer, image_url, audio_url, models)
     except BaseException:
-        # The request fails, so its clip would never reach the phone: stop or delete it (#109).
+        # No card, so the clip would never reach the phone: stop it, or delete it if it is
+        # already stored (#109). Covers a draw failure, the request timeout or a hang-up while
+        # waiting for speech, and a card that fails to build.
         speaking.cancel()
-        if speaking.done() and not speaking.cancelled():
-            discard_clip(speaking.result())
+        if speaking.done() and not speaking.cancelled() and speaking.exception() is None:
+            clip = speaking.result()
+            if clip:
+                discard_clip(clip)
         raise
-    audio_url = await speaking
-    if clarify:
-        session.awaiting_book_clarification = True
-
-    models = {"read": _read_model, "reason": _reason_model,
-              "image": _image_model() if image_url else "stub"}
-    return contract_card(invoke.request_id, answer, image_url, audio_url, models)
