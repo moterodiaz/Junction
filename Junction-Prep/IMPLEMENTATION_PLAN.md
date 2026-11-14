@@ -6,7 +6,7 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 
 ## Execution rules
 
-- **Priority override (2026-11-14, PRD §12.13):** every task below is paused (`integration-paused`) until the lead releases it. Ahmed, Maksym and Marcus work only their priority lanes (#182 → #186 → #200 → #133 → #207, #184, #185 → #194–#199); only the lead works paused tasks, and their dependencies and `blocked` labels still apply. The stream order below resumes after the release. Branches and unfinished work are preserved.
+- **Priority override (2026-11-14, PRD §12.13):** every task below is paused (`integration-paused`) until the lead releases it. Ahmed, Maksym and Marcus work only their priority lanes (#182 → #186 → #200 → #133 → #207, #184, #185 → #194–#199 (`LANE-C2`..`LANE-C7`, Order 1–7)); only the lead works paused tasks, and their dependencies and `blocked` labels still apply. The stream order below resumes after the release. Branches and unfinished work are preserved.
 - **Backlog takeover (2026-11-14, lead decision):** every open paused task is assigned to @moterodiaz, and its `## Owner` section names the previous owner. The A/B/C/D area owners below still own their folders. The lead edits another owner's folder only after a handoff that owner agreed to on the board, and paused work waits behind overlapping priority-lane work (#129 → #139 wait for #194; #133 went back to Ahmed as a lane task, and #139 still depends on it). `tools/task next` serves the lead's ready assigned backlog tasks first.
 
 - Exactly four canonical areas: A `backend-app` Ahmed @Ahm3d-KA; B `ios` Maksym @maksymmatviievskyi; C `backend-ai` Marcus @Marcus228; D `contracts` Mateo @moterodiaz. Lead-owned docs/CI/evidence tasks belong to D. One responsible owner and bounded file list per task; shared test/evidence files require sequential owner coordination.
@@ -19,6 +19,56 @@ Read [PRD §§1–14](metalab_prd.md), [the single requirement registry](../docs
 - Every task inherits PRD §§6–7 and §12.1: server-side credentials/calls, unchanged deadlines, bounded optional work, one terminal result, cancellation, no raw-media persistence/logging, session-only user text/cache/generated media, explicit-end cleanup and bounded abandonment expiry, isolation/error/disconnect tests. Provider handling is reviewed separately; conflicts block activation. No user content or secrets in durable evidence.
 - `backend/test.sh`, `ios/test.sh`, `contracts/test.sh` are existing entry points, not proof of live behavior. All “new/planned/future” cases, evaluators and success scenarios below are **work to implement**, not checks already available or already run. Run real Swift/Xcode/hardware checks as specified; proxy/stub checks are insufficient.
 - Handoffs: D contracts first; C adapter signatures and evaluation evidence to A; A provider budgets/lifecycle/auth readiness to B/D; B hardware/manual outcomes to D. Gate owner D records actual revision, commands, failures, metrics, cleared evidence and explicit @moterodiaz acceptance.
+
+## Priority lanes and environment variable inventory (lead override, 2026-11-14)
+
+### Priority lane summary
+
+| Owner | Lane | Requirements | Tasks / Order |
+|---|---|---|---|
+| B / Maksym, @maksymmatviievskyi | LANE-B1 | REQ-IOS-03 | #184: get MetaLab working with the Meta web app SDK |
+| A / Ahmed, @Ahm3d-KA | LANE-A2 | REQ-PROC-01, REQ-PROC-02 | #182 (PR #183) escapes and per-area trust, then #186 pipeline enforcement |
+| C / Marcus, @Marcus228 | DeepMind priority lane | REQ-VOICE-02, REQ-SRC-01, REQ-INTENT-01, REQ-IMG-01, REQ-PROC-01, REQ-REASON-01, REQ-OBS-01, REQ-STT-01 | Order 1–7 (#185, #194–#199) |
+
+### DeepMind Priority Lane Tasks (Order 1–7, @Marcus228)
+
+1. **#185 (`LANE-C1`, Order 1, P0):** [LANE-C1] backend-ai: Gemini voice feedback and output with a decision model in the workflow (`REQ-VOICE-02`).
+   - Single-pass `gemini-decision-1` Decisions API routing (`v1beta` `decisions.create`), `gemini-3.8-flash-tts` output at `card.audio_url` (Kore voice, 24kHz mono PCM WAV), client earcons without contract changes, graceful fallback to L0 matcher and system voice.
+2. **#194 (`LANE-C2`, Order 2, P1):** [LANE-C2] backend-ai: Ground Hamlet locally and classify active book mid-session (`REQ-SRC-01`, `REQ-INTENT-01`).
+   - Wires `backend/ai/source_loader.py` `find_passage` for millisecond local Hamlet act/scene/line grounding, adds `BookSession.candidate_books` with dynamic mid-session classification in `backend/ai/decision.py`, and enforces `should_clarify_book` gate (clarify only when passage score < 0.65 and book match confidence < 0.70).
+3. **#195 (`LANE-C3`, Order 3, P2):** [LANE-C3] backend-ai: Classify book visual style via Gemini Decisions with soft style conditioning (`REQ-IMG-01`, `REQ-VOICE-02`).
+   - Classifies `style_preset` via Gemini Decisions, applies soft style suggestions via prompt formatting in `backend/ai/image.py`, preserving strict `#000000` black background and high-contrast luminous subject for Meta Ray-Ban Display additive optics and Nano Banana fallback.
+4. **#196 (`LANE-C4`, Order 4, P1):** [LANE-C4] docs: Sync requirements, PRD, execution plan, and backend docs for DeepMind priority lane (`REQ-PROC-01`, `REQ-VOICE-02`).
+   - Synchronizes `docs/REQUIREMENTS.md` (registering `REQ-OBS-01` and updating `REQ-VOICE-02`), `Junction-Prep/metalab_prd.md` (§4 Models & §12.13), `Junction-Prep/IMPLEMENTATION_PLAN.md`, backend configuration, and evidence.
+5. **#197 (`LANE-C5`, Order 5, P4):** [LANE-C5] backend-ai: [Low Priority] Modular DecisionQuestionSpec toggle for anti-spoiler reading horizon (`REQ-REASON-01`, `REQ-VOICE-02`).
+   - Modular `DecisionQuestionSpec` registry in `backend/ai/decision.py` with `DECISION_ENABLE_SPOILER_CHECK` toggle evaluating `spoiler_risk` against `BookSession.max_position` / `seen_passages` to prevent future plot reveals.
+6. **#198 (`LANE-C6`, Order 6, P3):** [LANE-C6] backend-ai: [Low Priority] Track model-choice distribution counters safely (`REQ-OBS-01`, `REQ-LAT-01`, `REQ-PRIV-02`).
+   - In-memory telemetry in `backend/ai/decision.py` / `backend/app/latency.py` recording distribution counts across models (`decision`, `read`, `reason`, `image`, `tts`, and fallbacks) without user text, audio, or prompts.
+7. **#199 (`LANE-C7`, Order 7, P3):** [LANE-C7] backend: Optional Gemini transcription (`gemini-3.5-transcribe`) & status earcon polish (`REQ-VOICE-02`, `REQ-STT-01`).
+   - Optional `gemini-3.5-transcribe` under `STT_ENGINE=whisper|gemini` in `backend/stt/engine.py` with Shakespeare vocabulary biasing and fallback to whisper, plus client-side status stage earcons in `ios/MetaLab/AnswerSpeaker.swift` preserving `contracts/ws-messages.schema.json`.
+
+**Cross-Area Takeover Override:**
+By agreement with the lead (@moterodiaz), @Marcus228 is authorized for cross-area delivery across `backend/ai/`, `backend/app/pipeline.py`, `backend/stt/`, and client earcons for the DeepMind priority lane issues (#185, #194–#199) to avoid blocking priority execution.
+
+### Environment Variable Inventory
+
+| Variable | Default Value | Required / Optional | Purpose / Model ID |
+|---|---|---|---|
+| `GEMINI_API_KEY` | *(None)* | **Required** | Google Gemini API key for decisions, reasoning, TTS, and image generation. Server-side in Modal secret `metalab`. |
+| `NVIDIA_API_KEY` | *(None)* | **Required** | NVIDIA API key for Nemotron page reading. Server-side in Modal secret `metalab`. |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Optional | NVIDIA integrate API base URL. |
+| `MODEL_READ` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Optional | Page reader model ID. Clean fallback to Gemini on timeout/error. |
+| `MODEL_DECISION` | `gemini-decision-1` | Optional | Gemini Decisions API model ID for single-pass decision routing via `v1beta` `decisions.create`. |
+| `MODEL_REASON` | `gemini-4-argon` | Optional | Balanced tier reasoning model ID (kept backward-compatible as a single string). |
+| `MODEL_REASON_FAST` | `gemini-3.5-flash-lite` | Optional | Fast tier reasoning model ID for simple/concise questions. |
+| `MODEL_REASON_DEEP` | `gemini-4-carbon` | Optional | Deep tier reasoning model ID for complex thematic analysis. |
+| `DYNAMIC_MODEL_ROUTING` | `false` | Optional | Flag (`true`/`false`) toggling dynamic tier selection across fast, balanced, and deep models. |
+| `MODEL_IMAGE` | `gemini-nano-banana-2.1` | Optional | Image generation model ID with soft style conditioning. Fallback: `gemini-3.1-flash-lite-image`. |
+| `MODEL_TTS` | `gemini-3.8-flash-tts` | Optional | Text-to-speech model ID (24 kHz mono PCM WAV via `Kore` voice). |
+| `STT_ENGINE` | `whisper` | Optional | Speech-to-text engine selection: `whisper` (`faster-whisper`) or `gemini` (`gemini-3.5-transcribe` with vocabulary biasing). |
+| `DECISION_ENABLE_SPOILER_CHECK` | `false` | Optional | Flag (`true`/`false`) enabling anti-spoiler reading horizon check via modular `DecisionQuestionSpec`. |
+| `DECISION_TIMEOUT_S` | `2.0` | Optional | Maximum timeout for decision routing (bounded <= 2.0s). |
+| `IMAGE_BASE_URL` | *(None)* | Required for generated media URLs | Explicit public HTTPS base URL for serving generated PNG images and synthesized WAV audio clips; not derived from the request or host. |
 
 ## Four-stream entry points
 
