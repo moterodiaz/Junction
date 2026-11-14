@@ -130,83 +130,23 @@ class SpokenInvokeTest(unittest.TestCase):
         self.assertEqual(replies[0]["code"], "stt_failed")
 
 
-class ParallelStagesTest(unittest.TestCase):
-    """Transcribing and reading the page overlap, and reading is cancelled on any early exit.
+class UnknownCommandSkipsReadingTest(unittest.TestCase):
+    def test_page_is_not_read_for_an_unknown_command(self):
+        self.addCleanup(stt.set_engine, stt.set_engine(lambda audio: "what time is it"))
+        reads = []
 
-    No sleeps: the engine (in its thread) waits until reading has started, and reading
-    waits until the test lets it finish, so the order of events is fixed.
-    """
-
-    def run_pipeline(self, transcript, fail_on_stage=None):
-        events = self.events = []
-        reading_started = threading.Event()
-        self.read_task = None
-
-        async def blocked_read(frame):
-            self.read_task = asyncio.current_task()
-            self.finish_reading = asyncio.Event()
-            events.append("read start")
-            reading_started.set()
-            try:
-                await self.finish_reading.wait()
-            except asyncio.CancelledError:
-                events.append("read cancelled")
-                raise
-            events.append("read done")
+        async def read_page(frame):
+            reads.append(frame)
             return "page"
 
-        def engine(audio):
-            if not reading_started.wait(timeout=5):
-                events.append("reading never started")
-            events.append("transcribe done")
-            return transcript
-
         async def send_stage(stage):
-            events.append(stage)
-            if stage == fail_on_stage:
-                raise ConnectionError("client went away")
-            if stage == "reading":
-                self.finish_reading.set()
+            pass
 
-        stt.set_engine(engine)
-        self.addCleanup(stt.set_engine, None)
-        original = pipeline.read_page
-        pipeline.read_page = blocked_read
-        self.addCleanup(setattr, pipeline, "read_page", original)
-        invoke = pipeline.Invoke.model_validate(spoken())
-
-        async def go():
-            try:
-                return await pipeline.run(invoke, send_stage)
-            finally:
-                # Wait for reading to settle before asyncio.run's teardown cancels leftovers.
-                if self.read_task is not None:
-                    await asyncio.wait([self.read_task], timeout=5)
-                self.read_cancelled = self.read_task is not None and self.read_task.cancelled()
-
-        return asyncio.run(go()), events
-
-    def test_reading_starts_before_transcription_finishes(self):
-        card, events = self.run_pipeline("explain")
-        self.assertEqual(card.type, "card")
-        self.assertNotIn("reading never started", events)
-        self.assertLess(events.index("read start"), events.index("transcribe done"))
-        self.assertLess(events.index("transcribe done"), events.index("read done"))
-
-    def test_reading_cancelled_on_unknown_command(self):
-        with self.assertRaises(pipeline.PipelineError):
-            self.run_pipeline("what time is it")
-        self.assertTrue(self.read_cancelled)
-        self.assertIn("read cancelled", self.events)
-        self.assertNotIn("read done", self.events)
-        self.assertNotIn("reading", self.events)
-
-    def test_reading_cancelled_when_reporting_a_stage_fails(self):
-        with self.assertRaises(ConnectionError):
-            self.run_pipeline("explain", fail_on_stage="reading")
-        self.assertTrue(self.read_cancelled)
-        self.assertIn("read cancelled", self.events)
-        self.assertNotIn("read done", self.events)
+        with mock.patch.object(pipeline, "read_page", read_page):
+            with self.assertRaises(pipeline.PipelineError) as ctx:
+                asyncio.run(pipeline.run(pipeline.Invoke.model_validate(spoken()), send_stage))
+        self.assertEqual(ctx.exception.code, "stt_failed")
+        self.assertEqual(reads, [])
 
 
 class EngineLoadTest(unittest.TestCase):

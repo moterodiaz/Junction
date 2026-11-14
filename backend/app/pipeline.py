@@ -12,13 +12,13 @@ import os
 from typing import Awaitable, Callable
 
 import stt
+from ai import image
 from ai import page_reader
 
 from .messages import Book, Card, ErrorCode, Invoke, Media, Stage
 
 SendStage = Callable[[Stage], Awaitable[None]]
-
-log = logging.getLogger("metalab")
+log = logging.getLogger("metalab.pipeline")
 
 
 class PipelineError(Exception):
@@ -71,30 +71,41 @@ async def think(command: str, page_text: str, session_id: str) -> dict:
     }
 
 
-async def draw(image_prompt: str) -> str | None:
-    return None
+async def draw(image_prompt: str, session_id: str) -> str | None:
+    # Offline/test path: preserve deterministic contract fixtures without an API key.
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        return None
+    try:
+        return await image.draw(image_prompt, session_id=session_id)
+    except Exception as exc:
+        log.warning("Image generation unavailable: %s", exc)
+        return None
+
+
+def _image_model() -> str:
+    """Resolve the image model name the same way image.draw does, never blank."""
+    try:
+        from .config import get_settings
+
+        name = get_settings().model_image
+    except Exception:
+        name = os.environ.get("MODEL_IMAGE", "")
+    return name.strip() or image.DEFAULT_MODEL_IMAGE
 
 
 async def run(invoke: Invoke, send_stage: SendStage) -> Card:
-    """Run every stage, reporting each one before the phone waits on it.
+    """Run every stage in order, reporting each one before it starts.
 
-    Transcribing and reading the page run at the same time; reading is cancelled
-    if the spoken command is not one we know, or anything else fails before it is used.
+    An unknown command fails before the page is read, so no model call is wasted on it.
     """
     if invoke.text is not None:
         command = command_from(invoke.text)
-        await send_stage("reading")
-        page_text = await read_page(invoke.frame)
     else:
         await send_stage("transcribing")
-        reading = asyncio.create_task(read_page(invoke.frame))
-        try:
-            command = command_from(await transcribe(invoke.audio))
-            await send_stage("reading")
-            page_text = await reading
-        finally:
-            if not reading.done():  # any early exit: do not leave the page read running
-                reading.cancel()
+        command = command_from(await transcribe(invoke.audio))
+
+    await send_stage("reading")
+    page_text = await read_page(invoke.frame)
 
     _read_model = (
         page_reader._resolve_config()[2]
@@ -106,7 +117,7 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
     answer = await think(command, page_text, invoke.session_id)
 
     await send_stage("drawing")
-    image_url = await draw(answer["image_prompt"])
+    image_url = await draw(answer["image_prompt"], invoke.session_id)
 
     return Card(
         request_id=invoke.request_id,
@@ -116,5 +127,9 @@ async def run(invoke: Invoke, send_stage: SendStage) -> Card:
         speech_text=answer["speech_text"],
         book=Book(**answer["book"]),
         sources=[],
-        models={"read": _read_model, "reason": "stub", "image": "stub"},
+        models={
+            "read": _read_model,
+            "reason": "stub",
+            "image": _image_model() if image_url else "stub",
+        },
     )
