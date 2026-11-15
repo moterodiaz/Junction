@@ -24,12 +24,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var sampleFrameURL: URL?
     @Published private(set) var configureError: String?
 
-    enum Phase: Equatable {
-        case idle
-        case capturing
-        case waiting
-        case speaking
-    }
+    typealias Phase = ClientPhase
 
     private let glasses: GlassesBridge?
     private let socket = BackendSocket()
@@ -41,7 +36,11 @@ final class AppModel: ObservableObject {
     private var captureTask: Task<Void, Never>?
     private var waitTask: Task<Void, Never>?
     private var presentTask: Task<Void, Never>?
-    private var idleTask: Task<Void, Never>?
+    /// Every glasses write goes through here. The phone lens and speech never wait on it.
+    /// The cap covers a fresh display's 5 s start wait in `GlassesBridge.show`.
+    private lazy var glassesWriter = LatestWinsWriter<LensContent>(writeTimeout: .seconds(6)) { [weak self] content in
+        await self?.writeToGlasses(content)
+    }
     private var lastServerMessage = Date()
     private var startedWaiting = Date()
 
@@ -88,7 +87,10 @@ final class AppModel: ObservableObject {
 
     func setDisplayEnabled(_ enabled: Bool) {
         session = SessionMachine.reduce(session, .displayEnabled(enabled))
-        if !enabled { glasses?.clearDisplay() }
+        if !enabled {
+            glassesWriter.cancelPending()
+            glasses?.clearDisplay()
+        }
     }
 
     func register() async { await glasses?.register() }
@@ -107,19 +109,16 @@ final class AppModel: ObservableObject {
         bookSessionId = UUID().uuidString
         UserDefaults.standard.set(bookSessionId, forKey: Keys.book)
         session.lastCard = nil
-        lens = Self.idleLens
-        if session.displayEnabled {
-            let book = bookSessionId
-            idleTask = Task { [weak self] in
-                guard let self, !Task.isCancelled, self.bookSessionId == book, self.phase == .idle else { return }
-                try? await self.glasses?.show(Self.idleLens)
-            }
-        }
+        show(Self.idleLens)
     }
 
     func invoke() {
         guard session.canInvoke, phase == .idle, BackendConfig(string: backendURL) != nil else { return }
-        idleTask?.cancel()
+        // A pending idle or error push would stop the camera this request is about to use.
+        glassesWriter.cancelPending()
+        // The previous question's socket may still be open; nothing from it belongs to this one.
+        activeRequest = nil
+        activeSocket = nil
         phase = .capturing
         let settings = CaptureSettings(
             displayEnabled: session.displayEnabled,
@@ -156,7 +155,9 @@ final class AppModel: ObservableObject {
         }
         socket.onDisconnect = { [weak self] token in
             Task { @MainActor in
-                guard let self, token == self.activeSocket, self.phase == .waiting else { return }
+                guard let self,
+                      ReplyGate.failsOnDisconnect(phase: self.phase, fromSocket: token, activeSocket: self.activeSocket)
+                else { return }
                 self.fail(.backendTimeout, retryable: true)
             }
         }
@@ -187,7 +188,7 @@ final class AppModel: ObservableObject {
                 case .stopCamera:
                     glasses?.stopCamera()
                 case .showProgress:
-                    await show(LensCopy.content(for: .reading))
+                    show(LensCopy.content(for: .reading))
                 case .sendInvoke:
                     try await send(frame: frame, wav: wav, text: typedCommand)
                     frame = Data()
@@ -233,14 +234,15 @@ final class AppModel: ObservableObject {
         socket.disconnect()
         activeSocket = socket.connect(url: config.webSocketURL)
         try await socket.send(body)
-        guard activeRequest == requestId else { return }
+        guard ReplyGate.entersWaitingAfterSend(phase: phase, requestId: requestId, activeRequest: activeRequest)
+        else { return }
         phase = .waiting
         startedWaiting = Date()
         lastServerMessage = Date()
     }
 
     private func receive(_ text: String, socket token: Int) {
-        guard token == activeSocket, phase == .waiting || phase == .speaking,
+        guard ReplyGate.acceptsReply(phase: phase, fromSocket: token, activeSocket: activeSocket),
               let data = text.data(using: .utf8) else { return }
         guard let event = try? Contract.decode(data),
               ResponseFilter.accepts(event, fromSocket: token, activeSocket: activeSocket, activeRequest: activeRequest)
@@ -249,7 +251,10 @@ final class AppModel: ObservableObject {
         case .status(let status):
             lastServerMessage = Date()
             speaker.playEarcon(for: status.stage)
-            Task { await show(LensCopy.content(for: status.stage)) }
+            // A late status must not replace the card once it is showing.
+            if phase == .capturing || phase == .waiting {
+                show(LensCopy.content(for: status.stage))
+            }
         case .card(let card):
             lastServerMessage = Date()
             waitTask?.cancel()
@@ -257,10 +262,9 @@ final class AppModel: ObservableObject {
             phase = .speaking
             let requestId = card.requestId
             presentTask?.cancel()
+            show(LensCopy.content(for: card))
             presentTask = Task { [weak self] in
-                guard let self else { return }
-                await self.show(LensCopy.content(for: card))
-                guard !Task.isCancelled, self.activeRequest == requestId else { return }
+                guard let self, !Task.isCancelled, self.activeRequest == requestId else { return }
                 await self.speaker.speak(SpeechPlan.route(card: card, displayEnabled: self.session.displayEnabled))
                 guard !Task.isCancelled, self.activeRequest == requestId, self.phase == .speaking else { return }
                 self.phase = .idle
@@ -289,8 +293,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func show(_ content: LensContent) async {
+    /// Updates the phone at once and queues the glasses; a newer `show` supersedes an older one.
+    private func show(_ content: LensContent) {
         lens = content
+        guard session.displayEnabled else { return }
+        glassesWriter.submit(content)
+    }
+
+    private func writeToGlasses(_ content: LensContent) async {
         guard session.displayEnabled else { return }
         do {
             try await glasses?.show(content)
@@ -312,11 +322,7 @@ final class AppModel: ObservableObject {
         if let message, !message.isEmpty {
             session.banner = message
         }
-        let content = LensCopy.content(for: kind)
-        lens = content
-        if session.displayEnabled {
-            Task { try? await glasses?.show(content) }
-        }
+        show(LensCopy.content(for: kind))
     }
 
     /// Stops every task and sound belonging to the current request.
@@ -324,7 +330,6 @@ final class AppModel: ObservableObject {
         captureTask?.cancel()
         waitTask?.cancel()
         presentTask?.cancel()
-        idleTask?.cancel()
         speaker.stop()
         socket.disconnect()
     }

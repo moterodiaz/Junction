@@ -9,6 +9,11 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
     private var player: AVAudioPlayer?
     private var earconPlayer: AVAudioPlayer?
     private var speechDone: CheckedContinuation<Void, Never>?
+    private var turns = SpeechTurnGate<ObjectIdentifier>()
+    private var speaking: AVSpeechUtterance?
+    /// Stopped utterances stay alive until their delegate callback arrives, so a new utterance
+    /// cannot reuse the address and be mistaken for the stopped one.
+    private var retired: [ObjectIdentifier: AVSpeechUtterance] = [:]
     var earconsEnabled: Bool = true
 
     override init() {
@@ -76,6 +81,7 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         player?.stop()
         player = nil
         synthesizer.stopSpeaking(at: .immediate)
+        retireCurrentUtterance()
         finishSpeech()
     }
 
@@ -142,12 +148,30 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         waiting?.resume()
     }
 
+    private func retireCurrentUtterance() {
+        guard let previous = speaking else { return }
+        speaking = nil
+        turns.abandon()
+        // Callbacks normally arrive within milliseconds; older entries that never got one are dropped.
+        if retired.count >= 4 { retired.removeAll() }
+        retired[ObjectIdentifier(previous)] = previous
+    }
+
+    private func utteranceEnded(_ id: ObjectIdentifier) {
+        retired[id] = nil
+        guard turns.end(id) else { return }
+        speaking = nil
+        finishSpeech()
+    }
+
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.finishSpeech() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in self.utteranceEnded(id) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.finishSpeech() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in self.utteranceEnded(id) }
     }
 
     private func speakText(_ text: String) async {
@@ -157,9 +181,12 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.prefersAssistiveTechnologySettings = true
+        retireCurrentUtterance()
         finishSpeech()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             speechDone = continuation
+            speaking = utterance
+            turns.begin(ObjectIdentifier(utterance))
             synthesizer.speak(utterance)
         }
     }
