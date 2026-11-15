@@ -2,6 +2,7 @@
 """Behavioral checks for the thin client. Mirrors MetaLabCore so CI can run without Xcode."""
 
 import json
+from pathlib import Path
 import unittest
 
 
@@ -183,6 +184,148 @@ class ClientTests(unittest.TestCase):
         # Unknown stage does not trigger an earcon
         self.assertFalse(should_play_earcon("invalid_stage", earcons_enabled=True, is_speaking=False))
 
+
+CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
+RETENTION_S = 900
+V2 = "metalab.v2"
+CLIENT_OFFERS = ()
+LIFECYCLE_SERVER_FIELDS = {
+    "cancelled": {"type", "request_id", "session_id"},
+    "session_ended": {"type", "request_id", "session_id", "cleanup"},
+    "lifecycle_error": {"type", "request_id", "session_id", "code"},
+}
+LIFECYCLE_CODES = {"unknown_request", "session_unavailable", "session_mismatch", "duplicate_request"}
+
+
+def handshake_headers(url, credential):
+    """Mirrors HandshakePlan: the credential goes only in the Authorization header, only over wss."""
+    token = (credential or "").strip()
+    if not token or any(ord(c) <= 0x20 or ord(c) >= 0x7F for c in token):
+        return url, {}
+    if not url.lower().startswith("wss://"):
+        return url, {}
+    return url, {"Authorization": f"Bearer {token}"}
+
+
+def negotiate(offered, selected, upgraded):
+    """Mirrors ProtocolNegotiation.evaluate: (usable, lifecycle_controls)."""
+    if not upgraded:
+        return False, False
+    selected = selected or None
+    if selected is not None and (selected != V2 or selected not in offered):
+        return False, False
+    return True, selected == V2
+
+
+def decode_lifecycle(message, negotiated):
+    """Mirrors LifecycleContract.decode; None means rejected."""
+    if not negotiated or not isinstance(message, dict):
+        return None
+    fields = LIFECYCLE_SERVER_FIELDS.get(message.get("type"))
+    if fields is None or set(message) != fields:
+        return None
+    for key in ("request_id", "session_id"):
+        value = message.get(key)
+        if not (isinstance(value, str) and value.strip()):
+            return None
+    if message["type"] == "session_ended" and message["cleanup"] != "complete":
+        return None
+    if message["type"] == "lifecycle_error" and message["code"] not in LIFECYCLE_CODES:
+        return None
+    return message["type"]
+
+
+class ClientSession:
+    """Mirrors MetaLabCore.ClientSession on a synthetic monotonic clock."""
+
+    def __init__(self, session_id, now):
+        self.id, self.generation, self.deadline = session_id, 0, now + RETENTION_S
+
+    def expired(self, now):
+        return now >= self.deadline
+
+    def record_invocation(self, now):
+        if self.expired(now):
+            return False
+        self.deadline = now + RETENTION_S
+        return True
+
+    def reset(self, new_id, now):
+        if new_id == self.id or not new_id.strip():
+            return False
+        self.id, self.generation, self.deadline = new_id, self.generation + 1, now + RETENTION_S
+        return True
+
+
+def end_book_session(state):
+    """Mirrors PhoneSession.endingBookSession."""
+    state = dict(state, last_card=None)
+    if state.get("action") in (None, "retryInvoke"):
+        state.update(banner=None, action=None)
+    return state
+
+
+class LifecycleAuthTests(unittest.TestCase):
+    def test_lifecycle_fixtures_decode_only_server_messages_on_v2(self):
+        seen = set()
+        for path in sorted((CONTRACTS / "fixtures" / "lifecycle" / "valid").glob("*.json")):
+            message = json.loads(path.read_text())
+            self.assertIsNone(decode_lifecycle(message, negotiated=False), path.name)
+            decoded = decode_lifecycle(message, negotiated=True)
+            if message["type"] in ("cancel", "session_end"):
+                self.assertIsNone(decoded, path.name)
+            else:
+                seen.add(decoded)
+        self.assertEqual(seen, set(LIFECYCLE_SERVER_FIELDS))
+        for path in sorted((CONTRACTS / "fixtures" / "lifecycle" / "invalid").glob("*.json")):
+            self.assertIsNone(decode_lifecycle(json.loads(path.read_text()), negotiated=True), path.name)
+
+    def test_negotiation_matches_the_handshake_table(self):
+        cases = json.loads((CONTRACTS / "auth-scenarios.json").read_text())["cases"]
+        checked = 0
+        for case in cases:
+            if case.get("enabled") and not (
+                all(case.get(k) for k in ("ios_verified", "rollout_agreed", "tls"))
+                and all(case.get(k, True) for k in ("verifier_ready", "configured"))
+                and case["credential"] == "valid"
+            ):
+                continue
+            outcome = negotiate(case.get("offered", []), case.get("selected"), case.get("handshake_ok", True))
+            self.assertEqual(outcome, (case["upgrade"], case.get("controls", False)), case["name"])
+            checked += 1
+        self.assertGreaterEqual(checked, 8)
+        self.assertEqual(negotiate(CLIENT_OFFERS, None, True), (True, False))
+        self.assertEqual(negotiate(CLIENT_OFFERS, V2, True), (False, False))
+
+    def test_credential_is_header_only_and_never_over_plain_ws(self):
+        url = "wss://metalab.modal.run/ws"
+        self.assertEqual(handshake_headers(url, None), (url, {}))
+        self.assertEqual(handshake_headers(url, "  abc.DEF  "), (url, {"Authorization": "Bearer abc.DEF"}))
+        self.assertEqual(handshake_headers("ws://10.0.0.2:8000/ws", "abc"), ("ws://10.0.0.2:8000/ws", {}))
+        self.assertEqual(handshake_headers(url, "two words"), (url, {}))
+        sent_url, _ = handshake_headers(url, "secret")
+        self.assertNotIn("secret", sent_url)
+
+    def test_retention_is_fifteen_minutes_and_reset_never_reuses_an_id(self):
+        session = ClientSession("a", now=0)
+        self.assertFalse(session.expired(899))
+        self.assertTrue(session.expired(900))
+        session = ClientSession("a", now=0)
+        self.assertTrue(session.record_invocation(800))
+        self.assertTrue(session.expired(1700))
+        self.assertFalse(session.record_invocation(1700))
+        self.assertFalse(session.reset("a", 1700))
+        generation = session.generation
+        self.assertTrue(session.reset("b", 1700))
+        self.assertNotEqual(session.generation, generation)
+        self.assertFalse(session.expired(2599))
+
+    def test_session_end_clears_the_card_but_not_glasses_recovery(self):
+        ended = end_book_session({"last_card": "c", "banner": "timeout", "action": "retryInvoke"})
+        self.assertEqual((ended["last_card"], ended["banner"]), (None, None))
+        folded = end_book_session({"last_card": "c", "banner": "hinges", "action": "startNewSession"})
+        self.assertIsNone(folded["last_card"])
+        self.assertEqual(folded["banner"], "hinges")
 
 if __name__ == "__main__":
     unittest.main()

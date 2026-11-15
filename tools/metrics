@@ -261,7 +261,7 @@ def table(m):
     return "\n".join(rows) + f"\n\nPRs #{m['since_pr']} onwards, measured {m['measured_at']} by `tools/metrics`."
 
 def owners_table():
-    path = os.path.join(ROOT, ".github", "CODEOWNERS")
+    path = os.environ.get("METRICS_CODEOWNERS") or os.path.join(ROOT, ".github", "CODEOWNERS")
     if not os.path.exists(path):
         return DEFAULT_OWNERS
     rules = []

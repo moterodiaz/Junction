@@ -1,0 +1,314 @@
+{
+  "play_id": "hamlet",
+  "description": "Hand-written study notes for Hamlet (original text, not copied from any edition). One entry per scene of hamlet.json; validated by backend/ai/make_notes.py.",
+  "scenes": [
+    {
+      "act": 1,
+      "scene": 1,
+      "summary": "On a freezing midnight watch on the battlements of Elsinore, the sentinels Barnardo and Marcellus bring the sceptical scholar Horatio to see an apparition that has appeared on two earlier nights. A Ghost in armour, resembling the late King Hamlet, appears twice but will not speak, and it fades when the cock crows. Horatio explains that Denmark is arming because young Fortinbras of Norway is gathering men to win back lands his father lost to old Hamlet. The three agree to tell young Hamlet, believing the spirit will speak to him.",
+      "characters_on_stage": ["Barnardo", "Francisco", "Marcellus", "Horatio", "Ghost"],
+      "glossary": [
+        {"term": "unfold", "gloss": "reveal, identify"},
+        {"term": "rivals", "gloss": "partners (on watch)"},
+        {"term": "harrows", "gloss": "torments, distresses"},
+        {"term": "partisan", "gloss": "long-handled spear"},
+        {"term": "mote", "gloss": "speck of dust"},
+        {"term": "sheeted", "gloss": "wrapped in burial shrouds"}
+      ],
+      "themes": ["the supernatural", "political unrest", "doubt and uncertainty"]
+    },
+    {
+      "act": 1,
+      "scene": 2,
+      "summary": "In the council chamber, King Claudius justifies his quick marriage to Gertrude, his late brother's widow, and sends ambassadors to Norway to stop Fortinbras. He lets Laertes return to France but urges Hamlet, still dressed in mourning black, to stay at court instead of going back to university in Wittenberg. Alone, Hamlet voices his disgust with the world and with his mother's hasty remarriage. Horatio, Marcellus and Barnardo then tell him about the Ghost, and he resolves to keep watch with them that night.",
+      "characters_on_stage": ["Claudius", "Gertrude", "Hamlet", "Polonius", "Laertes", "Voltemand", "Cornelius", "Horatio", "Marcellus", "Barnardo", "Lords and Attendants"],
+      "glossary": [
+        {"term": "dirge", "gloss": "funeral song"},
+        {"term": "obsequious", "gloss": "dutiful in mourning rites"},
+        {"term": "canon", "gloss": "law, decree"},
+        {"term": "unweeded", "gloss": "neglected, overgrown"},
+        {"term": "Hyperion", "gloss": "the sun god; an ideal of noble beauty"},
+        {"term": "satyr", "gloss": "lustful half-goat creature of myth"},
+        {"term": "Niobe", "gloss": "mythical mother who wept endlessly for her children"},
+        {"term": "truant", "gloss": "idle, neglecting duty"},
+        {"term": "beaver", "gloss": "movable face-guard of a helmet"}
+      ],
+      "themes": ["grief and mourning", "corruption", "appearance versus reality", "fidelity and remarriage"]
+    },
+    {
+      "act": 1,
+      "scene": 3,
+      "summary": "As Laertes prepares to sail for France, he warns his sister Ophelia that Hamlet's affection is youthful and that a prince cannot freely choose whom to marry. Polonius arrives and gives Laertes a string of precepts for life abroad, ending with the advice to be true to himself. After Laertes leaves, Polonius questions Ophelia about Hamlet's attentions and dismisses his vows as snares. He forbids her to see or speak with Hamlet, and she promises to obey.",
+      "characters_on_stage": ["Laertes", "Ophelia", "Polonius"],
+      "glossary": [
+        {"term": "chariest", "gloss": "most cautious, most modest"},
+        {"term": "canker", "gloss": "caterpillar or worm that destroys buds"},
+        {"term": "dalliance", "gloss": "idle pleasure, flirtation"},
+        {"term": "husbandry", "gloss": "thrift, careful management"},
+        {"term": "tenders", "gloss": "offers"},
+        {"term": "springes", "gloss": "snares for birds"},
+        {"term": "woodcocks", "gloss": "birds thought easy to trap; fools"}
+      ],
+      "themes": ["family and parental authority", "love and honour", "advice and obedience"]
+    },
+    {
+      "act": 1,
+      "scene": 4,
+      "summary": "At midnight Hamlet, Horatio and Marcellus keep watch on the platform while trumpets and cannon mark the King's drinking revels inside the castle. Hamlet reflects that Denmark's reputation for drunkenness spoils its achievements, just as one flaw can corrupt a person's whole character. The Ghost appears and beckons Hamlet to follow it alone. Hamlet breaks free from his friends' attempts to hold him back, and Marcellus remarks that something is rotten in the state of Denmark.",
+      "characters_on_stage": ["Hamlet", "Horatio", "Marcellus", "Ghost"],
+      "glossary": [
+        {"term": "eager", "gloss": "sharp, biting (of air)"},
+        {"term": "wassail", "gloss": "carousing, drinking party"},
+        {"term": "Rhenish", "gloss": "Rhine wine"},
+        {"term": "rouse", "gloss": "full draught of drink, toast"},
+        {"term": "dram", "gloss": "tiny amount"},
+        {"term": "cerements", "gloss": "burial wrappings"}
+      ],
+      "themes": ["the supernatural", "corruption and decay", "reputation and character"]
+    },
+    {
+      "act": 1,
+      "scene": 5,
+      "summary": "The Ghost tells Hamlet that it is his father's spirit and that he did not die from a serpent's bite but was poisoned in his sleep by his brother Claudius, who then won his queen. It commands Hamlet to avenge the murder but to leave his mother to heaven and her own conscience. When Horatio and Marcellus find him, Hamlet makes them swear on his sword never to reveal what they have seen, while the Ghost calls 'Swear' from beneath the stage. He warns them he may put on an antic disposition and laments that he was born to set the disjointed time right.",
+      "characters_on_stage": ["Hamlet", "Ghost", "Horatio", "Marcellus"],
+      "glossary": [
+        {"term": "porpentine", "gloss": "porcupine"},
+        {"term": "hebenon", "gloss": "a poison (perhaps henbane or yew)"},
+        {"term": "leperous", "gloss": "causing leprosy-like sores"},
+        {"term": "tables", "gloss": "writing tablet, notebook"},
+        {"term": "truepenny", "gloss": "honest fellow"},
+        {"term": "pioner", "gloss": "soldier who digs trenches and mines"},
+        {"term": "antic", "gloss": "grotesque, bizarre, mad"}
+      ],
+      "themes": ["revenge", "betrayal", "memory", "madness and disguise"]
+    },
+    {
+      "act": 2,
+      "scene": 1,
+      "summary": "Polonius sends his servant Reynaldo to Paris with money for Laertes and instructions to spy on him by hinting at small faults and seeing what his acquaintances reveal. As Reynaldo leaves, a frightened Ophelia enters and describes how Hamlet came to her room with his clothes in disorder, stared at her, sighed and left without a word. Polonius concludes that Hamlet has been driven mad by love because Ophelia, obeying him, has refused his letters and visits. He decides to tell the King at once.",
+      "characters_on_stage": ["Polonius", "Reynaldo", "Ophelia"],
+      "glossary": [
+        {"term": "drabbing", "gloss": "chasing prostitutes"},
+        {"term": "windlasses", "gloss": "roundabout methods"},
+        {"term": "chamber", "gloss": "private room, bedroom"},
+        {"term": "doublet", "gloss": "close-fitting jacket"},
+        {"term": "unbrac'd", "gloss": "unfastened"},
+        {"term": "ecstasy", "gloss": "madness, frenzy"}
+      ],
+      "themes": ["spying and surveillance", "madness", "love", "deception"]
+    },
+    {
+      "act": 2,
+      "scene": 2,
+      "summary": "Claudius and Gertrude welcome Rosencrantz and Guildenstern, Hamlet's school friends, and ask them to discover what troubles him, while Polonius claims Hamlet is mad for love of Ophelia and reads one of his letters as proof. Hamlet baffles Polonius with mocking wordplay, greets his friends warmly, and soon makes them admit they were sent for. A company of travelling players arrives, and the leading actor performs a passionate speech about Pyrrhus and the grieving queen Hecuba. Alone, Hamlet rebukes himself for his inaction and plans to have the players stage a murder like his father's to catch the conscience of the King.",
+      "characters_on_stage": ["Claudius", "Gertrude", "Rosencrantz", "Guildenstern", "Polonius", "Voltemand", "Cornelius", "Hamlet", "Players"],
+      "glossary": [
+        {"term": "brevity", "gloss": "shortness, conciseness"},
+        {"term": "fishmonger", "gloss": "fish seller (used as an insult)"},
+        {"term": "quintessence", "gloss": "purest essence"},
+        {"term": "handsaw", "gloss": "saw, or heron (hernshaw) in the proverb"},
+        {"term": "Hecuba", "gloss": "queen of Troy who saw her husband killed"},
+        {"term": "mobled", "gloss": "muffled, veiled"},
+        {"term": "chronicles", "gloss": "records, histories"},
+        {"term": "kindless", "gloss": "unnatural"}
+      ],
+      "themes": ["madness and its uses", "spying and deception", "theatre and performance", "action versus inaction"]
+    },
+    {
+      "act": 3,
+      "scene": 1,
+      "summary": "Rosencrantz and Guildenstern report that they cannot learn the cause of Hamlet's distraction, so Claudius and Polonius hide to watch a meeting they have arranged between Hamlet and Ophelia. Hamlet enters alone and, in the soliloquy beginning 'To be, or not to be', weighs enduring life's suffering against the dread of what may follow death. When Ophelia tries to return his gifts, he denies having loved her and bitterly tells her to go to a nunnery, leaving her grieving for his ruined mind. Claudius decides that love is not the cause and resolves to send Hamlet to England, while Polonius proposes that Gertrude question her son after the play.",
+      "characters_on_stage": ["Claudius", "Gertrude", "Polonius", "Ophelia", "Rosencrantz", "Guildenstern", "Hamlet"],
+      "glossary": [
+        {"term": "coil", "gloss": "turmoil, fuss"},
+        {"term": "contumely", "gloss": "insulting contempt"},
+        {"term": "quietus", "gloss": "release, settlement of a debt"},
+        {"term": "bodkin", "gloss": "dagger"},
+        {"term": "fardels", "gloss": "burdens"},
+        {"term": "bourn", "gloss": "boundary, region"},
+        {"term": "orisons", "gloss": "prayers"},
+        {"term": "nunnery", "gloss": "convent (also slang for a brothel)"}
+      ],
+      "themes": ["life and death", "surveillance", "love and rejection", "madness"]
+    },
+    {
+      "act": 3,
+      "scene": 2,
+      "summary": "Hamlet coaches the players in natural acting and asks Horatio to watch the King closely during the performance. Before the court, he makes crude jokes to Ophelia, and the players present a dumb show followed by 'The Murder of Gonzago', in which a man poisons a sleeping king through his ear. Claudius rises in alarm and stops the play, which Hamlet and Horatio take as proof of his guilt. Summoned to his mother's chamber, Hamlet rebukes Rosencrantz and Guildenstern for trying to play on him like a pipe and resolves to speak daggers to Gertrude but use none.",
+      "characters_on_stage": ["Hamlet", "Players", "Polonius", "Rosencrantz", "Guildenstern", "Horatio", "Claudius", "Gertrude", "Ophelia", "Lords and Attendants"],
+      "glossary": [
+        {"term": "groundlings", "gloss": "poorer spectators standing in the pit"},
+        {"term": "Termagant", "gloss": "ranting stage villain"},
+        {"term": "Herod", "gloss": "blustering tyrant of the old mystery plays"},
+        {"term": "protests", "gloss": "vows, makes promises"},
+        {"term": "tropically", "gloss": "figuratively"},
+        {"term": "recorders", "gloss": "wooden flutes"},
+        {"term": "stops", "gloss": "finger holes of a wind instrument"}
+      ],
+      "themes": ["theatre and truth", "guilt", "appearance versus reality", "friendship and betrayal"]
+    },
+    {
+      "act": 3,
+      "scene": 3,
+      "summary": "Claudius orders Rosencrantz and Guildenstern to take Hamlet to England, and Polonius leaves to hide behind the arras in Gertrude's chamber. Alone, Claudius confesses to murdering his brother and tries to pray, but he knows he cannot be forgiven while he keeps the crown, ambition and queen the crime won him. Hamlet finds him kneeling and could kill him, but holds back, reasoning that a death at prayer would send Claudius's soul to heaven. After Hamlet leaves to wait for a sinful moment, Claudius rises, admitting that his words fly up while his thoughts remain below.",
+      "characters_on_stage": ["Claudius", "Rosencrantz", "Guildenstern", "Polonius", "Hamlet"],
+      "glossary": [
+        {"term": "arras", "gloss": "wall tapestry"},
+        {"term": "rank", "gloss": "foul, rotten"},
+        {"term": "primal", "gloss": "first, original"},
+        {"term": "gilded", "gloss": "gold-covered, bribing"},
+        {"term": "hent", "gloss": "grasp, occasion"},
+        {"term": "physic", "gloss": "medicine"}
+      ],
+      "themes": ["guilt and repentance", "revenge", "religion and salvation"]
+    },
+    {
+      "act": 3,
+      "scene": 4,
+      "summary": "Polonius hides behind the arras as Gertrude confronts Hamlet about offending Claudius. When Hamlet's fierce manner makes her cry for help, Polonius calls out, and Hamlet stabs through the arras and kills him, hoping it is the King. Hamlet forces his mother to compare pictures of his father and Claudius and condemns her marriage until the Ghost appears, visible only to Hamlet, to sharpen his purpose. Hamlet urges Gertrude to stay out of Claudius's bed, tells her he must go to England, and drags the body away.",
+      "characters_on_stage": ["Gertrude", "Polonius", "Hamlet", "Ghost"],
+      "glossary": [
+        {"term": "ducat", "gloss": "gold coin"},
+        {"term": "counterfeit", "gloss": "portrait, likeness"},
+        {"term": "mildew'd", "gloss": "blighted, diseased"},
+        {"term": "enseamed", "gloss": "greasy, soiled"},
+        {"term": "petard", "gloss": "small bomb used to breach gates"},
+        {"term": "bloat", "gloss": "bloated, flabby"}
+      ],
+      "themes": ["guilt and conscience", "corruption", "mother and son", "madness"]
+    },
+    {
+      "act": 4,
+      "scene": 1,
+      "summary": "Gertrude tells Claudius that Hamlet, in a fit of madness, has killed Polonius behind the arras. Claudius realises the blow was meant for him and fears he will be blamed for not keeping Hamlet restrained. He sends Rosencrantz and Guildenstern to find Hamlet and bring the body to the chapel. He resolves to ship Hamlet away at dawn and to call his wisest friends to limit the damage.",
+      "characters_on_stage": ["Claudius", "Gertrude", "Rosencrantz", "Guildenstern"],
+      "glossary": [
+        {"term": "brainish", "gloss": "deluded, crazed"},
+        {"term": "apprehension", "gloss": "notion, fancy"},
+        {"term": "providence", "gloss": "foresight"},
+        {"term": "ore", "gloss": "vein of precious metal"},
+        {"term": "mineral", "gloss": "mine"}
+      ],
+      "themes": ["guilt and self-protection", "madness", "political image"]
+    },
+    {
+      "act": 4,
+      "scene": 2,
+      "summary": "Hamlet has hidden Polonius's body when Rosencrantz and Guildenstern find him. He refuses to say where it is and mocks Rosencrantz as a sponge that soaks up the King's favours, only to be squeezed dry when no longer useful. Speaking in riddles, he agrees to be taken to the King and runs off as if in a game of hide and seek.",
+      "characters_on_stage": ["Hamlet", "Rosencrantz", "Guildenstern"],
+      "glossary": [
+        {"term": "sponge", "gloss": "one who soaks up favours"},
+        {"term": "replication", "gloss": "reply"},
+        {"term": "countenance", "gloss": "favour, patronage"},
+        {"term": "ape", "gloss": "monkey"}
+      ],
+      "themes": ["madness and wit", "loyalty and manipulation", "power"]
+    },
+    {
+      "act": 4,
+      "scene": 3,
+      "summary": "Claudius tells his lords that Hamlet must be sent away swiftly but carefully, because he is loved by the common people. Brought in under guard, Hamlet jokes that Polonius is at supper, being eaten by worms, and finally says the body lies by the stairs into the lobby. Claudius announces that Hamlet will leave for England at once. Alone, the King reveals that he has sent letters asking England to put Hamlet to death immediately.",
+      "characters_on_stage": ["Claudius", "Lords", "Rosencrantz", "Guildenstern", "Hamlet"],
+      "glossary": [
+        {"term": "convocation", "gloss": "assembly"},
+        {"term": "politic", "gloss": "statesmanlike, crafty"},
+        {"term": "lobby", "gloss": "corridor, hallway"},
+        {"term": "cherub", "gloss": "angel (thought to see all)"},
+        {"term": "cicatrice", "gloss": "scar"},
+        {"term": "hectic", "gloss": "persistent fever"}
+      ],
+      "themes": ["power and politics", "death and decay", "deception"]
+    },
+    {
+      "act": 4,
+      "scene": 4,
+      "summary": "Fortinbras leads his army across Denmark, with the King's permission, on its way to fight over a small patch of Poland. Hamlet, travelling to the ship, questions a Captain and learns that the land is worthless, yet thousands will die for it. Alone, he contrasts the soldiers' readiness to fight for an eggshell with his own delay in avenging his father. He vows that from now on his thoughts will be bloody or worth nothing.",
+      "characters_on_stage": ["Fortinbras", "Captain", "Hamlet", "Rosencrantz", "Guildenstern", "Soldiers"],
+      "glossary": [
+        {"term": "conveyance", "gloss": "safe passage"},
+        {"term": "ducats", "gloss": "gold coins"},
+        {"term": "imposthume", "gloss": "abscess, inner swelling"},
+        {"term": "fust", "gloss": "grow mouldy"},
+        {"term": "oblivion", "gloss": "forgetfulness"}
+      ],
+      "themes": ["action versus inaction", "honour", "war"]
+    },
+    {
+      "act": 4,
+      "scene": 5,
+      "summary": "Gertrude reluctantly admits Ophelia, who has gone mad with grief and sings fragments of songs about death and lost love. Laertes, back from France, storms the palace with a rebellious crowd and demands vengeance for his father. Claudius calmly persuades him that he is not to blame, and Laertes is shaken when Ophelia returns and hands out flowers and herbs, each with its own meaning. Claudius promises Laertes that he will learn who is truly responsible and that justice will follow.",
+      "characters_on_stage": ["Gertrude", "Horatio", "Gentleman", "Ophelia", "Claudius", "Laertes", "Messenger", "Danes"],
+      "glossary": [
+        {"term": "rabble", "gloss": "unruly crowd"},
+        {"term": "rosemary", "gloss": "herb symbolising remembrance"},
+        {"term": "pansies", "gloss": "flowers symbolising thoughts"},
+        {"term": "fennel", "gloss": "herb linked with flattery"},
+        {"term": "columbines", "gloss": "flowers linked with unfaithfulness"},
+        {"term": "rue", "gloss": "herb of sorrow and repentance"},
+        {"term": "daisy", "gloss": "flower linked with false love"}
+      ],
+      "themes": ["madness and grief", "revenge", "rebellion and order"]
+    },
+    {
+      "act": 4,
+      "scene": 6,
+      "summary": "Sailors bring Horatio a letter from Hamlet. Hamlet writes that pirates attacked his ship, that he boarded their vessel alone and was taken prisoner, and that they have treated him well in return for a favour. He asks Horatio to deliver his letters to the King and to come to him quickly, adding that he has much to tell about Rosencrantz and Guildenstern.",
+      "characters_on_stage": ["Horatio", "Servant", "Sailors"],
+      "glossary": [
+        {"term": "overlooked", "gloss": "read through"},
+        {"term": "grapple", "gloss": "close fight between ships"},
+        {"term": "valour", "gloss": "courage"},
+        {"term": "bore", "gloss": "calibre, importance"}
+      ],
+      "themes": ["fortune and chance", "friendship and trust"]
+    },
+    {
+      "act": 4,
+      "scene": 7,
+      "summary": "Claudius explains to Laertes why he has not punished Hamlet openly, citing Gertrude's love for her son and the people's affection for him. A letter announces Hamlet's sudden return to Denmark, and the King and Laertes plot a fencing match in which Laertes will use an unblunted, poisoned sword, with a poisoned cup as a backup. Gertrude then brings news that Ophelia has drowned after a willow branch broke and dropped her into a brook as she hung garlands of flowers. Laertes leaves overcome with grief.",
+      "characters_on_stage": ["Claudius", "Laertes", "Messenger", "Gertrude"],
+      "glossary": [
+        {"term": "unbated", "gloss": "not blunted (of a sword)"},
+        {"term": "mountebank", "gloss": "travelling quack doctor"},
+        {"term": "contagion", "gloss": "poison"},
+        {"term": "chalice", "gloss": "drinking cup"},
+        {"term": "willow", "gloss": "tree associated with forsaken love"},
+        {"term": "coronet", "gloss": "small crown or garland"}
+      ],
+      "themes": ["revenge", "deception and plotting", "grief"]
+    },
+    {
+      "act": 5,
+      "scene": 1,
+      "summary": "Two gravediggers joke about whether a woman who drowned herself should receive Christian burial as one of them digs her grave. Hamlet and Horatio arrive, and Hamlet reflects on death as skulls are thrown up, including that of Yorick, the King's jester whom Hamlet knew as a child. A funeral procession arrives with shortened rites, and Hamlet learns that it is Ophelia's. When Laertes leaps into the grave in grief, Hamlet reveals himself and the two grapple until they are parted, Hamlet declaring he loved Ophelia more than forty thousand brothers.",
+      "characters_on_stage": ["First Clown (Gravedigger)", "Second Clown", "Hamlet", "Horatio", "Priest", "Laertes", "Claudius", "Gertrude", "Mourners"],
+      "glossary": [
+        {"term": "crowner", "gloss": "coroner"},
+        {"term": "sexton", "gloss": "church officer who digs graves"},
+        {"term": "chapless", "gloss": "without the lower jaw"},
+        {"term": "quiddits", "gloss": "quibbles, hair-splitting arguments"},
+        {"term": "equivocation", "gloss": "double meaning, ambiguity"},
+        {"term": "gibes", "gloss": "taunts, jokes"},
+        {"term": "strewments", "gloss": "flowers strewn on a grave"}
+      ],
+      "themes": ["death and mortality", "grief", "class and humour"]
+    },
+    {
+      "act": 5,
+      "scene": 2,
+      "summary": "Hamlet tells Horatio how he found Claudius's letter ordering his death in England and replaced it with one ordering the deaths of Rosencrantz and Guildenstern. The courtier Osric brings a wager on a fencing match with Laertes, which Hamlet accepts despite misgivings, saying that the readiness is all. During the match Gertrude drinks from the poisoned cup, Laertes wounds Hamlet with the poisoned blade, and in a scuffle they exchange rapiers so that Laertes is wounded too and confesses the plot. Hamlet kills Claudius and, dying, asks Horatio to tell his story and names Fortinbras as the next king, and Fortinbras arrives to order a soldier's funeral for him.",
+      "characters_on_stage": ["Hamlet", "Horatio", "Osric", "Lord", "Claudius", "Gertrude", "Laertes", "Fortinbras", "English Ambassadors", "Lords and Attendants"],
+      "glossary": [
+        {"term": "commission", "gloss": "official order"},
+        {"term": "german", "gloss": "closely related, relevant"},
+        {"term": "carriages", "gloss": "straps that hang a sword from the belt"},
+        {"term": "augury", "gloss": "omens, prophecy"},
+        {"term": "foil", "gloss": "blunted fencing sword; also a setting that shows off a jewel"},
+        {"term": "palpable", "gloss": "clear, obvious"},
+        {"term": "union", "gloss": "large pearl"},
+        {"term": "quarry", "gloss": "heap of the slain"}
+      ],
+      "themes": ["fate and providence", "revenge", "death", "justice and order"]
+    }
+  ]
+}
