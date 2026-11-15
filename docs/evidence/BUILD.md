@@ -2,7 +2,7 @@
 
 Requirement: REQ-BUILD-01. PRD §12.10. Owner: Mateo (@moterodiaz, lead).
 
-**Status: not validated.** No CRACI build has run. This file records what a dedicated CRACI build would have to cover: dependencies, images, test commands and runner needs, read from the repo at `315d2d3` (2026-11-14). It also records the required `ci` it would be compared against, and what blocks the run. Required `ci` stays as it is (`.github/workflows/ci.yml`, unchanged). A `craci-evaluation.yml` workflow would be a separate, lead-merged, protected-path change. It is not part of this file.
+**Status: partly validated.** Since #240 the required `ci` job runs on CRACI and passes, but it silently skips the Swift tests (section 5). Before #240, no CRACI build had run. This file records what a dedicated CRACI build would have to cover: dependencies, images, test commands and runner needs, read from the repo at `315d2d3` (2026-11-14). It also records the required `ci` it would be compared against, and what blocks the run. Required `ci` stays as it is (`.github/workflows/ci.yml`, unchanged). A `craci-evaluation.yml` workflow would be a separate, lead-merged, protected-path change. It is not part of this file.
 
 ## 1. What CRACI is, and what we could not confirm
 
@@ -45,6 +45,25 @@ Gaps a supply-chain tool would flag, recorded rather than fixed here:
 
 Each of these needs a person and credentials. None can be done by an agent.
 
+## 5. First CRACI runs (after #240, 2026-11-15)
+
+The lead moved the `ci` job to `runs-on: craci` in #240 (merged `f7cbe15`), with the CRACI GitHub App connected to the repo. Required `ci` keeps its name, so the ruleset is unchanged.
+
+| Item | ubuntu-latest, last run before the switch | CRACI, first run on `main` |
+|---|---|---|
+| Run | 43653190346 on `95324b1` | 43656018917 on `f7cbe15` |
+| Runner | GitHub-hosted | `craci-2-9b914fbe` (label `craci`, group Default, runner 2.338.2), [CRACI job page](https://platform.craci.com/projects/junction/jobs/132634580932) |
+| Conclusion | success | success, 1 min 32 s |
+| iOS proxy tests | 7 OK | 7 OK |
+| `MetaLabCore` Swift tests | **27, 0 failures** | **not run** |
+| Backend | OK | 419 OK |
+| Contracts | OK | 40 OK |
+
+**Coverage regression.** The CRACI Slim image has no Swift toolchain. `ios/test.sh` runs `swift test` only when `swift` is on the path, so on CRACI it skips the Swift tests without saying so, and `ci` stays green. That is the failure mode this task warned about: a missing Swift runtime is a blocker, not a waived check. Two ways to close the gap; both are lead decisions:
+- Install Swift on the CRACI job (a setup step or an image with Swift), or move the Swift tests back to a GitHub-hosted job. That change is in `.github/`, a protected path.
+- Make `ios/test.sh` fail when Swift is missing in CI, instead of skipping. That is `ios/`, @maksymmatviievskyi's area.
+
+The iOS app target with the DAT SDK still needs macOS and Xcode, and runs on neither runner.
 ## Reproduce
 
 ```
