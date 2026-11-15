@@ -62,6 +62,7 @@ class BookSession:
     ) -> None:
         self.session_id = str(session_id)
         self.book = book or BookInfo()
+        self.is_default_book: bool = (book is None)
         if candidate_books is not None:
             self.candidate_books = list(candidate_books)
         elif book is not None:
@@ -137,6 +138,7 @@ class BookSession:
 
     def set_active_book(self, title: str, author: str = "", location: str = "") -> None:
         """Update self.book, keep per-book horizon state isolated, and track in candidate_books."""
+        self.is_default_book = False
         old_key = self._book_key(self.book.title) if self.book else ""
         norm = self._book_key(title)
         if old_key and old_key != norm:
