@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Bearer credential for the optional `/ws` handshake auth (contracts/LIFECYCLE.md, "Optional auth
 /// handoff"). Auth is off on the server by default, so a missing credential is the normal case.
