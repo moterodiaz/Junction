@@ -54,7 +54,7 @@ class ElevenLabsLifecycleBase(SpeakBase):
         async def until():
             while len(self.requests) < n:
                 await asyncio.sleep(0.005)
-        return until()
+        return asyncio.wait_for(until(), timeout=5)
 
 
 class MissingKeyTest(ElevenLabsLifecycleBase):
