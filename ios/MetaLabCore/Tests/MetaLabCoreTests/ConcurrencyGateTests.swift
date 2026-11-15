@@ -124,12 +124,28 @@ final class CaptureGateTests: XCTestCase {
 
     func testCancelledBeforeAwaitingStillThrows() async {
         let gate = CaptureGate<Int>()
+        let started = ContinuousClock.now
         let waiter = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await gate.value(timeout: .seconds(20), timeoutError: URLError(.timedOut))
         }
         let result = await waiter.result
-        if case .success = result { XCTFail("expected cancellation") }
+        XCTAssertLessThan(ContinuousClock.now - started, .seconds(1))
+        switch result {
+        case .success:
+            XCTFail("expected cancellation")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError, "got \(error)")
+        }
+    }
+
+    func testSuccessStopsTheTimeoutTimer() async throws {
+        let gate = CaptureGate<Int>()
+        gate.succeed(5)
+        let value = try await gate.value(timeout: .milliseconds(50), timeoutError: URLError(.timedOut))
+        XCTAssertEqual(value, 5)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(gate.ignoredOutcomeCount, 0, "the timeout timer fired after the capture finished")
     }
 
     @MainActor

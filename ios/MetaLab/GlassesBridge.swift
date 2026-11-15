@@ -33,6 +33,7 @@ final class GlassesBridge {
     private let tokens = ListenerTokenBag()
     /// One hinge/link listener per session; `.paused -> .started` must not add another.
     private var deviceWatch: (device: DeviceIdentifier, token: any AnyListenerToken)?
+    private var sessionErrorToken: (any AnyListenerToken)?
     private var observeTask: Task<Void, Never>?
     private var deviceTask: Task<Void, Never>?
     private var sessionTask: Task<Void, Never>?
@@ -144,11 +145,14 @@ final class GlassesBridge {
                     }
                 }
             }
-            created.errorPublisher.listen { [weak self] error in
+            if let previous = sessionErrorToken {
+                Task { await previous.cancel() }
+            }
+            sessionErrorToken = created.errorPublisher.listen { [weak self] error in
                 Task { @MainActor in
                     self?.map(error)
                 }
-            }.store(in: tokens)
+            }
             try created.start()
         } catch {
             map(error)
@@ -306,7 +310,9 @@ final class GlassesBridge {
     }
 
     /// Capture listeners live only as long as one capture, instead of the whole session's token bag.
-    nonisolated private static func cancelOnFinish(_ gate: CaptureGate<Data>, _ token: any AnyListenerToken) {
+    nonisolated private static func cancelOnFinish<Value: Sendable>(
+        _ gate: CaptureGate<Value>, _ token: any AnyListenerToken
+    ) {
         gate.onFinish {
             Task { await token.cancel() }
         }
@@ -314,22 +320,14 @@ final class GlassesBridge {
 
     private func waitUntilStarted(_ display: MWDATDisplay.Display) async {
         if display.state == .started { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let gate = ResumeGate()
-            display.statePublisher.listen { state in
-                Task { @MainActor in
-                    guard state == .started || state == .stopped else { return }
-                    guard gate.claim() else { return }
-                    continuation.resume()
-                }
-            }.store(in: tokens)
-            display.start()
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(5))
-                guard gate.claim() else { return }
-                continuation.resume()
-            }
-        }
+        let gate = CaptureGate<Bool>()
+        Self.cancelOnFinish(gate, display.statePublisher.listen { state in
+            guard state == .started || state == .stopped else { return }
+            gate.succeed(true)
+        })
+        display.start()
+        // Proceeds after 5 s either way, as before; the send then reports any failure.
+        _ = try? await gate.value(timeout: .seconds(5), timeoutError: GlassesProblem.timeout)
     }
 
     private func watchDevice(_ device: Device?) {
@@ -431,18 +429,5 @@ private final class SampleBox: @unchecked Sendable {
         lock.lock()
         storage.append(contentsOf: chunk)
         lock.unlock()
-    }
-}
-
-private final class ResumeGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var claimed = false
-
-    func claim() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if claimed { return false }
-        claimed = true
-        return true
     }
 }

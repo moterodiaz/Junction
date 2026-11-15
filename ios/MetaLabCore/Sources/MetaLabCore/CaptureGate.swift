@@ -10,8 +10,16 @@ public final class CaptureGate<Value: Sendable>: @unchecked Sendable {
     private var continuation: CheckedContinuation<Value, Error>?
     private var outcome: Result<Value, Error>?
     private var cleanups: [@Sendable () -> Void] = []
+    private var ignoredOutcomes = 0
 
     public init() {}
+
+    /// Outcomes that arrived after the first one won; visible to tests.
+    var ignoredOutcomeCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return ignoredOutcomes
+    }
 
     public var isFinished: Bool {
         lock.lock()
@@ -64,6 +72,7 @@ public final class CaptureGate<Value: Sendable>: @unchecked Sendable {
             waiting.resume(with: outcome)
             return
         }
+        precondition(continuation == nil, "CaptureGate.value awaited more than once")
         continuation = waiting
         lock.unlock()
     }
@@ -71,6 +80,7 @@ public final class CaptureGate<Value: Sendable>: @unchecked Sendable {
     private func finish(_ result: Result<Value, Error>) -> Bool {
         lock.lock()
         guard outcome == nil else {
+            ignoredOutcomes += 1
             lock.unlock()
             return false
         }

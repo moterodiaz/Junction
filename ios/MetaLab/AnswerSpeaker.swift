@@ -152,6 +152,8 @@ final class AnswerSpeaker: NSObject, AVSpeechSynthesizerDelegate {
         guard let previous = speaking else { return }
         speaking = nil
         turns.abandon()
+        // Callbacks normally arrive within milliseconds; older entries that never got one are dropped.
+        if retired.count >= 4 { retired.removeAll() }
         retired[ObjectIdentifier(previous)] = previous
     }
 
