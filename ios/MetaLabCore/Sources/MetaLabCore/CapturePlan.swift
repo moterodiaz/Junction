@@ -32,6 +32,7 @@ public enum PageResolution: String, Equatable, Sendable, Codable {
 }
 
 public struct CaptureSettings: Equatable, Sendable {
+    /// Hard cap. Recording normally ends sooner: `trailingSilenceSeconds` after the wearer stops talking.
     public var maxRecordSeconds: Double
     public var trailingSilenceSeconds: Double
     public var sampleRate: Int

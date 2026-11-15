@@ -1,0 +1,62 @@
+{
+  "source": "Revision Genie, GCSE English Literature Macbeth quote bank (pasted by the team, 2026-11-15)",
+  "note": "Quote text is Shakespeare (public domain). Speaker, act, scene and theme tags are the quote bank's. Its analysis, context and exam-tip prose is deliberately not copied here. Some quotes are trimmed or joined across lines, so check the printed page before relying on exact line breaks.",
+  "demo_pick": "Is this a dagger which I see before me, the handle toward my hand?",
+  "quotes": [
+    {"speaker": "Lady Macbeth", "act": 1, "scene": 5, "text": "Come, you spirits that tend on mortal thoughts, unsex me here", "themes": ["Gender", "Ambition", "Supernatural", "Power"]},
+    {"speaker": "Lady Macbeth", "act": 1, "scene": 5, "text": "Come to my woman's breasts, and take my milk for gall", "themes": ["Gender", "Supernatural", "Motherhood", "Evil"]},
+    {"speaker": "Lady Macbeth", "act": 1, "scene": 5, "text": "Look like th' innocent flower, but be the serpent under't", "themes": ["Appearance vs Reality", "Deception", "Evil"]},
+    {"speaker": "Lady Macbeth", "act": 1, "scene": 7, "text": "I have given suck, and know how tender 'tis to love the babe that milks me", "themes": ["Gender", "Masculinity", "Violence", "Motherhood"]},
+    {"speaker": "Lady Macbeth", "act": 1, "scene": 7, "text": "I would, while it was smiling in my face, have plucked my nipple from his boneless gums and dashed the brains out", "themes": ["Violence", "Motherhood", "Ambition", "Gender"]},
+    {"speaker": "Lady Macbeth", "act": 2, "scene": 2, "text": "A little water clears us of this deed", "themes": ["Guilt", "Naivety", "Appearance vs Reality"]},
+    {"speaker": "Lady Macbeth", "act": 2, "scene": 2, "text": "Infirm of purpose! Give me the daggers", "themes": ["Gender", "Power", "Masculinity"]},
+    {"speaker": "Lady Macbeth", "act": 3, "scene": 2, "text": "Nought's had, all's spent, where our desire is got without content", "themes": ["Consequences of Evil", "Ambition", "Emptiness"]},
+    {"speaker": "Lady Macbeth", "act": 5, "scene": 1, "text": "Out, damned spot! Out, I say!", "themes": ["Guilt", "Madness", "Consequences of Evil"]},
+    {"speaker": "Lady Macbeth", "act": 5, "scene": 1, "text": "All the perfumes of Arabia will not sweeten this little hand", "themes": ["Guilt", "Madness", "Consequences of Evil"]},
+
+    {"speaker": "Macbeth", "act": 1, "scene": 4, "text": "Stars, hide your fires; Let not light see my black and deep desires", "themes": ["Ambition", "Appearance vs Reality", "Evil"]},
+    {"speaker": "Macbeth", "act": 1, "scene": 7, "text": "I have no spur to prick the sides of my intent, but only vaulting ambition", "themes": ["Ambition", "Conscience", "Self-awareness"]},
+    {"speaker": "Macbeth", "act": 1, "scene": 7, "text": "I dare do all that may become a man; Who dares do more is none", "themes": ["Masculinity", "Morality", "Courage"]},
+    {"speaker": "Macbeth", "act": 1, "scene": 7, "text": "I am settled, and bend up each corporal agent to this terrible feat", "themes": ["Resolution", "Violence", "Commitment to Evil"]},
+    {"speaker": "Macbeth", "act": 2, "scene": 1, "text": "Is this a dagger which I see before me, the handle toward my hand?", "themes": ["Supernatural", "Guilt", "Ambition", "Madness"]},
+    {"speaker": "Macbeth", "act": 2, "scene": 2, "text": "Will all great Neptune's ocean wash this blood clean from my hand?", "themes": ["Guilt", "Consequences of Evil", "Nature"]},
+    {"speaker": "Macbeth", "act": 2, "scene": 2, "text": "Methought I heard a voice cry, \"Sleep no more! Macbeth does murder sleep\"", "themes": ["Guilt", "Conscience", "Sleep", "Madness"]},
+    {"speaker": "Macbeth", "act": 2, "scene": 2, "text": "Wake Duncan with thy knocking! I would thou couldst!", "themes": ["Guilt", "Regret", "Irreversibility"]},
+    {"speaker": "Macbeth", "act": 3, "scene": 1, "text": "To be thus is nothing, but to be safely thus", "themes": ["Paranoia", "Insecurity", "Ambition"]},
+    {"speaker": "Macbeth", "act": 3, "scene": 1, "text": "Upon my head they placed a fruitless crown and put a barren sceptre in my grip", "themes": ["Legacy", "Childlessness", "Meaninglessness"]},
+    {"speaker": "Macbeth", "act": 3, "scene": 2, "text": "O, full of scorpions is my mind, dear wife!", "themes": ["Guilt", "Madness", "Paranoia"]},
+    {"speaker": "Macbeth", "act": 3, "scene": 2, "text": "Come, seeling night, scarf up the tender eye of pitiful day", "themes": ["Darkness", "Evil", "Concealment"]},
+    {"speaker": "Macbeth", "act": 3, "scene": 4, "text": "I am in blood stepped in so far that, should I wade no more, returning were as tedious as go o'er", "themes": ["Guilt", "Consequences of Evil", "Tyranny"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 5, "text": "I have almost forgot the taste of fears", "themes": ["Emotional Deadening", "Despair", "Nihilism"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 5, "text": "She should have died hereafter; There would have been a time for such a word", "themes": ["Death", "Time", "Emotional Numbness"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 5, "text": "Tomorrow, and tomorrow, and tomorrow, creeps in this petty pace from day to day", "themes": ["Meaninglessness", "Time", "Despair"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 5, "text": "Life's but a walking shadow, a poor player that struts and frets his hour upon the stage", "themes": ["Mortality", "Meaninglessness", "Fate"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 5, "text": "It is a tale told by an idiot, full of sound and fury, signifying nothing", "themes": ["Meaninglessness", "Nihilism", "Despair"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 5, "text": "I 'gin to be aweary of the sun, and wish the estate o' the world were now undone", "themes": ["Despair", "Death Wish", "Destruction"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 7, "text": "They have tied me to a stake; I cannot fly, but bear-like I must fight the course", "themes": ["Defiance", "Entrapment", "Courage"]},
+    {"speaker": "Macbeth", "act": 5, "scene": 8, "text": "I will not yield, to kiss the ground before young Malcolm's feet", "themes": ["Pride", "Defiance", "Honour"]},
+
+    {"speaker": "Witches", "act": 1, "scene": 1, "text": "Fair is foul, and foul is fair", "themes": ["Appearance vs Reality", "Supernatural", "Evil", "Chaos"]},
+    {"speaker": "Witches", "act": 1, "scene": 3, "text": "All hail, Macbeth, that shalt be king hereafter!", "themes": ["Prophecy", "Fate", "Ambition", "Supernatural"]},
+    {"speaker": "Witches", "act": 4, "scene": 1, "text": "Double, double toil and trouble; Fire burn and cauldron bubble", "themes": ["Supernatural", "Evil", "Chaos"]},
+
+    {"speaker": "Banquo", "act": 1, "scene": 3, "text": "If you can look into the seeds of time, and say which grain will grow and which will not, speak then to me", "themes": ["Fate", "Time", "Prophecy"]},
+    {"speaker": "Banquo", "act": 1, "scene": 3, "text": "But 'tis strange: And oftentimes, to win us to our harm, the instruments of darkness tell us truths", "themes": ["Deception", "Evil", "Supernatural"]},
+    {"speaker": "Banquo", "act": 2, "scene": 1, "text": "Merciful powers, restrain in me the cursed thoughts that nature gives way to in repose", "themes": ["Temptation", "Conscience", "Supernatural"]},
+    {"speaker": "Banquo", "act": 3, "scene": 1, "text": "Thou hast it now: King, Cawdor, Glamis, all, as the weird women promised, and I fear thou played'st most foully for't", "themes": ["Betrayal", "Ambition", "Corruption"]},
+
+    {"speaker": "King Duncan", "act": 1, "scene": 4, "text": "There's no art to find the mind's construction in the face", "themes": ["Appearance vs Reality", "Betrayal", "Trust"]},
+
+    {"speaker": "Donalbain", "act": 2, "scene": 3, "text": "There's daggers in men's smiles", "themes": ["Appearance vs Reality", "Deception", "Betrayal"]},
+
+    {"speaker": "Macduff", "act": 4, "scene": 3, "text": "He has no children", "themes": ["Grief", "Revenge", "Loss"]},
+    {"speaker": "Macduff", "act": 4, "scene": 3, "text": "O Scotland, Scotland!", "themes": ["Patriotism", "Tyranny", "Kingship"]},
+    {"speaker": "Macduff", "act": 4, "scene": 3, "text": "I must also feel it as a man", "themes": ["Masculinity", "Grief", "Emotion"]},
+    {"speaker": "Macduff", "act": 4, "scene": 3, "text": "Front to front bring thou this fiend of Scotland and myself", "themes": ["Revenge", "Good vs Evil", "Justice"]},
+    {"speaker": "Macduff", "act": 5, "scene": 8, "text": "Macduff was from his mother's womb untimely ripped", "themes": ["Fate", "Prophecy", "Supernatural"]},
+
+    {"speaker": "Malcolm", "act": 4, "scene": 3, "text": "This tyrant, whose sole name blisters our tongues, was once thought honest", "themes": ["Tyranny", "Deception", "Corruption"]},
+    {"speaker": "Malcolm", "act": 4, "scene": 3, "text": "I am yet unknown to woman", "themes": ["Virtue", "Kingship", "Testing"]},
+    {"speaker": "Malcolm", "act": 4, "scene": 3, "text": "Angels are bright still, though the brightest fell", "themes": ["Appearance vs Reality", "Good vs Evil", "Trust"]}
+  ]
+}

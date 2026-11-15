@@ -7,6 +7,7 @@ Not imported by tests: `modal` is not in backend/requirements.txt.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,7 @@ BACKEND_DIR = next(path for path in (_HERE.parent, _HERE / "backend")
                    if (path / "app" / "config.py").is_file())
 
 sys.path.insert(0, str(BACKEND_DIR))
-from app.config import ELEVENLABS_SECRET_NAMES, MODAL_SECRET_NAME  # noqa: E402
+from app.config import ELEVENLABS_SECRET_NAMES, MODAL_SECRET_NAME, ON  # noqa: E402
 from stt.engine import WHISPER_MODEL  # noqa: E402
 
 image = (
@@ -38,6 +39,11 @@ image = (
 
 app = modal.App("metalab", image=image)
 
+# Canned Macbeth demo (app/demo.py): deploy with `DEMO_CANNED=on modal deploy backend/app/modal_app.py`.
+# Read when you deploy, so a plain deploy turns it back off. It also keeps one container warm.
+DEMO_CANNED = os.environ.get("DEMO_CANNED", "off").strip().lower()
+DEMO_ON = DEMO_CANNED in ON
+
 # Holds the opt-in STT debug log (REQ-OBS-02); nothing is written unless STT_DEBUG_LOG=on.
 # Pull it with: modal volume get metalab-stt-logs transcripts.jsonl
 STT_LOG_DIR = "/stt-logs"
@@ -45,13 +51,17 @@ stt_logs = modal.Volume.from_name("metalab-stt-logs", create_if_missing=True)
 
 
 @app.function(
-    secrets=[modal.Secret.from_name(name) for name in (MODAL_SECRET_NAME, *ELEVENLABS_SECRET_NAMES)],
+    secrets=[
+        *(modal.Secret.from_name(name) for name in (MODAL_SECRET_NAME, *ELEVENLABS_SECRET_NAMES)),
+        modal.Secret.from_dict({"DEMO_CANNED": DEMO_CANNED}),  # last, so it wins over the named secrets
+    ],
     # Generated images live in this process's memory (backend/ai/image.py), so a second
     # container would 404 on images it did not make. One container serves 20 at once.
     max_containers=1,
     cpu=2.0,  # Whisper small.en takes ~4 s per clip on one full core
     memory=2048,
-    scaledown_window=300,  # stay warm for 5 min after a request; set min_containers=1 for the demo
+    scaledown_window=300,  # stay warm for 5 min after a request
+    min_containers=1 if DEMO_ON else 0,  # a demo must not wait for a cold start (44 s measured)
     timeout=600,
     volumes={STT_LOG_DIR: stt_logs},
 )
@@ -73,7 +83,8 @@ def web():
 
     fastapi_app = create_app(require_keys=True)
     try:
-        stt.warm()  # load Whisper now, so the first spoken request does not wait for it
+        if not DEMO_ON:  # the canned demo never transcribes
+            stt.warm()  # load Whisper now, so the first spoken request does not wait for it
     except Exception as exc:  # typed commands and /health still work; speech then fails as stt_failed
         logging.getLogger("metalab").error("Whisper failed to load at startup: %s", type(exc).__name__)
     return fastapi_app

@@ -165,7 +165,7 @@ final class GlassesBridge {
     func recordWav(maxSeconds: Double, trailingSilence: Double, sampleRate: Int) async throws -> Data {
         let allowed = await AVAudioApplication.requestRecordPermission()
         guard allowed else { throw GlassesProblem.microphoneDenied }
-        try await settleHFP()
+        // No second settleHFP() here: the .settleHFP step in CapturePlan runs right before this.
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
@@ -182,7 +182,13 @@ final class GlassesBridge {
             throw GlassesProblem.notReady
         }
 
-        let box = SampleBox()
+        let box = SampleBox(
+            detector: EndpointDetector(
+                sampleRate: sampleRate,
+                maxSeconds: maxSeconds,
+                trailingSilenceSeconds: trailingSilence
+            )
+        )
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
             let ratio = target.sampleRate / max(inputFormat.sampleRate, 1)
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
@@ -204,9 +210,14 @@ final class GlassesBridge {
         }
         engine.prepare()
         try engine.start()
-        try await Task.sleep(for: .seconds(maxSeconds))
+        // Stop once the wearer has spoken and gone quiet. The wall-clock cap covers a tap that never delivers.
+        let deadline = Date().addingTimeInterval(maxSeconds)
+        while !box.isDone, !Task.isCancelled, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
         engine.stop()
         input.removeTap(onBus: 0)
+        try Task.checkCancellation()
         let trimmed = AudioClip.trimTrailingSilence(
             pcm16: box.samples,
             sampleRate: sampleRate,
@@ -418,6 +429,11 @@ final class GlassesBridge {
 private final class SampleBox: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [Int16] = []
+    private var detector: EndpointDetector
+
+    init(detector: EndpointDetector) {
+        self.detector = detector
+    }
 
     var samples: [Int16] {
         lock.lock()
@@ -425,9 +441,16 @@ private final class SampleBox: @unchecked Sendable {
         return storage
     }
 
+    var isDone: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return detector.isDone
+    }
+
     func append(_ chunk: [Int16]) {
         lock.lock()
         storage.append(contentsOf: chunk)
+        detector.feed(chunk)
         lock.unlock()
     }
 }

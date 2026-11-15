@@ -16,7 +16,7 @@ from ai.image import image_router
 from ai.page_reader import PageReadError
 from stt.speak import audio_router
 
-from . import pipeline
+from . import demo, pipeline
 from .config import auth_config, get_settings, max_connections, trust_forwarded_proto
 from .latency import StageTimer
 from .messages import Error, Invoke, Stage, Status
@@ -31,6 +31,7 @@ if not log.handlers:
 
 app = FastAPI(title="MetaLab backend")
 app.include_router(audio_router)
+app.include_router(demo.demo_router)
 if image_router is not None:
     app.include_router(image_router)
 
@@ -194,7 +195,8 @@ async def handle(websocket: WebSocket, raw: str | bytes) -> None:
         await send(websocket, Status(request_id=invoke.request_id, stage=stage))
 
     try:
-        card = await pipeline.run(invoke, send_stage)
+        run = demo.run if demo.enabled() else pipeline.run  # DEMO_CANNED=on: the fixed Macbeth card
+        card = await run(invoke, send_stage)
         await send(websocket, card)
         outcome = "card"
     except asyncio.CancelledError:
