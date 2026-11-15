@@ -91,7 +91,7 @@ class ExchangeChecker:
         self.enabled = set(exchange["enabled_intents"])
         self.queue: list[dict] = []
         self.used_ids: set[str] = set()
-        self.terminated: set[str] = set()
+        self.terminated: dict[str, str] = {}
         self.ended: set[str] = set()
         self.ending: dict[str, str] = {}
         self.context: dict[str, bool] = {}
@@ -125,7 +125,7 @@ class ExchangeChecker:
                 if rid in self.used_ids:
                     self.rejections.append((rid, sid, "duplicate_request"))
                     return
-                if sid in self.ended:
+                if sid in self.ended or sid in self.ending.values():
                     self.rejections.append((rid, sid, "session_unavailable"))
                     return
             self.used_ids.add(rid)
@@ -134,6 +134,13 @@ class ExchangeChecker:
                 "text": msg.get("text"), "audio": msg.get("audio") is not None, "stages": [],
             })
         elif kind == "cancel":
+            pending = next((r for r in self.queue if r["id"] == rid and not r["invalid"]), None)
+            if pending is not None:
+                assert pending["session"] == sid, \
+                    f"cancel session mismatch: cancel names {sid!r} but {rid!r} is in {pending['session']!r}"
+            else:
+                assert rid in self.terminated and self.terminated[rid] == sid, \
+                    f"cancel for unknown request {rid!r} (not pending, not terminated in {sid!r})"
             self.cancel_asked.add(rid)
         elif kind == "session_end":
             self.used_ids.add(rid)
@@ -162,7 +169,7 @@ class ExchangeChecker:
             assert req["id"] in self.cancel_asked or req["session"] in self.ending.values(), \
                 "cancelled without a cancel or session_end"
             self.queue.remove(req)
-            self.terminated.add(req["id"])
+            self.terminated[req["id"]] = req["session"]
             return
 
         assert self.queue, f"{kind} with no pending invocation"
@@ -185,7 +192,7 @@ class ExchangeChecker:
             return
 
         self.queue.pop(0)
-        self.terminated.add(head["id"])
+        self.terminated[head["id"]] = head["session"]
         sid = head["session"]
         has_context = self.context.get(sid, False)
         if kind == "error":
@@ -420,6 +427,20 @@ class IntentExchangeTests(unittest.TestCase):
         def disabled_option(steps):
             receives(steps, "r1", "clarify")[0]["receive"]["options"] = ["reading", "document"]
 
+        def cancel_wrong_session(steps):
+            next(s for s in steps if s.get("send", {}).get("type") == "cancel")["send"]["session_id"] = "s_wrong"
+
+        def cancel_wrong_target(steps):
+            next(s for s in steps if s.get("send", {}).get("type") == "cancel")["send"]["request_id"] = "r_wrong"
+
+        def invoke_on_ending_session(steps):
+            idx = next(i for i, s in enumerate(steps) if s.get("send", {}).get("type") == "session_end")
+            sid = steps[idx]["send"]["session_id"]
+            steps.insert(idx + 1, {"send": {
+                "type": "invoke", "request_id": "r_extra",
+                "session_id": sid, "frame": None, "audio": None, "text": "sneaked in",
+            }})
+
         cases = [
             ("follow-up-without-frame", reading_on_follow_up, "no reading stage"),
             ("cancel", card_after_cancel, "card for 'r1'|with no pending"),
@@ -431,6 +452,9 @@ class IntentExchangeTests(unittest.TestCase):
             ("reset-with-pending", ack_before_cancelled, "ack before pending"),
             ("overlapping-request-ids", accept_duplicate, "missing admission|is running"),
             ("ambiguity-intent", disabled_option, "disabled intent"),
+            ("cancel", cancel_wrong_session, "cancel session mismatch"),
+            ("cancel", cancel_wrong_target, "cancel for unknown request"),
+            ("reset-with-pending", invoke_on_ending_session, "session_unavailable"),
         ]
         for name, mutate, pattern in cases:
             with self.subTest(exchange=name, mutation=mutate.__name__):
