@@ -93,6 +93,11 @@ class NotesFileTest(unittest.TestCase):
         self.assertIn("hamlet", list_plays())
         self.assertNotIn("hamlet_notes", list_plays())
 
+    def test_notes_file_cannot_be_loaded_directly_as_a_play(self) -> None:
+        from ai.source_loader import load_play
+        with self.assertRaises(FileNotFoundError):
+            load_play("hamlet_notes")
+
 
 class ContextWindowTest(unittest.TestCase):
     def setUp(self) -> None:

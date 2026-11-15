@@ -374,6 +374,8 @@ def load_play(
 
     # 1. Exact or lowercase filename match (<name>.json)
     target_file = dir_path / f"{key}.json"
+    if key.endswith(NOTES_SUFFIX):
+        raise FileNotFoundError(f"Play '{play_name_or_id}' not found in {dir_path}")
     if not target_file.is_file():
         # Search all json files for matching ID or Title
         matching_file: Optional[Path] = None
