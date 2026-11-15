@@ -138,6 +138,10 @@ class BookSession:
 
     def set_active_book(self, title: str, author: str = "", location: str = "") -> None:
         """Update self.book, keep per-book horizon state isolated, and track in candidate_books."""
+        norm = self._book_key(title)
+        if self.is_default_book and norm in ("unknown book", "unknown", ""):
+            # An unmatched page must not flip a default-Hamlet session to "Unknown book"
+            return
         self.is_default_book = False
         old_key = self._book_key(self.book.title) if self.book else ""
         norm = self._book_key(title)
@@ -209,14 +213,17 @@ class BookSession:
             lines.append(f"A{i}: {ex.answer}")
         return "\n".join(lines)
 
-    def get_gemini_turns(self, limit: Optional[int] = None) -> List[dict[str, Any]]:
-        """Return history as Gemini multi-turn conversation objects."""
-        exchanges = self.get_history(limit)
+    def get_gemini_turns(self, limit: Optional[int] = 3) -> List[dict[str, Any]]:
+        """Return history as Gemini multi-turn conversation objects.
+
+        Replays Q and A only (no passage text); the current page passage is sent once.
+        Defaults to at most 3 exchanges.
+        """
+        effective_limit = 3 if limit is None else limit
+        exchanges = self.get_history(effective_limit)
         turns: List[dict[str, Any]] = []
         for ex in exchanges:
             user_text = f"Question: {ex.question}"
-            if ex.passage:
-                user_text = f"Passage: {ex.passage}\n{user_text}"
             turns.append({"role": "user", "parts": [{"text": user_text}]})
             turns.append({"role": "model", "parts": [{"text": ex.answer}]})
         return turns

@@ -425,6 +425,73 @@ class SourceLoaderTest(unittest.TestCase):
             self.assertEqual(match.speaker, "B")
             self.assertEqual(match.text, "alpha beta gamma\ndelta epsilon")
 
+    def test_scene_boundary_page_matches_scene_1_or_2(self) -> None:
+        """Acceptance check 1 (#258): Scene-boundary page (end of 3.1 + start of 3.2 from hamlet.json) matches 3.1 or 3.2."""
+        play = load_play("Hamlet")
+        lines_3_1 = [
+            l.text for act in play.acts if act.act == 3
+            for sc in act.scenes if sc.scene == 1
+            for l in sc.lines[-20:] if l.type == "line"
+        ]
+        lines_3_2 = [
+            l.text for act in play.acts if act.act == 3
+            for sc in act.scenes if sc.scene == 2
+            for l in sc.lines[:20] if l.type == "line"
+        ]
+        boundary_text = "\n".join(lines_3_1 + lines_3_2)
+        match = find_passage(boundary_text, play="Hamlet")
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertIn(match.scene, (1, 2))
+
+    def test_page_with_speaker_prefixes_scores_at_least_85(self) -> None:
+        """Acceptance check 2 (#258): Page with SPEAKER. prefixes scores >= 0.85."""
+        play = load_play("Hamlet")
+        lines_3_1 = [
+            f"SPEAKER. {l.text}" for act in play.acts if act.act == 3
+            for sc in act.scenes if sc.scene == 1
+            for l in sc.lines[60:85] if l.type == "line"
+        ]
+        speaker_page = "\n".join(lines_3_1)
+        match = find_passage(speaker_page, play="Hamlet")
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertGreaterEqual(match.score, 0.85)
+
+    def test_307_word_page_with_25_percent_synthetic_noise_matches_under_0_3s(self) -> None:
+        """Acceptance check 3 (#258): 307-word page with 25% synthetic noise matches in < 0.3 s."""
+        import random
+        import time
+
+        play = load_play("Hamlet")
+        all_lines = [
+            l.text for act in play.acts if act.act == 3
+            for sc in act.scenes if sc.scene == 1
+            for l in sc.lines[50:110] if l.type == "line"
+        ]
+        words_307 = " ".join(all_lines).split()[:307]
+        self.assertEqual(len(words_307), 307)
+
+        noisy_words = list(words_307)
+        random.seed(42)
+        noise_count = int(0.25 * len(noisy_words))
+        for idx in random.sample(range(len(noisy_words)), noise_count):
+            noisy_words[idx] = "xyz" + noisy_words[idx][3:] if len(noisy_words[idx]) > 3 else "abc"
+
+        noisy_page = " ".join(noisy_words)
+        t0 = time.perf_counter()
+        match = find_passage(noisy_page, play="Hamlet")
+        elapsed = time.perf_counter() - t0
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        self.assertLess(elapsed, 0.3, f"Matching 307-word noisy page took {elapsed:.3f}s, expected < 0.3s")
+
 
 if __name__ == "__main__":
     unittest.main()

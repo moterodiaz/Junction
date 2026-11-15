@@ -984,6 +984,72 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("Act 5", ans_soldier["caption"])
 
+    def test_ground_passage_unknown_book_returns_hamlet_match_without_filenotfound(self):
+        """Acceptance check 4 (#258): ground_passage(play="Unknown book") returns a Hamlet match for Hamlet text and never logs FileNotFoundError."""
+        import logging
+        hamlet_text = "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer"
+        logger = logging.getLogger("metalab.reasoning")
+        records = []
+
+        class Handler(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        h = Handler()
+        logger.addHandler(h)
+        try:
+            match = ground_passage(hamlet_text, play="Unknown book")
+        finally:
+            logger.removeHandler(h)
+
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.play_title, "Hamlet")
+        self.assertEqual(match.act, 3)
+        self.assertEqual(match.scene, 1)
+        for r in records:
+            self.assertNotIn("FileNotFoundError", r.getMessage())
+
+    def test_get_gemini_turns_replays_at_most_3_exchanges_without_passage_text(self):
+        """Acceptance check 5 (#258): get_gemini_turns replays at most 3 exchanges without passage text."""
+        session = BookSession("s-gemini-turns-limit")
+        for i in range(1, 6):
+            session.add_exchange(
+                question=f"Question {i}?",
+                answer=f"Answer {i}.",
+                passage=f"Passage for question {i}.",
+            )
+        turns = session.get_gemini_turns()
+        # 3 exchanges * 2 turns (user + model) = 6 turns
+        self.assertEqual(len(turns), 6)
+        user_turns = [t for t in turns if t["role"] == "user"]
+        self.assertEqual(len(user_turns), 3)
+        for t in user_turns:
+            text = t["parts"][0]["text"]
+            self.assertNotIn("Passage", text)
+            self.assertTrue(text.startswith("Question:"))
+
+    def test_parse_gemini_response_concatenates_all_parts(self):
+        """Fix #251: _parse_gemini_response concatenates all text parts across parts."""
+        client = HttpGeminiClient(api_key="fake-key")
+        session = BookSession("s-multipart")
+        raw_json = json.dumps({
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": '{"title": "Hamlet", "caption": "Two-line caption.',},
+                            {"text": ' Second line.", "speech_text": "Spoken text.", "image_prompt": "Prompt.", "book": {"title": "Hamlet"}, "sources": []}'},
+                        ]
+                    }
+                }
+            ]
+        })
+        parsed = client._parse_gemini_response(raw_json, session)
+        self.assertEqual(parsed["caption"], "Two-line caption. Second line.")
+        self.assertEqual(parsed["speech_text"], "Spoken text.")
+
+
 class GeminiPartsParsingTest(unittest.TestCase):
     """#251 (REQ-REASON-01): the HTTP reasoning client reads every non-thought text part."""
 

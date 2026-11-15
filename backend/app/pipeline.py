@@ -556,7 +556,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     await send_stage("reading")
     page_text = await timed(read_page(invoke.frame))
 
-    passage_match = ground_passage(page_text)
+    passage_match = await asyncio.to_thread(ground_passage, page_text)
     passage_score = float(passage_match.score) if passage_match is not None else 0.0
     session = default_session_store.get_or_create(invoke.session_id)
     if passage_match is not None:
