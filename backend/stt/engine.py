@@ -170,9 +170,10 @@ def _gemini_engine(
 
     def fallback(audio: bytes, reason: str) -> str:
         _set_run_info("gemini", WHISPER_MODEL, reason)
-        text = _whisper_fallback()(audio)
-        _set_run_info("gemini", WHISPER_MODEL, reason)  # the Whisper run records itself as "whisper"
-        return text
+        try:
+            return _whisper_fallback()(audio)
+        finally:
+            _set_run_info("gemini", WHISPER_MODEL, reason)  # the Whisper run records itself as "whisper"
 
     def run(audio: bytes) -> str:
         _set_run_info("gemini", target_model)

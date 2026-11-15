@@ -417,10 +417,6 @@ class GeminiSTTBehaviorTest(unittest.TestCase):
         self.assertIn("no speech", str(ctx.exception).lower())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class STTDebugLogTest(unittest.TestCase):
     """REQ-OBS-02: the opt-in transcript log for glasses test runs."""
 
@@ -520,6 +516,21 @@ class STTDebugLogTest(unittest.TestCase):
         self.assertEqual(line["fallback_reason"], "gemini_error")
         self.assertEqual(line["transcript"], "draw this")
 
+    def test_failed_whisper_fallback_keeps_the_fallback_reason(self):
+        def failing_whisper(audio):
+            engine._set_run_info("whisper", engine.WHISPER_MODEL)
+            raise RuntimeError("whisper down")
+
+        with mock.patch.object(engine, "_faster_whisper", return_value=failing_whisper):
+            stt.set_engine(engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True))
+            with self.assertLogs("metalab", "ERROR"):
+                with self.assertRaises(pipeline.PipelineError):
+                    self.transcribe()
+        [line] = self.lines()
+        self.assertIs(line["ok"], False)
+        self.assertIs(line["fallback_used"], True)
+        self.assertEqual(line["fallback_reason"], "no_key")
+
     def test_no_key_and_bad_format_fallbacks(self):
         with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "explain"):
             stt.set_engine(engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True))
@@ -559,7 +570,9 @@ class STTDebugLogTest(unittest.TestCase):
         with mock.patch.object(self.debug_log, "_last_commit", -1e9), \
                 mock.patch.object(self.debug_log, "_schedule") as schedule:
             self.debug_log.record(transcript="one")
+            self.debug_log.wait_for_commit()
             self.debug_log.record(transcript="two")
+            self.debug_log.wait_for_commit()
             self.assertEqual(len(commits), 1)
             schedule.assert_called_once()
             self.debug_log.flush()
@@ -575,3 +588,7 @@ class STTDebugLogTest(unittest.TestCase):
             self.assertFalse(any("STT_DEBUG_LOG" in p for p in config_problems(ok)), ok)
         s = load_settings({"NVIDIA_API_KEY": "k", "GEMINI_API_KEY": "k"})
         self.assertEqual((s.stt_debug_log, s.stt_debug_log_path), ("off", "/stt-logs/transcripts.jsonl"))
+
+
+if __name__ == "__main__":
+    unittest.main()

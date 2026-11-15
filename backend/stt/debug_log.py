@@ -60,7 +60,26 @@ def record(**fields: Any) -> None:
     except Exception as exc:
         _log.debug("stt debug log write skipped: %s", type(exc).__name__)
         return
-    _maybe_commit()
+    _commit_in_background()
+
+
+_worker: threading.Thread | None = None
+
+
+def _commit_in_background() -> None:
+    """Commit off the caller's thread: a slow Volume commit must never delay a transcript."""
+    global _worker
+    if _commit_hook is None:
+        return
+    _worker = threading.Thread(target=_maybe_commit, daemon=True)
+    _worker.start()
+
+
+def wait_for_commit() -> None:
+    """Block until the latest background commit attempt finishes (tests)."""
+    worker = _worker
+    if worker is not None:
+        worker.join()
 
 
 def _maybe_commit(force: bool = False) -> None:
