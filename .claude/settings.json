@@ -40,7 +40,6 @@
       "Bash(tools/board *)",
       "Bash(tools/task *)",
       "Bash(tools/wt *)",
-      "Bash(tools/onboard*)",
       "Bash(tools/kickoff *)"
     ]
   },

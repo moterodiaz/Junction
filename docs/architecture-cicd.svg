@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="750" viewBox="0 0 1280 750" role="img" aria-labelledby="title">
+<title id="title">MetaLab CI/CD: agents write, bots review and fix, rules decide the merge</title>
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#334155"/></marker>
+<marker id="ahd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ea580c"/></marker>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#0f172a}
+.h{font-size:22px;font-weight:700}.s{font-size:13px;fill:#475569}
+.t{font-size:14px;font-weight:700}.b{font-size:12px;fill:#334155}
+.l{font-size:11.5px;fill:#1e293b;font-weight:600}.g{font-size:13px;font-weight:700;fill:#475569}
+.lg{font-size:12px;fill:#475569}
+</style>
+</defs>
+<rect x="0" y="0" width="1280" height="750" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="30" y="42" class="h">MetaLab CI/CD: agents write, bots review and fix, rules decide the merge</text>
+<text x="30" y="64" class="s">Every PR runs the same gates. A named human owns the protected paths and every escalation.</text>
+<g><rect x="30" y="100" width="200" height="96" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/><text x="42" y="122" class="t">Task queue</text><text x="42" y="139" class="b">GitHub issues, tools/task</text><text x="42" y="156" class="b">next / claim</text><text x="42" y="173" class="b">needs a REQ id</text></g>
+<g><rect x="30" y="240" width="200" height="160" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/><text x="42" y="262" class="t">Agent in a worktree</text><text x="42" y="279" class="b">tools/wt from origin/main</text><text x="42" y="296" class="b">local hooks block force</text><text x="42" y="313" class="b">push, push to main,</text><text x="42" y="330" class="b">edits on main, .env,</text><text x="42" y="347" class="b">--admin, approvals</text></g>
+<g><rect x="30" y="600" width="200" height="100" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/><text x="42" y="622" class="t">Board (issue #1)</text><text x="42" y="639" class="b">tools/board</text><text x="42" y="656" class="b">"needs human" from</text><text x="42" y="673" class="b">claude-fix, sweeper</text></g>
+<g><rect x="270" y="255" width="160" height="100" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/><text x="282" y="277" class="t">Pull request</text><text x="282" y="294" class="b">Closes #N</text><text x="282" y="311" class="b">REQ-id in title</text><text x="282" y="328" class="b">not a draft</text></g>
+<g><rect x="470" y="90" width="270" height="100" rx="10" fill="#f0f9ff" stroke="#0284c7" stroke-width="1.6"/><text x="482" y="112" class="t">pr-header</text><text x="482" y="129" class="b">req-id: REQ-[A-Z]+-[0-9]+</text><text x="482" y="146" class="b">trust header comment from</text><text x="482" y="163" class="b">tools/metrics --pr</text></g>
+<g><rect x="470" y="255" width="270" height="100" rx="10" fill="#f0f9ff" stroke="#0284c7" stroke-width="1.6"/><text x="482" y="277" class="t">Greptile review</text><text x="482" y="294" class="b">GitHub App, every PR</text><text x="482" y="311" class="b">check "Greptile Review"</text><text x="482" y="328" class="b">(required)</text></g>
+<g><rect x="470" y="410" width="270" height="130" rx="10" fill="#f0f9ff" stroke="#0284c7" stroke-width="1.6"/><text x="482" y="432" class="t">ci on CRACI</text><text x="482" y="449" class="b">runs-on: craci (self-hosted)</text><text x="482" y="466" class="b">hook + tools tests</text><text x="482" y="483" class="b">backend, contracts, ios</text><text x="482" y="500" class="b">(Swift) test.sh</text><text x="482" y="517" class="b">check "ci" (required)</text></g>
+<g><rect x="780" y="255" width="220" height="130" rx="10" fill="#f0f9ff" stroke="#0284c7" stroke-width="1.6"/><text x="792" y="277" class="t">claude-fix</text><text x="792" y="294" class="b">fixes each finding, replies</text><text x="792" y="311" class="b">"Fixed in &lt;sha&gt;"</text><text x="792" y="328" class="b">cap: 5 fix commits</text><text x="792" y="345" class="b">never edits protected</text><text x="792" y="362" class="b">paths; re-runs ci</text></g>
+<g><rect x="1040" y="210" width="215" height="160" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/><text x="1052" y="232" class="t">main-protect ruleset</text><text x="1052" y="249" class="b">required: ci,</text><text x="1052" y="266" class="b">Greptile Review,</text><text x="1052" y="283" class="b">every thread resolved</text><text x="1052" y="300" class="b">0 approvals, no bypass,</text><text x="1052" y="317" class="b">no --admin</text></g>
+<g><rect x="1040" y="420" width="215" height="150" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/><text x="1052" y="442" class="t">Merge</text><text x="1052" y="459" class="b">auto-merge (squash):</text><text x="1052" y="476" class="b">claude-fix or an agent</text><text x="1052" y="493" class="b">owner merges by hand:</text><text x="1052" y="510" class="b">.github .claude .agents</text><text x="1052" y="527" class="b">contracts, no-auto-merge</text></g>
+<g><rect x="1040" y="620" width="215" height="80" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="1052" y="642" class="t">main</text><text x="1052" y="659" class="b">sweeper posts</text><text x="1052" y="676" class="b">"PR merged, git pull"</text></g>
+<g><rect x="270" y="600" width="430" height="100" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/><text x="282" y="622" class="t">PR Sweeper (every 15 min, on push, after claude-fix)</text><text x="282" y="639" class="b">nudges Greptile after 20 min; retries a stuck claude-fix up to 2 times</text><text x="282" y="656" class="b">flags conflicts and failing ci; then "needs human" on the board</text><text x="282" y="673" class="b">heartbeat re-runs every 10 min while a PR is not clean</text></g>
+<g><rect x="740" y="600" width="260" height="100" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/><text x="752" y="622" class="t">trust gate (disabled)</text><text x="752" y="639" class="b">tools/metrics --gate: an open</text><text x="752" y="656" class="b">escape holds its area until</text><text x="752" y="673" class="b">the owner approves</text></g>
+<path d="M130 196 L130 238" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="138" y="222" class="l">claim</text>
+<path d="M230 305 L268 305" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M350 255 L350 140 L468 140" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="360" y="132" class="l">opened, edited</text>
+<path d="M430 305 L468 305" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M350 355 L350 475 L468 475" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="360" y="467" class="l">pull_request</text>
+<path d="M740 305 L778 305" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="742" y="297" class="l">review</text>
+<path d="M890 255 L890 225 L400 225 L400 253" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="560" y="218" class="l">fix commit + thread reply</text>
+<path d="M890 385 L890 440 L742 440" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="790" y="433" class="l">dispatch ci</text>
+<path d="M1000 290 L1038 290" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M740 500 L1020 500 L1020 345 L1038 345" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M1147 370 L1147 418" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M1147 570 L1147 618" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M270 650 L232 650" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M650 600 L650 580 L960 580 L960 387" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="880" y="573" class="l">retry (max 2)</text>
+<text x="30" y="732" class="lg">Blue: automated reviewers and runners.  Red: GitHub-enforced merge rules.  Grey dashed: built and tested, switched off for API rate limits.</text>
+</svg>

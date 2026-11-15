@@ -2,20 +2,18 @@
 
 Thin client for the Ray-Ban Display glasses. It captures one frame and one short command, sends a single `invoke` message, then shows the card and speaks the answer. It does not call a model.
 
-Issues: #34 session, #35 capture and invoke, #36 lens status and card, #37 spoken answer with the display off, #38 failure states and reconnect.
-
-The wire format is the draft in PRD section 7. When `contracts/` lands (#24), this client adapts to that package. Field names already match the draft.
+The wire format is defined in [`contracts/ws-messages.schema.json`](../contracts/ws-messages.schema.json); the client's types are in `MetaLabCore/Sources/MetaLabCore/Contract.swift`.
 
 ## Gemini key
 
-The phone has nowhere to put an API key. Reasoning, the illustration, and optional spoken audio run on the backend. When a Gemini key is added to the backend's Modal secret, that key is what PRD section 4 uses for those steps. This app already:
+The phone has nowhere to put an API key. Reasoning, the illustration, and optional spoken audio run on the backend. When a Gemini key is added to the backend's Modal secret, that key is what the backend uses for those steps. This app already:
 
 - sends `invoke` and waits for `status`, `card`, and `error`
 - shows `models.reason` and `models.image` once the card names them
 - shows a text card when `image_url` is null (image billing off)
 - speaks `speech_text` when `audio_url` is null
 
-The secret's variable name belongs to issue #25 in `backend/app`. Do not put the key in this folder.
+The backend reads it as `GEMINI_API_KEY` (`backend/app/config.py`). Do not put the key in this folder.
 
 ## Run
 
