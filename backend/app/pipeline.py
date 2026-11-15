@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
-import dataclasses
 import inspect
 import logging
 import os
@@ -528,17 +527,9 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     if dynamic_routing:
         decision = await timed(ai.decision.decide(utterance, page_text, session, passage_score=passage_score))
         if decision.fallback_used:
-            # Same L0 rule: only an empty utterance fails; no command word means explain,
-            # not the heuristic's keyword guess (e.g. "picture" -> draw).
-            if command_from(utterance) == DEFAULT_COMMAND and stt.match_command(utterance) is None:
-                decision = dataclasses.replace(
-                    decision,
-                    action="explain",
-                    task_tier="balanced",
-                    recommended_model=ai.decision.resolve_model_for_tier("balanced"),
-                    needs_image=False,
-                    speak_only=False,
-                )
+            # Only an empty utterance fails. Otherwise fallback_decide's natural-intent keywords
+            # (backend/ai/decision.py) pick the action; the L0 default applies outside this mode.
+            command_from(utterance)
 
         if (
             not decision.fallback_used
