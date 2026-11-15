@@ -70,8 +70,9 @@ speech ready: provider=elevenlabs model=eleven_flash_v2_5 fallback=false synth_s
    It prints each stage and its time, the card's `models`, whether `audio_url` is set and the card time, then downloads the clip (HTTP status, content type, sample rate, length), plays it with `afplay` and deletes it. It never prints the transcript or the answer. It exits 1 if `audio_url` is null or the download fails (`--no-play` skips playback). You should hear the ElevenLabs voice, and `modal app logs metalab` should show `speech ready: provider=elevenlabs`.
 3. **Glasses.** Pair the iPhone with the glasses, turn on Developer Mode in the Meta AI app and run MetaLab from Xcode with the same `wss://` URL. Check that iOS shows the glasses as the audio route. Say "Hey Meta, start MetaLab", look at the page and say "explain this". Expect status chimes, the card on the lens, then the ElevenLabs voice in the glasses speakers. The built-in iPhone voice means fallback: check the log.
 4. **Display off.** Repeat with the display off; the answer should still be spoken.
-5. **Fallback.** On a local run, set a wrong `ELEVEN_LABS_VOICE_ID` (or leave the ElevenLabs keys out). The log shows the failure, the phone uses the built-in voice and the request still returns a card.
-6. **Record** in `docs/evidence/base-live.md`: device, app commit, deploy version, the `speech ready` line, card time, whether it was audible and on which route, and anything that failed.
+5. **Gemini fallback.** On a local run with a working `GEMINI_API_KEY`, set a wrong `ELEVEN_LABS_VOICE_ID` (or leave the ElevenLabs keys out). The log shows `provider=gemini` (`fallback=true` for a wrong voice) and the request still returns a card.
+6. **Built-in iPhone voice.** Make both speech providers unavailable: leave out the ElevenLabs keys and use a `GEMINI_API_KEY` without speech access (or an invalid one). The log shows `speech synthesis failed, the phone will use its own voice`, `audio_url` is null, the phone reads `speech_text` in the iPhone voice and the request still returns a card.
+7. **Record** in `docs/evidence/base-live.md`: device, app commit, deploy version, the `speech ready` line, card time, whether it was audible and on which route, and anything that failed.
 
 ---
 

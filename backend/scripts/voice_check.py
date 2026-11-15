@@ -100,13 +100,17 @@ def fetch_clip(audio_url: str) -> bytes | None:
     return response.content
 
 
-def play(wav: bytes) -> None:
+def play(wav: bytes) -> bool:
     handle = tempfile.NamedTemporaryFile(prefix="voice-check-", suffix=".wav", delete=False)
     try:
         handle.write(wav)
         handle.close()
         print("playing with afplay…")
-        subprocess.run(["afplay", handle.name], check=False)
+        try:
+            return subprocess.run(["afplay", handle.name], check=False).returncode == 0
+        except OSError as exc:
+            print(f"could not run afplay: {type(exc).__name__}")
+            return False
     finally:
         os.unlink(handle.name)
 
@@ -132,8 +136,9 @@ def main(argv: list[str]) -> int:
     if wav is None:
         print("FAIL: the clip could not be downloaded")
         return 1
-    if not args.no_play:
-        play(wav)
+    if not args.no_play and not play(wav):
+        print("FAIL: the clip could not be played (use --no-play to skip playback)")
+        return 1
     print("OK: check `modal app logs metalab` for 'speech ready: provider=elevenlabs'")
     return 0
 
