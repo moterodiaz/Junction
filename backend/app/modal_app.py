@@ -21,7 +21,7 @@ BACKEND_DIR = next(path for path in (_HERE.parent, _HERE / "backend")
                    if (path / "app" / "config.py").is_file())
 
 sys.path.insert(0, str(BACKEND_DIR))
-from app.config import MODAL_SECRET_NAME  # noqa: E402
+from app.config import ELEVENLABS_SECRET_NAMES, MODAL_SECRET_NAME  # noqa: E402
 from stt.engine import WHISPER_MODEL  # noqa: E402
 
 image = (
@@ -40,7 +40,7 @@ app = modal.App("metalab", image=image)
 
 
 @app.function(
-    secrets=[modal.Secret.from_name(MODAL_SECRET_NAME)],
+    secrets=[modal.Secret.from_name(name) for name in (MODAL_SECRET_NAME, *ELEVENLABS_SECRET_NAMES)],
     # Generated images live in this process's memory (backend/ai/image.py), so a second
     # container would 404 on images it did not make. One container serves 20 at once.
     max_containers=1,
