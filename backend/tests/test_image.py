@@ -21,11 +21,15 @@ from ai.image import (
     get_image,
     get_image_response,
     is_billing_enabled,
+    is_reserved,
+    release,
+    reserve,
     reset_billing_state,
     resolve_style_cue,
     set_image_client,
     store_image,
     sweep_idle_sessions,
+    wait_for_image,
 )
 
 
@@ -509,6 +513,212 @@ class ImageGenerationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_kwargs["model"], "gemini-nano-banana-2.1")
         self.assertEqual(call_kwargs["contents"], "A glowing skull on black")
         self.assertEqual(call_kwargs["config"].response_modalities, ["IMAGE"])
+
+
+class ImageReservationTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        clear_all_images()
+        reset_billing_state()
+        set_image_client(None)
+        self.base_url = mock.patch.dict(
+            "os.environ", {"IMAGE_BASE_URL": "https://images.test"}
+        )
+        self.base_url.start()
+
+    def tearDown(self):
+        clear_all_images()
+        reset_billing_state()
+        set_image_client(None)
+        self.base_url.stop()
+
+    async def _asgi_get(self, path: str) -> tuple[int, dict[str, str], bytes]:
+        sent_messages = []
+
+        async def mock_receive():
+            return {"type": "http.request"}
+
+        async def mock_send(msg):
+            sent_messages.append(msg)
+
+        scope = {"type": "http", "path": path}
+        await asgi_image_app(scope, mock_receive, mock_send)
+        status = sent_messages[0]["status"]
+        headers = {
+            k.decode("utf-8"): v.decode("utf-8")
+            for k, v in sent_messages[0].get("headers", [])
+        }
+        body = sent_messages[1]["body"] if len(sent_messages) > 1 else b""
+        return status, headers, body
+
+    async def test_reserved_id_blocks_then_200_after_store(self):
+        """Acceptance 1: reserved id blocks then 200 after store."""
+        res_id = reserve("sess-1")
+        self.assertTrue(is_reserved(res_id))
+
+        # 1. Test via asgi_image_app
+        task = asyncio.create_task(self._asgi_get(f"/img/{res_id}.png"))
+        await asyncio.sleep(0.02)
+        self.assertFalse(task.done())
+
+        store_image(res_id, b"stored-pixels", session_id="sess-1")
+        status, headers, body = await task
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"stored-pixels")
+        self.assertFalse(is_reserved(res_id))
+
+        # 2. Test via draw(..., image_id=res_id) and serve_image_endpoint if available
+        res_id2 = reserve("sess-2")
+        stub = StubImageClient(billing_enabled=True, image_bytes=b"draw-pixels")
+        task2 = asyncio.create_task(self._asgi_get(f"/img/{res_id2}"))
+        await asyncio.sleep(0.02)
+        self.assertFalse(task2.done())
+
+        url = await draw("Hamlet", session_id="sess-2", client=stub, image_id=res_id2)
+        self.assertEqual(url, f"https://images.test/img/{res_id2}.png")
+        status2, headers2, body2 = await task2
+        self.assertEqual(status2, 200)
+        self.assertEqual(body2, b"draw-pixels")
+        self.assertFalse(is_reserved(res_id2))
+
+        # If image_router is present, verify serve_image_endpoint also blocks then 200s
+        if image.serve_image_endpoint is not None:
+            res_id3 = reserve("sess-3")
+            task3 = asyncio.create_task(image.serve_image_endpoint(res_id3))
+            await asyncio.sleep(0.02)
+            self.assertFalse(task3.done())
+            store_image(res_id3, b"router-pixels", session_id="sess-3")
+            resp = await task3
+            self.assertEqual(resp.body, b"router-pixels")
+
+    async def test_released_id_404s_immediately(self):
+        """Acceptance 2: released id 404s immediately and cannot be reused."""
+        res_id = reserve("sess-1")
+        self.assertTrue(is_reserved(res_id))
+
+        # A: release drops reservation so in-flight waiters get fast 404
+        task = asyncio.create_task(self._asgi_get(f"/img/{res_id}.png"))
+        await asyncio.sleep(0.02)
+        self.assertFalse(task.done())
+
+        t0 = time.monotonic()
+        released = release(res_id)
+        self.assertTrue(released)
+        status, _, body = await task
+        t1 = time.monotonic()
+        self.assertLess(t1 - t0, 0.5)
+        self.assertEqual(status, 404)
+        self.assertFalse(is_reserved(res_id))
+
+        # B: request after release gets fast 404 immediately
+        t0 = time.monotonic()
+        status_after, _, _ = await self._asgi_get(f"/img/{res_id}.png")
+        t1 = time.monotonic()
+        self.assertLess(t1 - t0, 0.2)
+        self.assertEqual(status_after, 404)
+
+        if image.serve_image_endpoint is not None:
+            from fastapi import HTTPException
+            with self.assertRaises(HTTPException) as ctx:
+                await image.serve_image_endpoint(res_id)
+            self.assertEqual(ctx.exception.status_code, 404)
+
+        # C: ID can never be reused (store_image rejects, draw returns None)
+        with self.assertRaises(ValueError):
+            store_image(res_id, b"should-fail")
+
+        stub = StubImageClient(billing_enabled=True)
+        draw_url = await draw("Test reuse", client=stub, image_id=res_id)
+        self.assertIsNone(draw_url)
+
+    async def test_expiry_404s_after_image_wait_s(self):
+        """Acceptance 3: expiry 404s after IMAGE_WAIT_S."""
+        with mock.patch.dict("os.environ", {"IMAGE_WAIT_S": "0.05"}):
+            res_id = reserve("sess-1")
+            t0 = time.monotonic()
+            status, _, _ = await self._asgi_get(f"/img/{res_id}.png")
+            elapsed = time.monotonic() - t0
+            self.assertEqual(status, 404)
+            self.assertGreaterEqual(elapsed, 0.04)
+
+            # Also check serve_image_endpoint
+            if image.serve_image_endpoint is not None:
+                from fastapi import HTTPException
+                res_id2 = reserve("sess-1")
+                t0 = time.monotonic()
+                with self.assertRaises(HTTPException) as ctx:
+                    await image.serve_image_endpoint(res_id2)
+                elapsed = time.monotonic() - t0
+                self.assertEqual(ctx.exception.status_code, 404)
+                self.assertGreaterEqual(elapsed, 0.04)
+
+    async def test_cleanup_session_releases_pending_ids(self):
+        """Acceptance 4: cleanup_session releases pending ids."""
+        res_id1 = reserve("sess-cleanup")
+        res_id2 = reserve("sess-cleanup")
+        self.assertTrue(is_reserved(res_id1))
+        self.assertTrue(is_reserved(res_id2))
+
+        # Waiter on res_id1
+        task = asyncio.create_task(self._asgi_get(f"/img/{res_id1}.png"))
+        await asyncio.sleep(0.02)
+        self.assertFalse(task.done())
+
+        cleanup_session("sess-cleanup")
+        self.assertFalse(is_reserved(res_id1))
+        self.assertFalse(is_reserved(res_id2))
+
+        # In-flight waiter gets 404 immediately
+        status1, _, _ = await task
+        self.assertEqual(status1, 404)
+
+        # Subsequent request gets 404 immediately
+        status2, _, _ = await self._asgi_get(f"/img/{res_id2}.png")
+        self.assertEqual(status2, 404)
+
+        # Idle sweep also cleans up pending reservations
+        res_id_idle = reserve("sess-idle-sweep")
+        self.assertTrue(is_reserved(res_id_idle))
+        ttl = 60.0
+        sweep_idle_sessions(now=time.monotonic() + ttl + 10, ttl=ttl)
+        self.assertFalse(is_reserved(res_id_idle))
+        status_idle, _, _ = await self._asgi_get(f"/img/{res_id_idle}.png")
+        self.assertEqual(status_idle, 404)
+
+    async def test_draw_failure_releases_reserved_id(self):
+        """Draw failure automatically releases the reserved id."""
+        # 1. Billing check failure
+        res_id1 = reserve("sess-fail-1")
+        stub_fail = StubImageClient(billing_enabled=False)
+        url1 = await draw("Test billing fail", client=stub_fail, image_id=res_id1)
+        self.assertIsNone(url1)
+        self.assertFalse(is_reserved(res_id1))
+        status1, _, _ = await self._asgi_get(f"/img/{res_id1}.png")
+        self.assertEqual(status1, 404)
+
+        # 2. Generation exception failure
+        reset_billing_state()
+        res_id2 = reserve("sess-fail-2")
+        stub_crash = StubImageClient(billing_enabled=True)
+
+        async def crash_gen(model, prompt):
+            raise RuntimeError("crash")
+
+        stub_crash.generate_image = crash_gen
+        url2 = await draw("Test crash", client=stub_crash, image_id=res_id2)
+        self.assertIsNone(url2)
+        self.assertFalse(is_reserved(res_id2))
+        status2, _, _ = await self._asgi_get(f"/img/{res_id2}.png")
+        self.assertEqual(status2, 404)
+
+    async def test_already_stored_ids_behave_as_today(self):
+        """Already stored IDs return 200 immediately without waiting."""
+        store_image("instant-id", b"instant-data", mime_type="image/png")
+        t0 = time.monotonic()
+        status, headers, body = await self._asgi_get("/img/instant-id.png")
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 0.1)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"instant-data")
 
 
 if __name__ == "__main__":

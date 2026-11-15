@@ -46,6 +46,7 @@ DUMMY_PNG = (
 DEFAULT_MODEL_IMAGE = "gemini-nano-banana-2.1"
 MAX_STORED_IMAGES = 200
 _DEFAULT_SESSION_TTL = 3600.0
+_DEFAULT_IMAGE_WAIT_S = 25.0
 
 STYLE_PRESETS: dict[str, str] = {
     "default": "",
@@ -66,10 +67,22 @@ class StoredImage:
     created_at: float = field(default_factory=time.time)
 
 
+@dataclass
+class ImageReservation:
+    image_id: str
+    event: asyncio.Event
+    session_id: Optional[str] = None
+    created_at: float = field(default_factory=time.monotonic)
+    released: bool = False
+
+
 # In-memory storage: image_id -> StoredImage
-_lock = threading.Lock()
+_lock = threading.RLock()
 _images: dict[str, StoredImage] = {}
 _session_images: dict[str, set[str]] = defaultdict(set)
+_reservations: dict[str, ImageReservation] = {}
+_session_reservations: dict[str, set[str]] = defaultdict(set)
+_released_ids: set[str] = set()
 # Bumped on cleanup so in-flight generations for an ended session can be discarded
 _session_epochs: dict[str, int] = {}
 _pending_generations: dict[str, int] = defaultdict(int)
@@ -82,6 +95,116 @@ _billing_enabled: bool = False
 
 # Active client override (e.g. for testing)
 _client_override: Optional[Any] = None
+
+
+def _safe_set_event(event: asyncio.Event) -> None:
+    """Set an asyncio.Event safely across event loops and threads."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        event.set()
+    else:
+        for fut in list(getattr(event, "_waiters", [])):
+            if not fut.done():
+                try:
+                    w_loop = fut.get_loop()
+                    if w_loop and w_loop.is_running():
+                        w_loop.call_soon_threadsafe(event.set)
+                        return
+                except Exception:
+                    pass
+        event.set()
+
+
+def _get_image_wait_timeout(timeout: Optional[float] = None) -> float:
+    if timeout is not None:
+        return float(timeout)
+    raw = os.environ.get("IMAGE_WAIT_S", "")
+    try:
+        val = float(raw)
+        return val if val >= 0 else _DEFAULT_IMAGE_WAIT_S
+    except (ValueError, TypeError):
+        return _DEFAULT_IMAGE_WAIT_S
+
+
+def reserve(session_id: Optional[str] = None) -> str:
+    """Register a pending asyncio.Event for a fresh image id."""
+    with _lock:
+        while True:
+            candidate = uuid.uuid4().hex[:16]
+            if (
+                candidate not in _images
+                and candidate not in _reservations
+                and candidate not in _released_ids
+            ):
+                break
+        res = ImageReservation(
+            image_id=candidate,
+            event=asyncio.Event(),
+            session_id=session_id,
+        )
+        _reservations[candidate] = res
+        if session_id:
+            _session_reservations[session_id].add(candidate)
+            _session_last_activity[session_id] = time.monotonic()
+        return candidate
+
+
+def release(image_id: str) -> bool:
+    """Drop the reservation so waiters get a fast 404 and the id can never be reused."""
+    clean_id = image_id.removesuffix(".png")
+    ev_to_set = None
+    with _lock:
+        _released_ids.add(clean_id)
+        res = _reservations.pop(clean_id, None)
+        if res is not None:
+            res.released = True
+            if res.session_id:
+                _session_reservations[res.session_id].discard(clean_id)
+            ev_to_set = res.event
+    if ev_to_set is not None:
+        _safe_set_event(ev_to_set)
+        return True
+    return False
+
+
+def is_reserved(image_id: str) -> bool:
+    """Return True if image_id is currently reserved and not yet stored or released."""
+    clean_id = image_id.removesuffix(".png")
+    with _lock:
+        return clean_id in _reservations and not _reservations[clean_id].released
+
+
+async def wait_for_image(image_id: str, timeout: Optional[float] = None) -> Optional[StoredImage]:
+    """Retrieve stored image or await event up to IMAGE_WAIT_S if reserved and not yet stored."""
+    clean_id = image_id.removesuffix(".png")
+    stored = get_image(clean_id)
+    if stored is not None:
+        return stored
+
+    with _lock:
+        stored = _images.get(clean_id)
+        if stored is not None:
+            if stored.session_id:
+                _session_last_activity[stored.session_id] = time.monotonic()
+            return stored
+        if clean_id in _released_ids:
+            return None
+        res = _reservations.get(clean_id)
+        if res is None or res.released:
+            return None
+        event = res.event
+
+    wait_s = _get_image_wait_timeout(timeout)
+    try:
+        await asyncio.wait_for(event.wait(), timeout=wait_s)
+    except asyncio.TimeoutError:
+        return None
+
+    return get_image(clean_id)
 
 
 def _store_image_locked(item: StoredImage) -> None:
@@ -109,9 +232,19 @@ def store_image(
         mime_type=mime_type,
         session_id=session_id,
     )
+    res_ev_to_set = None
     with _lock:
+        if clean_id in _released_ids:
+            raise ValueError(f"Image ID {image_id} has been released and cannot be reused")
         # Active-session images live until cleanup; only unowned images are capped.
         _store_image_locked(item)
+        res = _reservations.pop(clean_id, None)
+        if res is not None:
+            if res.session_id:
+                _session_reservations[res.session_id].discard(clean_id)
+            res_ev_to_set = res.event
+    if res_ev_to_set is not None:
+        _safe_set_event(res_ev_to_set)
     # ponytail: O(n_sessions) scan on each store; switch to a background timer if session count regularly exceeds ~1000
     sweep_idle_sessions()
     return item
@@ -134,23 +267,41 @@ def delete_image(image_id: str) -> bool:
         item = _images.pop(clean_id, None)
         if item is not None and item.session_id:
             _session_images[item.session_id].discard(clean_id)
-        return item is not None
+        was_reserved = clean_id in _reservations
+    if was_reserved:
+        release(clean_id)
+        return True
+    return item is not None
 
 
 def cleanup_session(session_id: str) -> int:
     """Delete all images associated with session_id. Returns number of deleted images."""
+    events_to_set = []
     with _lock:
         _session_last_activity.pop(session_id, None)
         if _pending_generations.get(session_id, 0):
             _session_epochs[session_id] = _session_epochs.get(session_id, 0) + 1
         else:
             _session_epochs.pop(session_id, None)
+
+        pending_ids = list(_session_reservations.pop(session_id, set()))
+        for res_id in pending_ids:
+            _released_ids.add(res_id)
+            res = _reservations.pop(res_id, None)
+            if res is not None:
+                res.released = True
+                events_to_set.append(res.event)
+
         ids_to_delete = list(_session_images.pop(session_id, set()))
         count = 0
         for img_id in ids_to_delete:
             if _images.pop(img_id, None) is not None:
                 count += 1
-        return count
+
+    for ev in events_to_set:
+        _safe_set_event(ev)
+
+    return count
 
 
 def clear_all_images() -> None:
@@ -161,6 +312,9 @@ def clear_all_images() -> None:
         _session_epochs.clear()
         _pending_generations.clear()
         _session_last_activity.clear()
+        _reservations.clear()
+        _session_reservations.clear()
+        _released_ids.clear()
 
 
 def sweep_idle_sessions(now: Optional[float] = None, ttl: Optional[float] = None) -> int:
@@ -396,16 +550,31 @@ async def draw(
     base_url: Optional[str] = None,
     client: Optional[Any] = None,
     style_preset: Optional[str] = None,
+    image_id: Optional[str] = None,
 ) -> Optional[str]:
     """Generate an illustration for the card and return its HTTPS URL.
     
     Checks billing on first call. If billing is disabled or generation fails,
-    logs the reason and returns None (card renders text & speech only).
+    logs the reason, calls release(image_id) if given, and returns None.
     """
     global _billing_checked, _billing_enabled
 
+    clean_id = image_id.removesuffix(".png") if image_id else None
+    if clean_id:
+        with _lock:
+            already_dead = clean_id in _released_ids or clean_id in _images
+        if already_dead:
+            log.warning("Image ID %s is already released or stored.", image_id)
+            release(clean_id)
+            return None
+
     active_client = client or _get_active_client()
-    root_url = _resolve_base_url(base_url)
+    try:
+        root_url = _resolve_base_url(base_url)
+    except Exception:
+        if clean_id:
+            release(clean_id)
+        raise
 
     # 1. Billing check on first call (PRD Section 9, Risk C3)
     with _lock:
@@ -432,9 +601,13 @@ async def draw(
                 "Gemini image model billing check failed or is not enabled for this key. "
                 "Returning card with text and speech only."
             )
+            if clean_id:
+                release(clean_id)
             return None
     elif not enabled:
         log.info("Image generation skipped because billing is disabled for image models.")
+        if clean_id:
+            release(clean_id)
         return None
 
     # 2. Format prompt for Ray-Ban Display additive lens
@@ -466,31 +639,63 @@ async def draw(
                 "Returning card with text and speech only.",
                 type(b_err).__name__,
             )
+            if clean_id:
+                release(clean_id)
             return None
         except Exception as exc:
             log.warning(
                 "Gemini image generation failed (%s). Returning card with text and speech only.",
                 type(exc).__name__,
             )
+            if clean_id:
+                release(clean_id)
             return None
 
         if not image_bytes:
             log.warning("Gemini image generator returned empty image bytes.")
+            if clean_id:
+                release(clean_id)
             return None
 
         # Check the epoch and store under one lock so cleanup cannot race between them.
-        image_id = uuid.uuid4().hex[:16]
+        assigned_id = clean_id or uuid.uuid4().hex[:16]
+        res_ev_to_set = None
         with _lock:
+            if clean_id and clean_id in _released_ids:
+                log.info("Discarding generated image: reservation was released.")
+                return None
             if session_id and _session_epochs.get(session_id, 0) != start_epoch:
                 log.info("Discarding generated image: session ended during generation.")
+                if clean_id:
+                    _released_ids.add(clean_id)
+                    res = _reservations.pop(clean_id, None)
+                    if res is not None:
+                        res.released = True
+                        if res.session_id:
+                            _session_reservations[res.session_id].discard(clean_id)
+                        res_ev_to_set = res.event
+                if res_ev_to_set:
+                    _safe_set_event(res_ev_to_set)
                 return None
+
             item = StoredImage(
-                image_id=image_id,
+                image_id=assigned_id,
                 data=image_bytes,
                 mime_type="image/png",
                 session_id=session_id,
             )
             _store_image_locked(item)
+
+            if clean_id:
+                res = _reservations.pop(clean_id, None)
+                if res is not None:
+                    if res.session_id:
+                        _session_reservations[res.session_id].discard(clean_id)
+                    res_ev_to_set = res.event
+
+        if res_ev_to_set:
+            _safe_set_event(res_ev_to_set)
+
         # ponytail: O(n_sessions) scan on each draw; switch to a background timer if session count regularly exceeds ~1000
         sweep_idle_sessions()
     finally:
@@ -504,7 +709,7 @@ async def draw(
                     _session_epochs.pop(session_id, None)
 
     # 6. Build HTTPS URL
-    image_url = f"{root_url}/img/{image_id}.png"
+    image_url = f"{root_url}/img/{assigned_id}.png"
     return image_url
 
 
@@ -527,9 +732,10 @@ try:
     @image_router.get("/img/{image_id}")
     @image_router.get("/img/{image_id}.png")
     async def serve_image_endpoint(image_id: str) -> Response:
-        status, headers, body = get_image_response(image_id)
-        if status == 404:
+        stored = await wait_for_image(image_id)
+        if stored is None:
             raise HTTPException(status_code=404, detail="Image not found")
+        status, headers, body = get_image_response(image_id)
         return Response(content=body, media_type=headers.get("Content-Type", "image/png"))
 
 except ImportError:
@@ -554,7 +760,11 @@ async def asgi_image_app(scope: dict, receive: Callable, send: Callable) -> None
         return
 
     image_id = match.group(1)
-    status, headers, body = get_image_response(image_id)
+    stored = await wait_for_image(image_id)
+    if stored is None:
+        status, headers, body = 404, {"Content-Type": "application/json"}, b'{"error": "image not found"}'
+    else:
+        status, headers, body = get_image_response(image_id)
 
     response_headers = [
         (k.lower().encode("utf-8"), v.encode("utf-8"))
