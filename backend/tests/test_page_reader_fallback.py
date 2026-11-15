@@ -296,5 +296,81 @@ class FallbackLogOrderingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(success_logs), 1)
 
 
+class HedgeNemotronWithGeminiTest(unittest.IsolatedAsyncioTestCase):
+    """Issue #257: hedge Nemotron with Gemini, race both, cancel the slower reader, and log status codes."""
+
+    async def test_nemotron_immediate_error_gemini_wins_recorded_as_fallback(self):
+        nemotron = StubNemotronClient(
+            default_response=PageReadError("Nemotron API returned HTTP 503", status_code=503),
+            model=NEMOTRON_MODEL,
+        )
+        gemini = StubGeminiPageReader("Text read by Gemini", model=GEMINI_MODEL)
+        with self.assertLogs("metalab.ai.page_reader", level="INFO") as cm:
+            text = await read_page_with_fallback(FRAME, primary=nemotron, fallback=gemini, budget_s=1.0)
+        self.assertEqual(text, "Text read by Gemini")
+        self.assertEqual(text.model, GEMINI_MODEL)
+        self.assertEqual(text.fallback_from, NEMOTRON_MODEL)
+        self.assertTrue(any(f"(fallback: {NEMOTRON_MODEL}" in line for line in cm.output))
+        self.assertTrue(any("code=503" in line for line in cm.output))
+
+    async def test_nemotron_slow_gemini_fast_gemini_wins_and_nemotron_cancelled(self):
+        slow_nemotron = SlowNemotron(delay_s=5.0, text="Slow Nemotron text")
+        fast_gemini = StubGeminiPageReader("Fast Gemini text", model=GEMINI_MODEL, delay_s=0.01)
+        text = await read_page_with_fallback(FRAME, primary=slow_nemotron, fallback=fast_gemini, budget_s=0.05)
+        self.assertEqual(text, "Fast Gemini text")
+        self.assertEqual(text.model, GEMINI_MODEL)
+        self.assertEqual(text.fallback_from, NEMOTRON_MODEL)
+        self.assertTrue(slow_nemotron.cancelled)
+
+    async def test_nemotron_fast_gemini_cancelled(self):
+        # Nemotron takes longer than budget_s so Gemini is hedged/started, but Nemotron finishes before Gemini
+        fast_nemotron = SlowNemotron(delay_s=0.1, text="Fast Nemotron text")
+        slow_gemini = StubGeminiPageReader("Slow Gemini text", model=GEMINI_MODEL, delay_s=0.5)
+        text = await read_page_with_fallback(FRAME, primary=fast_nemotron, fallback=slow_gemini, budget_s=0.05)
+        self.assertEqual(text, "Fast Nemotron text")
+        self.assertEqual(text.model, NEMOTRON_MODEL)
+        self.assertIsNone(text.fallback_from)
+        self.assertTrue(slow_gemini.cancelled)
+        self.assertEqual(len(slow_gemini.calls), 1)
+
+    async def test_status_code_in_log_record_body_does_not_appear_httpx(self):
+        secret_body = "TOP_SECRET_PAYLOAD_BODY_HTTPX_123"
+        req = httpx.Request("POST", "https://integrate.api.nvidia.com/v1/chat/completions")
+        resp = httpx.Response(502, text=secret_body, request=req)
+        client = page_reader.NemotronClient(api_key="test-api-key")
+        gemini = StubGeminiPageReader("Gemini recovered text", model=GEMINI_MODEL)
+        with self.assertLogs("metalab.ai.page_reader", level="INFO") as cm:
+            with mock.patch.object(httpx.AsyncClient, "post", mock.AsyncMock(return_value=resp)):
+                text = await read_page_with_fallback(FRAME, primary=client, fallback=gemini, budget_s=1.0)
+        self.assertEqual(text, "Gemini recovered text")
+        all_logs = " \n".join(cm.output)
+        self.assertIn("code=502", all_logs)
+        self.assertNotIn(secret_body, all_logs)
+
+    async def test_status_code_in_log_record_body_does_not_appear_urllib(self):
+        import io
+        import sys
+        import urllib.error
+        import urllib.request
+        secret_body = "TOP_SECRET_PAYLOAD_BODY_URLLIB_456"
+        err = urllib.error.HTTPError(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            504,
+            "Gateway Timeout",
+            {},
+            io.BytesIO(secret_body.encode("utf-8")),
+        )
+        client = page_reader.NemotronClient(api_key="test-api-key")
+        gemini = StubGeminiPageReader("Gemini recovered text", model=GEMINI_MODEL)
+        with mock.patch.dict(sys.modules, {"httpx": None}):
+            with self.assertLogs("metalab.ai.page_reader", level="INFO") as cm:
+                with mock.patch.object(urllib.request, "urlopen", side_effect=err):
+                    text = await read_page_with_fallback(FRAME, primary=client, fallback=gemini, budget_s=1.0)
+        self.assertEqual(text, "Gemini recovered text")
+        all_logs = " \n".join(cm.output)
+        self.assertIn("code=504", all_logs)
+        self.assertNotIn(secret_body, all_logs)
+
+
 if __name__ == "__main__":
     unittest.main()
