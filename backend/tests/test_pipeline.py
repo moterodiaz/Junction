@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import time
 import unittest
 from unittest import mock
 
@@ -1454,6 +1456,171 @@ class PipelineModelDistributionTelemetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(card)
         self.assertEqual(card.type, "card")
 
+
+class _SlowImageClient(StubImageClient):
+    """Image client whose picture takes `delay` seconds, optionally failing at the end."""
+
+    def __init__(self, delay: float, fail: bool = False):
+        super().__init__(billing_enabled=True)
+        self.delay = delay
+        self.fail = fail
+
+    async def generate_image(self, model: str, prompt: str) -> bytes:
+        await asyncio.sleep(self.delay)
+        if self.fail:
+            raise RuntimeError("image model down")
+        return await super().generate_image(model, prompt)
+
+
+class PipelineEarlyCardTest(unittest.IsolatedAsyncioTestCase):
+    """REQ-IMG-01, REQ-LAT-02 (#261): the card waits for speech, not for the picture."""
+
+    def setUp(self):
+        default_session_store.clear()
+        image.clear_all_images()
+        image.reset_billing_state()
+        self._patches = [
+            mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy", "NVIDIA_API_KEY": "",
+                                         "IMAGE_BASE_URL": "https://example.com"}),
+            mock.patch.object(pipeline, "_is_dynamic_routing_active", return_value=False),
+            mock.patch.object(pipeline, "think", new_callable=mock.AsyncMock, return_value=dict(_STUB_ANSWER)),
+            mock.patch.object(pipeline, "speak", new_callable=mock.AsyncMock, return_value=None),
+        ]
+        for patcher in self._patches:
+            patcher.start()
+
+    def tearDown(self):
+        for patcher in reversed(self._patches):
+            patcher.stop()
+        set_image_client(None)
+        set_decision_client(None)
+        image.clear_all_images()
+        image.reset_billing_state()
+        default_session_store.clear()
+
+    def _invoke(self, session_id: str) -> Invoke:
+        return Invoke(type="invoke", request_id=f"r-{session_id}", session_id=session_id,
+                      frame=Frame(mime="image/jpeg", b64="AAAA"), text="draw this")
+
+    def _image_id(self, url: str | None) -> str:
+        match = re.fullmatch(r"https://example\.com/img/([0-9a-f]{16})\.png", url or "")
+        self.assertIsNotNone(match, url)
+        return match.group(1)
+
+    async def test_card_ships_before_a_slow_picture_which_is_served_when_drawn(self):
+        set_image_client(_SlowImageClient(delay=5.0))
+        started = time.monotonic()
+        card = await pipeline.run(self._invoke("s-early"), _noop_send_stage)
+        self.assertLess(time.monotonic() - started, 1.0)
+        image_id = self._image_id(card.image_url)
+        self.assertTrue(image.is_reserved(image_id))
+        self.assertIsNone(image.get_image(image_id))
+        self.assertNotEqual(card.models["image"], "stub")
+
+        stored = await image.wait_for_image(image_id, timeout=10)
+        self.assertIsNotNone(stored)
+        self.assertGreater(time.monotonic() - started, 4.5)
+        status, headers, body = image.get_image_response(image_id + ".png")
+        self.assertEqual((status, headers["Content-Type"]), (200, "image/png"))
+        self.assertEqual(body, stored.data)
+        await asyncio.sleep(0)
+        self.assertNotIn("s-early", pipeline._PENDING_DRAWS)
+
+    async def test_picture_failing_after_the_card_releases_the_id(self):
+        set_image_client(_SlowImageClient(delay=0.2, fail=True))
+        card = await pipeline.run(self._invoke("s-fail-late"), _noop_send_stage)
+        image_id = self._image_id(card.image_url)
+        self.assertEqual(card.speech_text, _STUB_ANSWER["speech_text"])
+
+        started = time.monotonic()
+        self.assertIsNone(await image.wait_for_image(image_id, timeout=10))
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertFalse(image.is_reserved(image_id))
+        self.assertEqual(image.get_image_response(image_id)[0], 404)
+
+    async def test_picture_failing_before_speech_is_ready_leaves_the_card_without_one(self):
+        set_image_client(_SlowImageClient(delay=0.0, fail=True))
+
+        async def slow_speak(*args, **kwargs):
+            await asyncio.sleep(0.3)
+            return None
+
+        with mock.patch.object(pipeline, "speak", slow_speak):
+            card = await pipeline.run(self._invoke("s-fail-early"), _noop_send_stage)
+        self.assertIsNone(card.image_url)
+        self.assertEqual(card.models["image"], "stub")
+
+    async def test_speak_only_reserves_nothing(self):
+        set_decision_client(StubDecisionClient(default_result=DecisionResult(
+            action="explain", task_tier="fast", recommended_model="gemini-3.5-flash-lite",
+            needs_image=False, speak_only=True, confidence=0.9, fallback_used=False,
+            raw_utterance="who is this")))
+        client = _SlowImageClient(delay=0.0)
+        set_image_client(client)
+        with mock.patch.object(pipeline, "_is_dynamic_routing_active", return_value=True), \
+                mock.patch.object(image, "reserve", wraps=image.reserve) as reserve:
+            card = await pipeline.run(self._invoke("s-speak-only"), _noop_send_stage)
+        self.assertIsNone(card.image_url)
+        reserve.assert_not_called()
+        self.assertEqual(client.calls, [])
+
+    async def test_no_public_url_reserves_nothing_and_sends_no_link(self):
+        set_image_client(_SlowImageClient(delay=0.0))
+        with mock.patch.dict(os.environ, {"IMAGE_BASE_URL": ""}), \
+                mock.patch.object(image, "reserve", wraps=image.reserve) as reserve:
+            card = await pipeline.run(self._invoke("s-no-url"), _noop_send_stage)
+        self.assertIsNone(card.image_url)
+        reserve.assert_not_called()
+
+    async def test_ending_the_session_stops_its_picture(self):
+        set_image_client(_SlowImageClient(delay=5.0))
+        card = await pipeline.run(self._invoke("s-ended"), _noop_send_stage)
+        image_id = self._image_id(card.image_url)
+        (task,) = pipeline._PENDING_DRAWS["s-ended"]
+        await asyncio.sleep(0)
+
+        pipeline.end_session("s-ended")
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        self.assertFalse(image.is_reserved(image_id))
+        self.assertIsNone(await image.wait_for_image(image_id, timeout=1))
+        self.assertNotIn("s-ended", pipeline._PENDING_DRAWS)
+
+    async def test_at_the_cap_a_card_waits_for_its_picture(self):
+        set_image_client(_SlowImageClient(delay=0.3))
+        for n in range(pipeline._MAX_PENDING_DRAWS):
+            card = await pipeline.run(self._invoke("s-cap"), _noop_send_stage)
+            self._image_id(card.image_url)
+        self.assertEqual(len(pipeline._PENDING_DRAWS["s-cap"]), pipeline._MAX_PENDING_DRAWS)
+
+        with mock.patch.object(image, "reserve", wraps=image.reserve) as reserve:
+            started = time.monotonic()
+            card = await pipeline.run(self._invoke("s-cap"), _noop_send_stage)
+        reserve.assert_not_called()
+        self.assertGreaterEqual(time.monotonic() - started, 0.25)
+        self.assertIsNotNone(image.get_image(self._image_id(card.image_url)))
+        self.assertLessEqual(len(pipeline._PENDING_DRAWS.get("s-cap", ())), pipeline._MAX_PENDING_DRAWS)
+
+    async def test_a_card_that_fails_to_build_stops_its_picture(self):
+        set_image_client(_SlowImageClient(delay=5.0))
+        reserved: list[str] = []
+        real_reserve = image.reserve
+
+        def recording_reserve(session_id=None):
+            reserved.append(real_reserve(session_id))
+            return reserved[-1]
+
+        with mock.patch.object(image, "reserve", recording_reserve), \
+                mock.patch.object(pipeline, "contract_card", side_effect=RuntimeError("bad card")):
+            with self.assertRaises(Exception):
+                await pipeline.run(self._invoke("s-no-card"), _noop_send_stage)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(len(reserved), 1)
+        self.assertFalse(image.is_reserved(reserved[0]))
+        self.assertIsNone(await image.wait_for_image(reserved[0], timeout=1))
+        self.assertNotIn("s-no-card", pipeline._PENDING_DRAWS)
 
 if __name__ == "__main__":
     unittest.main()
