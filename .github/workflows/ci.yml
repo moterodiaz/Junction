@@ -11,6 +11,16 @@ jobs:
     runs-on: craci
     steps:
       - uses: actions/checkout@v4
+      # The CRACI image lacks Swift's runtime libraries (libncurses.so.6), so the toolchain cannot start without them.
+      - name: Swift runtime libraries
+        run: |
+          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO=sudo
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y -qq --no-install-recommends libncurses6 libedit2 libxml2 libcurl4 libsqlite3-0 zlib1g-dev build-essential
+      - name: Swift toolchain
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
       - name: Shell syntax
         run: |
           for f in tools/* .claude/hooks/*.sh; do
