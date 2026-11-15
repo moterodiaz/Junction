@@ -630,6 +630,57 @@ class STTDebugLogTest(unittest.TestCase):
             self.assertEqual(len(commits), 2)
         self.assertEqual(len(self.lines()), 2)
 
+    def wait_until(self, condition, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while not condition() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return condition()
+
+    def test_line_written_during_an_in_flight_commit_is_committed_later(self):
+        started, release = threading.Event(), threading.Event()
+        commits = []
+
+        def slow_hook():
+            commits.append(1)
+            if len(commits) == 1:
+                started.set()
+                release.wait(5)
+
+        self.debug_log.set_commit_hook(slow_hook)
+        self.addCleanup(release.set)
+        with mock.patch.object(self.debug_log, "_last_commit", -1e9), \
+                mock.patch.object(self.debug_log, "_timer", None), \
+                mock.patch.object(self.debug_log, "COMMIT_INTERVAL_S", 0.05):
+            self.debug_log.record(transcript="line1")
+            first = self.debug_log._worker
+            self.assertTrue(started.wait(5))
+            self.debug_log.record(transcript="line2")
+            self.debug_log.wait_for_commit()
+            release.set()
+            first.join(5)
+            self.assertTrue(self.wait_until(lambda: len(commits) == 2), commits)
+            self.assertFalse(self.debug_log._dirty)
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_failed_commit_is_retried(self):
+        attempts = []
+
+        def flaky_hook():
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise ConnectionError("volume busy")
+
+        self.debug_log.set_commit_hook(flaky_hook)
+        with mock.patch.object(self.debug_log, "_last_commit", -1e9), \
+                mock.patch.object(self.debug_log, "_timer", None), \
+                mock.patch.object(self.debug_log, "COMMIT_INTERVAL_S", 0.05):
+            self.debug_log.record(transcript="one")
+            self.debug_log.wait_for_commit()
+            self.assertTrue(self.wait_until(lambda: len(attempts) == 2), attempts)
+            self.assertTrue(self.wait_until(lambda: not self.debug_log._dirty))
+            time.sleep(0.2)
+            self.assertEqual(len(attempts), 2)
+
     def test_config_problems_for_the_new_variables(self):
         from app.config import config_problems, load_settings
 
