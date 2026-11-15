@@ -175,6 +175,16 @@ class NotesPromptTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(load_play("Hamlet").notes)
             self.assertEqual(list_plays(), ["hamlet"])
 
+    def test_malformed_notes_entry_never_breaks_the_prompt(self) -> None:
+        match = _match(3, 1, 83, 85)
+        bad = {"summary": None, "characters_on_stage": ["Hamlet", 7], "glossary": [{"term": "bodkin", "gloss": "dagger"}]}
+        with mock.patch("ai.reasoning.get_scene_notes", return_value=bad):
+            block = build_scene_notes_block(match, BODKIN_PAGE)
+        self.assertIn("Characters on stage: Hamlet, 7", block)
+        self.assertIn("bodkin: dagger", block)
+        with mock.patch("ai.reasoning.get_scene_notes", return_value={"summary": "s", "glossary": [{"term": 5}]}):
+            self.assertEqual(build_scene_notes_block(match, BODKIN_PAGE), "")
+
 
 if __name__ == "__main__":
     unittest.main()
