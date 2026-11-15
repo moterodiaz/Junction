@@ -35,7 +35,9 @@ clock = time.monotonic
 
 # clip id -> (session id, wav, stored at); oldest first
 _clips: OrderedDict[str, tuple[Optional[str], bytes, float]] = OrderedDict()
-_epochs: dict[str, int] = {}  # bumped when a session ends; speech started before is dropped
+_epochs: OrderedDict[str, int] = OrderedDict()  # bumped when a session ends; speech started before is dropped
+_MAX_EPOCH_ENTRIES = 1000  # ponytail: LRU cap; switch to TTL-based pruning if sessions exceed 1000 at peak
+_epochs_inflight: dict[str, int] = {}  # session_id -> count of active speak() calls
 _lock = threading.Lock()  # the sweeper thread and the event loop both touch _clips
 _sweeper: Optional[threading.Thread] = None
 _sweep_now = threading.Event()  # wakes the sweeper early (tests)
@@ -167,6 +169,15 @@ def cleanup_session(session_id: str) -> int:
     _expire()
     with _lock:
         _epochs[session_id] = _epochs.get(session_id, 0) + 1
+        _epochs.move_to_end(session_id)  # LRU: most recently touched → last to be pruned
+        if len(_epochs) > _MAX_EPOCH_ENTRIES:
+            # Prune the least-recently-used entry that has no in-flight speak() call.
+            # A session reusing a saved id may still be speaking; pruning its entry would
+            # reset its epoch to 0 and cause valid speech to be dropped as stale.
+            for sid in list(_epochs.keys()):
+                if not _epochs_inflight.get(sid, 0):
+                    _epochs.pop(sid)
+                    break
         ids = [clip_id for clip_id, (sid, _, _) in _clips.items() if sid == session_id]
         for clip_id in ids:
             del _clips[clip_id]
@@ -176,6 +187,8 @@ def cleanup_session(session_id: str) -> int:
 def clear() -> None:
     with _lock:
         _clips.clear()
+        _epochs.clear()
+        _epochs_inflight.clear()
 
 
 def to_wav(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:
@@ -257,6 +270,10 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
         log.info("speech synthesis skipped: empty speech_text")
         return None
     epoch = _epochs.get(session_id, 0) if session_id is not None else None
+    if session_id is not None:
+        if session_id in _epochs:
+            _epochs.move_to_end(session_id)  # LRU: active session stays at the back
+        _epochs_inflight[session_id] = _epochs_inflight.get(session_id, 0) + 1
     try:
         result = await asyncio.wait_for(client.synthesize(text), TTS_TIMEOUT_S)
     except Exception as exc:
@@ -265,9 +282,17 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
         if getattr(exc, "code", None) == 404 or getattr(exc, "status", None) == "NOT_FOUND":
             await log_tts_models(client, exc)
         return None
-    if session_id is not None and _epochs.get(session_id, 0) != epoch:
-        log.info("speech synthesis dropped: session ended during synthesis")
-        return None  # the session ended while this speech was being made
+    finally:
+        if session_id is not None:
+            count = _epochs_inflight.get(session_id, 0) - 1
+            if count <= 0:
+                _epochs_inflight.pop(session_id, None)
+            else:
+                _epochs_inflight[session_id] = count
+    if session_id is not None:
+        if _epochs.get(session_id, 0) != epoch:
+            log.info("speech synthesis dropped: session ended during synthesis")
+            return None  # the session ended while this speech was being made
     pcm, rate = (result, SAMPLE_RATE) if isinstance(result, bytes) else result
     if not pcm:
         log.warning("speech synthesis returned empty audio")
