@@ -590,6 +590,52 @@ class ImageReservationTest(unittest.IsolatedAsyncioTestCase):
             resp = await task3
             self.assertEqual(resp.body, b"router-pixels")
 
+    async def test_store_inherits_reservation_owner(self):
+        res_id = reserve("sess-own")
+        item = store_image(res_id, b"x")
+        self.assertEqual(item.session_id, "sess-own")
+        self.assertEqual(cleanup_session("sess-own"), 1)
+        self.assertIsNone(get_image(res_id))
+
+        res_id2 = reserve("sess-a")
+        with self.assertRaises(ValueError):
+            store_image(res_id2, b"x", session_id="sess-b")
+
+    async def test_draw_inherits_reservation_owner(self):
+        res_id = reserve("sess-own")
+        stub = StubImageClient(billing_enabled=True, image_bytes=b"px")
+        await draw("Hamlet", client=stub, image_id=res_id)
+        self.assertEqual(get_image(res_id).session_id, "sess-own")
+
+    async def test_cancelled_draw_releases_reservation(self):
+        res_id = reserve("sess-c")
+        started = asyncio.Event()
+
+        class SlowClient:
+            async def check_billing(self):
+                return True
+
+            async def generate_image(self, **kwargs):
+                started.set()
+                await asyncio.sleep(30)
+
+        waiter = asyncio.create_task(wait_for_image(res_id, timeout=5))
+        task = asyncio.create_task(
+            draw("Hamlet", session_id="sess-c", client=SlowClient(), image_id=res_id)
+        )
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIsNone(await asyncio.wait_for(waiter, timeout=1))
+        self.assertFalse(is_reserved(res_id))
+
+    async def test_stale_unowned_reservations_expire(self):
+        old_id = reserve()
+        image._reservations[old_id].created_at -= image._UNOWNED_RESERVATION_TTL_S + 1
+        reserve()
+        self.assertFalse(is_reserved(old_id))
+
     async def test_released_id_404s_immediately(self):
         """Acceptance 2: released id 404s immediately and cannot be reused."""
         res_id = reserve("sess-1")

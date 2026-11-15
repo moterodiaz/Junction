@@ -45,6 +45,8 @@ DUMMY_PNG = (
 
 DEFAULT_MODEL_IMAGE = "gemini-nano-banana-2.1"
 MAX_STORED_IMAGES = 200
+# Abandoned reservations without a session are expired after this many seconds.
+_UNOWNED_RESERVATION_TTL_S = 600.0
 _DEFAULT_SESSION_TTL = 3600.0
 _DEFAULT_IMAGE_WAIT_S = 25.0
 
@@ -132,7 +134,16 @@ def _get_image_wait_timeout(timeout: Optional[float] = None) -> float:
 
 def reserve(session_id: Optional[str] = None) -> str:
     """Register a pending asyncio.Event for a fresh image id."""
+    stale_events = []
     with _lock:
+        # Unowned reservations have no session sweep; expire abandoned ones by age.
+        now = time.monotonic()
+        for old_id, old in list(_reservations.items()):
+            if old.session_id is None and now - old.created_at > _UNOWNED_RESERVATION_TTL_S:
+                _reservations.pop(old_id, None)
+                old.released = True
+                _released_ids.add(old_id)
+                stale_events.append(old.event)
         while True:
             candidate = uuid.uuid4().hex[:16]
             if (
@@ -150,7 +161,9 @@ def reserve(session_id: Optional[str] = None) -> str:
         if session_id:
             _session_reservations[session_id].add(candidate)
             _session_last_activity[session_id] = time.monotonic()
-        return candidate
+    for ev in stale_events:
+        _safe_set_event(ev)
+    return candidate
 
 
 def release(image_id: str) -> bool:
@@ -226,16 +239,22 @@ def store_image(
 ) -> StoredImage:
     """Store an image in memory, optionally associating it with a session_id."""
     clean_id = image_id.removesuffix(".png")
-    item = StoredImage(
-        image_id=clean_id,
-        data=data,
-        mime_type=mime_type,
-        session_id=session_id,
-    )
     res_ev_to_set = None
     with _lock:
         if clean_id in _released_ids:
             raise ValueError(f"Image ID {image_id} has been released and cannot be reused")
+        pending = _reservations.get(clean_id)
+        if pending is not None and pending.session_id:
+            if session_id is None:
+                session_id = pending.session_id
+            elif session_id != pending.session_id:
+                raise ValueError(f"Image ID {image_id} is reserved by another session")
+        item = StoredImage(
+            image_id=clean_id,
+            data=data,
+            mime_type=mime_type,
+            session_id=session_id,
+        )
         # Active-session images live until cleanup; only unowned images are capped.
         _store_image_locked(item)
         res = _reservations.pop(clean_id, None)
@@ -567,6 +586,16 @@ async def draw(
             log.warning("Image ID %s is already released or stored.", image_id)
             release(clean_id)
             return None
+        with _lock:
+            pending = _reservations.get(clean_id)
+            owner = pending.session_id if pending is not None else None
+        if owner:
+            if session_id is None:
+                session_id = owner
+            elif session_id != owner:
+                log.warning("Image ID %s is reserved by another session.", image_id)
+                release(clean_id)
+                return None
 
     active_client = client or _get_active_client()
     try:
@@ -587,6 +616,10 @@ async def draw(
                 billing_ok = await active_client.check_billing()
             else:
                 billing_ok = True
+        except asyncio.CancelledError:
+            if clean_id:
+                release(clean_id)
+            raise
         except Exception as exc:
             log.warning("Image billing check encountered error: %s", type(exc).__name__)
             billing_ok = False
@@ -642,6 +675,10 @@ async def draw(
             if clean_id:
                 release(clean_id)
             return None
+        except asyncio.CancelledError:
+            if clean_id:
+                release(clean_id)
+            raise
         except Exception as exc:
             log.warning(
                 "Gemini image generation failed (%s). Returning card with text and speech only.",
