@@ -594,7 +594,6 @@ async def draw(
                 session_id = owner
             elif session_id != owner:
                 log.warning("Image ID %s is reserved by another session.", image_id)
-                release(clean_id)
                 return None
 
     active_client = client or _get_active_client()
