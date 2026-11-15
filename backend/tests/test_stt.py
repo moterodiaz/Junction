@@ -83,6 +83,15 @@ class SpokenInvokeTest(unittest.TestCase):
             ws.send_json(message)
             return [ws.receive_json() for _ in range(expect)]
 
+    def until_terminal(self, message):
+        """Replies up to the card or error, so a wrong outcome fails instead of hanging."""
+        replies = []
+        with TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_json(message)
+            while not replies or replies[-1]["type"] == "status":
+                replies.append(ws.receive_json())
+        return replies
+
     def test_audio_is_decoded_and_transcribed(self):
         replies = self.exchange(spoken(), 5)
         self.assertEqual(self.heard, [b"RIFF fake wav"])
@@ -90,13 +99,30 @@ class SpokenInvokeTest(unittest.TestCase):
                          ["transcribing", "reading", "thinking", "drawing"])
         self.assertEqual(replies[4]["type"], "card")
 
-    def test_unknown_command_is_retryable_stt_failed(self):
-        self.transcript = "what time is it"
-        replies = self.exchange(spoken(), 2)
-        self.assertEqual(replies[0]["stage"], "transcribing")
-        self.assertEqual(replies[1]["type"], "error")
-        self.assertEqual(replies[1]["code"], "stt_failed")
-        self.assertTrue(replies[1]["retryable"])
+    def test_utterance_without_a_command_word_gets_an_explain_card(self):
+        """#260: Whisper heard a question but no command word: answer it as explain."""
+        self.transcript = "what does this mean"
+        with mock.patch.object(pipeline, "think", wraps=pipeline.think) as think:
+            replies = self.until_terminal(spoken())
+        self.assertEqual(replies[-1]["type"], "card")
+        self.assertEqual([r.get("stage") for r in replies[:-1]],
+                         ["transcribing", "reading", "thinking", "drawing"])
+        self.assertEqual(think.call_args.args[0], "explain")
+
+    def test_command_word_still_wins_inside_a_sentence(self):
+        self.transcript = "can you draw it"
+        self.assertEqual(pipeline.command_from(self.transcript), "draw")
+        self.assertEqual(pipeline.command_from("so who is this guy"), "who_is_this")
+
+    def test_empty_transcript_is_retryable_stt_failed(self):
+        for heard in ("", "   "):
+            with self.subTest(heard=heard):
+                self.transcript = heard
+                replies = self.exchange(spoken(), 2)
+                self.assertEqual(replies[0]["stage"], "transcribing")
+                self.assertEqual(replies[1]["type"], "error")
+                self.assertEqual(replies[1]["code"], "stt_failed")
+                self.assertTrue(replies[1]["retryable"])
 
     def test_engine_crash_is_logged_without_audio(self):
         message = " ".join(["gpu", "on", "fire"])  # built at runtime: logged frames show source lines
@@ -140,14 +166,17 @@ class SpokenInvokeTest(unittest.TestCase):
         self.assertEqual((reply["type"], reply["code"], reply["retryable"]), ("error", "internal", False))
         self.assertEqual(self.heard, [])
 
-    def test_unknown_typed_command_is_stt_failed(self):
-        replies = self.exchange(spoken(audio=None, text="sing a song"), 1)
+    def test_typed_text_without_a_command_word_is_explained(self):
+        self.assertEqual(self.until_terminal(spoken(audio=None, text="sing a song"))[-1]["type"], "card")
+
+    def test_blank_typed_text_is_stt_failed(self):
+        replies = self.exchange(spoken(audio=None, text="   "), 1)
         self.assertEqual(replies[0]["code"], "stt_failed")
 
 
-class UnknownCommandSkipsReadingTest(unittest.TestCase):
-    def test_page_is_not_read_for_an_unknown_command(self):
-        self.addCleanup(stt.set_engine, stt.set_engine(lambda audio: "what time is it"))
+class EmptyTranscriptSkipsReadingTest(unittest.TestCase):
+    def test_page_is_not_read_when_nothing_was_heard(self):
+        self.addCleanup(stt.set_engine, stt.set_engine(lambda audio: "  "))
         reads = []
 
         async def read_page(frame):
@@ -203,6 +232,28 @@ class EngineLoadTest(unittest.TestCase):
         self.assertEqual(self.builds, 1)
         self.assertEqual(stt.transcribe(b"clip"), "heard")
         self.assertEqual(self.builds, 1)
+
+
+class WhisperPromptTest(unittest.TestCase):
+    """#260: Whisper is biased toward the three command words."""
+
+    def test_whisper_gets_the_command_prompt(self):
+        calls = []
+
+        class FakeModel:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def transcribe(self, audio, **kwargs):
+                calls.append(kwargs)
+                return [mock.Mock(text=" Explain this. ")], None
+
+        fake_module = mock.Mock(WhisperModel=FakeModel)
+        with mock.patch.dict("sys.modules", {"faster_whisper": fake_module}):
+            run = engine._faster_whisper()
+            self.assertEqual(run(b"RIFF"), "Explain this.")
+        self.assertEqual(calls[0]["initial_prompt"], "Explain this. Draw this. Who is this?")
+        self.assertEqual((calls[0]["language"], calls[0]["beam_size"]), ("en", 1))
 
 
 class SetEngineTest(unittest.TestCase):

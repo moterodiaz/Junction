@@ -303,8 +303,9 @@ class PipelineDynamicRoutingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(card.models["image"], "stub")
         self.assertEqual(card.audio_url, "https://example.com/answer.wav")
 
-    async def test_decision_timeout_falls_back_to_l0_rejection_for_natural_question(self):
-        """When decision evaluation times out on a non-L0 question, pipeline raises stt_failed error."""
+    async def test_decision_timeout_on_a_natural_question_still_answers(self):
+        """#260: when the decision times out on a non-L0 question, the L0 rule answers it
+        (explain by default) instead of failing with stt_failed."""
         utterance = "Tell me everything about the setting of Elsinore"
         invoke = Invoke(
             type="invoke", request_id="r-dyn-4", session_id="s-dyn-4",
@@ -313,12 +314,9 @@ class PipelineDynamicRoutingTest(unittest.IsolatedAsyncioTestCase):
         set_decision_client(StubDecisionClient(timeout=True))
 
         with mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="passage"):
-            with self.assertRaises(pipeline.PipelineError) as ctx:
-                await pipeline.run(invoke, _noop_send_stage)
+            card = await pipeline.run(invoke, _noop_send_stage)
 
-        self.assertEqual(ctx.exception.code, "stt_failed")
-        self.assertEqual(ctx.exception.message, pipeline.UNKNOWN_COMMAND)
-        self.assertTrue(ctx.exception.retryable)
+        self.assertEqual(card.type, "card")
 
     async def test_decision_error_falls_back_to_l0_valid_command_success(self):
         """When decision fails on a valid L0 command (e.g. 'explain'), pipeline falls back cleanly."""

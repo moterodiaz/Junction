@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextvars import ContextVar
 import threading
 import time
 from typing import Any
@@ -158,14 +159,27 @@ def log_model_distribution_summary() -> str:
     return _DEFAULT_TRACKER.log_summary()
 
 
+_current_timer: ContextVar["StageTimer | None"] = ContextVar("metalab_stage_timer", default=None)
+
+
+def note_stt_words(count: int) -> None:
+    """Record the transcript's word count on this request's latency line (never the words)."""
+    timer = _current_timer.get()
+    if timer is not None:
+        timer.stt_words = int(count)
+
+
 class StageTimer:
-    """A stage runs from its start() until the next start() or finish()."""
+    """A stage runs from its start() until the next start() or finish(). Creating one makes it
+    the current request's timer for note_stt_words()."""
 
     def __init__(self, request_id: str):
         self.request_id = request_id
         self.began = clock()
         self.current: tuple[str, float] | None = None
         self.durations: dict[str, float] = {}
+        self.stt_words: int | None = None
+        _current_timer.set(self)
 
     def start(self, stage: str) -> None:
         now = clock()
@@ -179,6 +193,8 @@ class StageTimer:
 
     def log(self, outcome: str) -> None:
         parts = " ".join(f"{name}={seconds:.3f}s" for name, seconds in self.finish().items())
+        if self.stt_words is not None:
+            parts += f" stt_words={self.stt_words}"
         log.info("latency request=%s outcome=%s %s", self.request_id, outcome, parts)
 
     def _close(self, now: float) -> None:

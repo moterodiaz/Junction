@@ -57,16 +57,25 @@ class LatencyLogTest(unittest.TestCase):
                      "drawing=", "total="):
             self.assertIn(part, line)
 
+    def test_spoken_request_logs_the_transcript_word_count_not_the_words(self):
+        line = self.summary_for(invoke(text=None, audio=AUDIO))
+        self.assertIn("stt_words=2", line)  # "draw this"
+        self.assertNotIn("draw this", line)
+
+    def test_typed_request_has_no_stt_words(self):
+        self.assertNotIn("stt_words=", self.summary_for(invoke()))
+
     def test_typed_request_has_no_transcribing_stage(self):
         line = self.summary_for(invoke())
         self.assertIn("reading=", line)
         self.assertNotIn("transcribing=", line)
 
     def test_failed_request_still_logs_the_stages_it_reached(self):
-        stt.set_engine(lambda audio: "what time is it")
+        stt.set_engine(lambda audio: "")  # nothing heard: stt_failed after transcribing (#260)
         line = self.summary_for(invoke(text=None, audio=AUDIO))
         self.assertIn("outcome=error", line)
         self.assertIn("transcribing=", line)
+        self.assertIn("stt_words=0", line)
         self.assertNotIn("reading=", line)
 
 

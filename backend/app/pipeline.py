@@ -105,6 +105,9 @@ def _transcribe_and_record(clip: bytes, mime: str | None, session_id: str | None
         )
 
 UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this."
+# Whisper over a Bluetooth headset mic often hears the question but not the command word, and
+# failing those requests felt random to students (#260), so anything heard counts as explain.
+DEFAULT_COMMAND: stt.Command = "explain"
 
 
 async def transcribe(audio: Media, session_id: str | None = None) -> str:
@@ -133,10 +136,11 @@ async def transcribe(audio: Media, session_id: str | None = None) -> str:
 
 
 def command_from(utterance: str) -> stt.Command:
-    command = stt.match_command(utterance)
-    if command is None:
+    """The L0 command heard; explain when no command word was heard. Only an empty transcript
+    fails (stt_failed), because then nothing was heard at all."""
+    if not utterance or not utterance.strip():
         raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
-    return command
+    return stt.match_command(utterance) or DEFAULT_COMMAND
 
 
 async def timed(stage: Awaitable[T]) -> T:
@@ -493,6 +497,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     else:
         await send_stage("transcribing")
         utterance = await timed(transcribe(invoke.audio, session_id=invoke.session_id))
+        latency.note_stt_words(len(utterance.split()))
 
     if not dynamic_routing:
         command = command_from(utterance)
@@ -521,8 +526,10 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     clarify = False
     if dynamic_routing:
         decision = await timed(ai.decision.decide(utterance, page_text, session, passage_score=passage_score))
-        if decision.fallback_used and (stt.match_command(utterance) is None):
-            raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
+        if decision.fallback_used:
+            # Only an empty utterance fails. Otherwise fallback_decide's natural-intent keywords
+            # (backend/ai/decision.py) pick the action; the L0 default applies outside this mode.
+            command_from(utterance)
 
         if (
             not decision.fallback_used
