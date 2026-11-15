@@ -266,6 +266,7 @@ async def draw(
 # Pictures still drawing for cards already sent. They outlive run(), and asyncio keeps only
 # weak references to tasks, so hold them here until done; end_session cancels them.
 _PENDING_DRAWS: dict[str, set[asyncio.Task]] = {}
+_MAX_PENDING_DRAWS = 2  # per session; beyond this a card waits for its picture as before
 
 
 def _reserve_image(session_id: str) -> tuple[str, str] | None:
@@ -680,7 +681,10 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         image_url = None
         if not skip_draw:
             style_preset = getattr(decision, "style_preset", None) if decision is not None else None
-            reserved = _reserve_image(invoke.session_id)
+            # At the cap, draw inline under the session lock so repeated requests cannot pile
+            # up paid background draws.
+            at_cap = len(_PENDING_DRAWS.get(invoke.session_id, ())) >= _MAX_PENDING_DRAWS
+            reserved = None if at_cap else _reserve_image(invoke.session_id)
             if reserved is None:
                 image_url = await _draw(style_preset)
             else:
