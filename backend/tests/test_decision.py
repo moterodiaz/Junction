@@ -29,6 +29,7 @@ from ai.decision import (
     DecisionResult,
     GeminiDecisionClient,
     StubDecisionClient,
+    _parse_decision_response,
     decide,
     fallback_decide,
     get_all_question_specs,
@@ -816,6 +817,66 @@ class StylePresetAndSpoilerRiskTest(unittest.IsolatedAsyncioTestCase):
         res_spoiler = fallback_decide("who dies in the ending?")
         self.assertTrue(res_spoiler.spoiler_risk)
         self.assertFalse(res_spoiler.answerable_from_seen)
+
+class DecisionMalformedFieldsTest(unittest.TestCase):
+    """#253 (REQ-INTENT-01, REQ-VOICE-02): malformed dict answers fall back instead of raising."""
+
+    def test_noul_none_or_non_numeric_falls_back(self) -> None:
+        for bad in (None, "maybe", [1]):
+            with self.subTest(noul=bad):
+                res = _parse_decision_response(
+                    {"answers": {
+                        "action": {"choice": "explain", "confidence": 0.9},
+                        "needs_image": {"noul": bad, "confidence": 0.9},
+                        "speak_only": {"noul": bad, "confidence": 0.9},
+                        "spoiler_risk": {"noul": bad, "confidence": 0.9},
+                        "book_changed": {"noul": bad, "confidence": 0.9},
+                    }},
+                    "explain",
+                    {},
+                    [],
+                )
+                self.assertEqual(res.action, "explain")
+                self.assertIsInstance(res.needs_image, bool)
+                self.assertIsInstance(res.speak_only, bool)
+                self.assertIsInstance(res.spoiler_risk, bool)
+                self.assertIsInstance(res.book_changed, bool)
+
+    def test_noul_none_is_false(self) -> None:
+        res = _parse_decision_response(
+            {"answers": {
+                "action": {"choice": "explain", "confidence": 0.9},
+                "needs_image": {"noul": None, "confidence": 0.9},
+            }},
+            "explain",
+            {},
+            [],
+        )
+        self.assertFalse(res.needs_image)
+
+    def test_confidence_none_or_non_numeric_does_not_raise(self) -> None:
+        for bad in (None, "high"):
+            with self.subTest(confidence=bad):
+                dict_res = _parse_decision_response(
+                    {"answers": {
+                        "action": {"choice": "draw", "confidence": bad},
+                        "needs_image": {"noul": 1.0, "confidence": bad},
+                    }},
+                    "draw",
+                    {},
+                    [],
+                )
+                self.assertEqual(dict_res.action, "draw")
+                self.assertTrue(dict_res.needs_image)
+
+                sdk_res = _parse_decision_response(
+                    mock.Mock(answers={"action": mock.Mock(choice="draw", confidence=bad)}),
+                    "draw",
+                    {},
+                    [],
+                )
+                self.assertEqual(sdk_res.action, "draw")
+
 
 if __name__ == "__main__":
     unittest.main()
