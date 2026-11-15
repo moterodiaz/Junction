@@ -366,9 +366,12 @@ class HttpGeminiClient:
         parts = candidates[0].get("content", {}).get("parts", [])
         if not parts:
             raise ReasoningError("Gemini candidate has no parts")
-        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
-        if not text:
-            raise ReasoningError("Gemini candidate has no text")
+        text = "".join(
+            p.get("text", "") for p in parts
+            if isinstance(p, dict) and not p.get("thought") and isinstance(p.get("text"), str)
+        )
+        if not text.strip():
+            raise ReasoningError("Gemini candidate has no answer text")
         return parse_reasoning_json(text, session, passage_match=passage_match, page_text=page_text)
 
 
