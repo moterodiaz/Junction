@@ -2,6 +2,8 @@
 
 FastAPI orchestrator for MetaLab (PRD section 4). Tests: `backend/test.sh`.
 
+Every constant, default and environment override is listed in [`docs/CONSTANTS.md`](../docs/CONSTANTS.md).
+
 ## Run locally
 
 ```sh
