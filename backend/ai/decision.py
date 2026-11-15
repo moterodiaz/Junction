@@ -366,21 +366,31 @@ def _parse_decision_response(
     if not answers:
         raise DecisionError("Decisions API returned no answers")
 
+    def _as_confidence(raw: Any) -> float:
+        # A null or non-numeric confidence counts as absent, which defaults to 1.0.
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            return 1.0
+
     def _get_val_and_conf(ans_obj: Any, q_type: str, default_val: Any) -> tuple[Any, float]:
         if ans_obj is None:
             return default_val, 1.0
         if isinstance(ans_obj, dict):
-            conf = float(ans_obj.get("confidence", 1.0))
+            conf = _as_confidence(ans_obj.get("confidence", 1.0))
             if q_type == "choice":
                 return ans_obj.get("choice", default_val), conf
             elif q_type == "noul":
                 raw_noul = ans_obj.get("noul", default_val)
-                return bool(float(raw_noul) >= 0.5), conf
+                try:
+                    return bool(float(raw_noul) >= 0.5), conf
+                except (ValueError, TypeError):
+                    return bool(default_val), conf
             elif q_type == "score":
                 return ans_obj.get("score", default_val), conf
             return default_val, conf
 
-        conf = float(getattr(ans_obj, "confidence", 1.0))
+        conf = _as_confidence(getattr(ans_obj, "confidence", 1.0))
         if q_type == "choice":
             val = getattr(ans_obj, "choice", default_val)
             return val, conf

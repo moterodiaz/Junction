@@ -984,6 +984,42 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("Act 5", ans_soldier["caption"])
 
+class GeminiPartsParsingTest(unittest.TestCase):
+    """#251 (REQ-REASON-01): the HTTP reasoning client reads every non-thought text part."""
+
+    CARD_JSON = json.dumps({
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet weighs enduring life's troubles against ending them.",
+        "speech_text": "Hamlet weighs enduring life's troubles against ending them.",
+        "book": {"title": "Hamlet", "author": "William Shakespeare", "location": "Act 3, Scene 1"},
+        "sources": [{"title": "Hamlet Text", "url": "https://www.gutenberg.org/ebooks/1524"}],
+    })
+
+    def _parse(self, parts):
+        payload = json.dumps({"candidates": [{"content": {"parts": parts}}]})
+        session = BookSession(session_id="s-251")
+        return HttpGeminiClient(api_key="mock-gemini-key")._parse_gemini_response(payload, session)
+
+    def test_thought_part_before_answer_is_skipped(self):
+        answer = self._parse([
+            {"thought": True, "text": "Thinking about Hamlet..."},
+            {"text": self.CARD_JSON},
+        ])
+        self.assertEqual(answer["title"], "Hamlet, Act 3, Scene 1")
+
+    def test_json_split_across_text_parts_is_joined(self):
+        mid = len(self.CARD_JSON) // 2
+        answer = self._parse([
+            {"thought": True, "text": "Planning the card."},
+            {"text": self.CARD_JSON[:mid]},
+            {"text": self.CARD_JSON[mid:]},
+        ])
+        self.assertEqual(answer["book"]["author"], "William Shakespeare")
+
+    def test_only_thought_parts_raises_reasoning_error(self):
+        with self.assertRaises(ReasoningError):
+            self._parse([{"thought": True, "text": "Thinking only."}])
+
 
 if __name__ == "__main__":
     unittest.main()
