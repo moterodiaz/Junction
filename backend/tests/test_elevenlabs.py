@@ -80,8 +80,10 @@ class ClientTest(unittest.TestCase):
                 asyncio.run(client.synthesize("hi"))
             self.assertEqual(caught.exception.status_code, code)
             self.assertEqual(caught.exception.status, status)
-            self.assertLessEqual(len(caught.exception.message), 200)
             self.assertNotIn("\n", caught.exception.message)
+            logged = speak.describe_failure(caught.exception, "hi", KEY)
+            self.assertIn(f"code={code}", logged)
+            self.assertLess(len(logged), 300)  # describe_failure cuts the reason after redaction
 
     def test_non_json_error_body_still_raises(self):
         client = ElevenLabsSpeechClient(KEY, VOICE, transport=transport(500, content=b"<html>oops</html>"))

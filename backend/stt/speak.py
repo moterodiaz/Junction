@@ -372,8 +372,8 @@ def _gemini_client() -> Optional[GeminiSpeechClient]:
 
 
 def active_speech_client() -> Optional[Any]:
-    """Return the current TTS client without creating one; None if no client or key. After an
-    ElevenLabs failure the Gemini fallback that made the latest clip is the one reported."""
+    """Return the current TTS client without creating one; None if no client or key. For the
+    client that made a given clip (Gemini after an ElevenLabs failure), use client_for()."""
     return _client or _elevenlabs or _gemini
 
 
