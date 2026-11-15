@@ -24,12 +24,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var sampleFrameURL: URL?
     @Published private(set) var configureError: String?
 
-    enum Phase: Equatable {
-        case idle
-        case capturing
-        case waiting
-        case speaking
-    }
+    typealias Phase = ClientPhase
 
     private let glasses: GlassesBridge?
     private let socket = BackendSocket()
@@ -42,6 +37,8 @@ final class AppModel: ObservableObject {
     private var waitTask: Task<Void, Never>?
     private var presentTask: Task<Void, Never>?
     private var idleTask: Task<Void, Never>?
+    /// The latest status or failure push to the glasses; each new push waits for the previous one.
+    private var lensTask: Task<Void, Never>?
     private var lastServerMessage = Date()
     private var startedWaiting = Date()
 
@@ -120,6 +117,10 @@ final class AppModel: ObservableObject {
     func invoke() {
         guard session.canInvoke, phase == .idle, BackendConfig(string: backendURL) != nil else { return }
         idleTask?.cancel()
+        lensTask?.cancel()
+        // The previous question's socket may still be open; nothing from it belongs to this one.
+        activeRequest = nil
+        activeSocket = nil
         phase = .capturing
         let settings = CaptureSettings(
             displayEnabled: session.displayEnabled,
@@ -156,7 +157,9 @@ final class AppModel: ObservableObject {
         }
         socket.onDisconnect = { [weak self] token in
             Task { @MainActor in
-                guard let self, token == self.activeSocket, self.phase == .waiting else { return }
+                guard let self,
+                      ReplyGate.failsOnDisconnect(phase: self.phase, fromSocket: token, activeSocket: self.activeSocket)
+                else { return }
                 self.fail(.backendTimeout, retryable: true)
             }
         }
@@ -233,14 +236,15 @@ final class AppModel: ObservableObject {
         socket.disconnect()
         activeSocket = socket.connect(url: config.webSocketURL)
         try await socket.send(body)
-        guard activeRequest == requestId else { return }
+        guard ReplyGate.entersWaitingAfterSend(phase: phase, requestId: requestId, activeRequest: activeRequest)
+        else { return }
         phase = .waiting
         startedWaiting = Date()
         lastServerMessage = Date()
     }
 
     private func receive(_ text: String, socket token: Int) {
-        guard token == activeSocket, phase == .waiting || phase == .speaking,
+        guard ReplyGate.acceptsReply(phase: phase, fromSocket: token, activeSocket: activeSocket),
               let data = text.data(using: .utf8) else { return }
         guard let event = try? Contract.decode(data),
               ResponseFilter.accepts(event, fromSocket: token, activeSocket: activeSocket, activeRequest: activeRequest)
@@ -249,7 +253,15 @@ final class AppModel: ObservableObject {
         case .status(let status):
             lastServerMessage = Date()
             speaker.playEarcon(for: status.stage)
-            Task { await show(LensCopy.content(for: status.stage)) }
+            let requestId = status.requestId
+            let pending = lensTask
+            pending?.cancel()
+            lensTask = Task { [weak self] in
+                await pending?.value
+                guard let self, !Task.isCancelled, self.activeRequest == requestId,
+                      self.phase == .capturing || self.phase == .waiting else { return }
+                await self.show(LensCopy.content(for: status.stage))
+            }
         case .card(let card):
             lastServerMessage = Date()
             waitTask?.cancel()
@@ -257,8 +269,13 @@ final class AppModel: ObservableObject {
             phase = .speaking
             let requestId = card.requestId
             presentTask?.cancel()
+            let pending = lensTask
+            pending?.cancel()
+            lensTask = nil
             presentTask = Task { [weak self] in
-                guard let self else { return }
+                // A status push already in flight must land before the card, never after it.
+                await pending?.value
+                guard let self, !Task.isCancelled, self.activeRequest == requestId else { return }
                 await self.show(LensCopy.content(for: card))
                 guard !Task.isCancelled, self.activeRequest == requestId else { return }
                 await self.speaker.speak(SpeechPlan.route(card: card, displayEnabled: self.session.displayEnabled))
@@ -304,6 +321,7 @@ final class AppModel: ObservableObject {
     }
 
     private func fail(_ kind: FailureKind, retryable: Bool, message: String? = nil) {
+        let pending = lensTask
         cancelWork()
         activeRequest = nil
         activeSocket = nil
@@ -315,7 +333,11 @@ final class AppModel: ObservableObject {
         let content = LensCopy.content(for: kind)
         lens = content
         if session.displayEnabled {
-            Task { try? await glasses?.show(content) }
+            lensTask = Task { [weak self] in
+                await pending?.value
+                guard let self, !Task.isCancelled, self.phase == .idle, self.activeRequest == nil else { return }
+                try? await self.glasses?.show(content)
+            }
         }
     }
 
@@ -325,6 +347,7 @@ final class AppModel: ObservableObject {
         waitTask?.cancel()
         presentTask?.cancel()
         idleTask?.cancel()
+        lensTask?.cancel()
         speaker.stop()
         socket.disconnect()
     }

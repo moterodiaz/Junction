@@ -31,6 +31,8 @@ final class GlassesBridge {
     private var voice: VoiceInvocationsStream?
     private var voiceDevice: DeviceIdentifier?
     private let tokens = ListenerTokenBag()
+    /// One hinge/link listener per session; `.paused -> .started` must not add another.
+    private var deviceWatch: (device: DeviceIdentifier, token: any AnyListenerToken)?
     private var observeTask: Task<Void, Never>?
     private var deviceTask: Task<Void, Never>?
     private var sessionTask: Task<Void, Never>?
@@ -132,6 +134,7 @@ final class GlassesBridge {
         do {
             let created = try wearables.createSession(deviceSelector: selector)
             session = created
+            stopWatchingDevice()
             sessionTask?.cancel()
             sessionTask = Task { [weak self] in
                 for await state in created.stateStream() {
@@ -264,58 +267,48 @@ final class GlassesBridge {
     }
 
     private func captureFirstFrame(_ stream: MWDATCamera.Stream) async throws -> Data {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let gate = ResumeGate()
-            stream.errorPublisher.listen { error in
-                Task { @MainActor in
-                    guard gate.claim() else { return }
-                    continuation.resume(throwing: Self.problem(from: error))
-                }
-            }.store(in: tokens)
-            stream.videoFramePublisher.listen { frame in
-                Task { @MainActor in
-                    guard let image = frame.makeUIImage(), let jpeg = image.jpegData(compressionQuality: 0.85) else {
-                        return
-                    }
-                    guard gate.claim() else { return }
-                    continuation.resume(returning: jpeg)
-                }
-            }.store(in: tokens)
-            stream.start()
+        let gate = CaptureGate<Data>()
+        Self.cancelOnFinish(gate, stream.errorPublisher.listen { error in
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(8))
-                guard gate.claim() else { return }
-                continuation.resume(throwing: GlassesProblem.timeout)
+                gate.fail(Self.problem(from: error))
             }
-        }
+        })
+        Self.cancelOnFinish(gate, stream.videoFramePublisher.listen { frame in
+            Task { @MainActor in
+                guard !gate.isFinished,
+                      let image = frame.makeUIImage(),
+                      let jpeg = image.jpegData(compressionQuality: 0.85)
+                else { return }
+                gate.succeed(jpeg)
+            }
+        })
+        stream.start()
+        return try await gate.value(timeout: .seconds(8), timeoutError: GlassesProblem.timeout)
     }
 
     private func captureStandalone(_ photo: MWDATCamera.Photo) async throws -> Data {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let gate = ResumeGate()
-            photo.errorPublisher.listen { error in
-                Task { @MainActor in
-                    guard gate.claim() else { return }
-                    continuation.resume(throwing: Self.problem(from: error))
-                }
-            }.store(in: tokens)
-            photo.photoDataPublisher.listen { capture in
-                Task { @MainActor in
-                    guard gate.claim() else { return }
-                    continuation.resume(returning: capture.imageData)
-                }
-            }.store(in: tokens)
-            photo.statePublisher.listen { state in
-                if state == .started {
-                    photo.capturePhoto(resolution: .full, quality: .high)
-                }
-            }.store(in: tokens)
-            photo.start()
+        let gate = CaptureGate<Data>()
+        Self.cancelOnFinish(gate, photo.errorPublisher.listen { error in
             Task { @MainActor in
-                try? await Task.sleep(for: .seconds(20))
-                guard gate.claim() else { return }
-                continuation.resume(throwing: GlassesProblem.timeout)
+                gate.fail(Self.problem(from: error))
             }
+        })
+        Self.cancelOnFinish(gate, photo.photoDataPublisher.listen { capture in
+            gate.succeed(capture.imageData)
+        })
+        Self.cancelOnFinish(gate, photo.statePublisher.listen { state in
+            if state == .started {
+                photo.capturePhoto(resolution: .full, quality: .high)
+            }
+        })
+        photo.start()
+        return try await gate.value(timeout: .seconds(20), timeoutError: GlassesProblem.timeout)
+    }
+
+    /// Capture listeners live only as long as one capture, instead of the whole session's token bag.
+    nonisolated private static func cancelOnFinish(_ gate: CaptureGate<Data>, _ token: any AnyListenerToken) {
+        gate.onFinish {
+            Task { await token.cancel() }
         }
     }
 
@@ -341,7 +334,9 @@ final class GlassesBridge {
 
     private func watchDevice(_ device: Device?) {
         guard let device else { return }
-        device.addDeviceStateListener { [weak self] state in
+        if deviceWatch?.device == device.identifier { return }
+        stopWatchingDevice()
+        let token = device.addDeviceStateListener { [weak self] state in
             Task { @MainActor in
                 if state.hingeState == .closed {
                     self?.onFailure?(.hingesClosed)
@@ -349,7 +344,14 @@ final class GlassesBridge {
                     self?.onFailure?(.bluetoothLost)
                 }
             }
-        }.store(in: tokens)
+        }
+        deviceWatch = (device.identifier, token)
+    }
+
+    private func stopWatchingDevice() {
+        guard let previous = deviceWatch?.token else { return }
+        deviceWatch = nil
+        Task { await previous.cancel() }
     }
 
     private func startVoice(on identifier: DeviceIdentifier) {
