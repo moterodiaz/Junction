@@ -37,7 +37,8 @@ def _error_from(response: httpx.Response) -> ElevenLabsError:
         message = str(detail.get("message") or "")
     elif isinstance(detail, str):
         message = detail
-    return ElevenLabsError(response.status_code, status, " ".join(message.split())[:200])
+    # Not cut here: speak.describe_failure redacts the key and text first, then cuts to 200.
+    return ElevenLabsError(response.status_code, status, " ".join(message.split()))
 
 
 class ElevenLabsSpeechClient:

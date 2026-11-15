@@ -49,7 +49,7 @@ _sweep_now = threading.Event()  # wakes the sweeper early (tests)
 _client: Any = None
 _gemini: Optional["GeminiSpeechClient"] = None
 _elevenlabs: Optional[ElevenLabsSpeechClient] = None
-_served_by: Any = None  # the client behind the latest stored clip, for model attribution
+_served_by: OrderedDict[str, Any] = OrderedDict()  # clip id -> client that made it, for model attribution
 
 
 def is_not_found(exc: BaseException) -> bool:
@@ -128,8 +128,9 @@ class GeminiSpeechClient:
 
 def set_speech_client(client: Any) -> None:
     """Replace the TTS client (None restores the ElevenLabs or Gemini client from env)."""
-    global _client, _served_by
-    _client, _served_by = client, None
+    global _client
+    _client = client
+    _served_by.clear()
 
 
 def _expire() -> None:
@@ -315,9 +316,19 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     if not pcm:
         log.warning("speech synthesis returned empty audio")
         return None
-    global _served_by
-    _served_by = attempt["client"]
-    return f"{base}/audio/{store(to_wav(pcm, rate), session_id)}.wav"
+    clip_id = store(to_wav(pcm, rate), session_id)
+    _served_by[clip_id] = attempt["client"]  # tied to this clip, not to the latest request
+    while len(_served_by) > MAX_CLIPS:
+        _served_by.popitem(last=False)
+    return f"{base}/audio/{clip_id}.wav"
+
+
+def client_for(audio_url: Optional[str]) -> Optional[Any]:
+    """The client that made the clip behind audio_url; the active client if unknown."""
+    if _client:
+        return _client
+    clip_id = audio_url.rsplit("/", 1)[-1].removesuffix(".wav") if audio_url else ""
+    return _served_by.get(clip_id) or active_speech_client()
 
 
 async def _synthesize(client: Any, text: str, attempt: dict) -> Any:
@@ -363,7 +374,7 @@ def _gemini_client() -> Optional[GeminiSpeechClient]:
 def active_speech_client() -> Optional[Any]:
     """Return the current TTS client without creating one; None if no client or key. After an
     ElevenLabs failure the Gemini fallback that made the latest clip is the one reported."""
-    return _client or _served_by or _elevenlabs or _gemini
+    return _client or _elevenlabs or _gemini
 
 
 audio_router = APIRouter()

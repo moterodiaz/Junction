@@ -12,7 +12,7 @@ from unittest import mock
 import httpx
 
 from app.config import Settings, load_settings
-from stt import speak
+from stt import elevenlabs, speak
 from stt.elevenlabs import DEFAULT_MODEL_TTS_ELEVENLABS, ElevenLabsError, ElevenLabsSpeechClient
 
 BASE = "https://metalab.example"
@@ -165,7 +165,24 @@ class SpeakWithElevenLabsTest(unittest.TestCase):
                     self.assertEqual(self.wav_of(url)[1], b"\x05\x00" * 10)
                     self.assertEqual(fake.texts, ["hello"])
                     self.assertIn(f"code={code}", " ".join(captured.output))
-                    self.assertIs(speak.active_speech_client(), fake)
+                    self.assertIs(speak.client_for(url), fake)
+
+    def test_secret_straddling_200_chars_is_redacted_in_logs(self):
+        message = "x" * 190 + KEY + " tail"
+        err = elevenlabs._error_from(httpx.Response(401, json={"detail": {"message": message}}))
+        out = speak.describe_failure(err, "", KEY)
+        self.assertNotIn(KEY[:6], out)
+        self.assertIn("[redacted]", out)
+
+    def test_clip_keeps_its_own_provider(self):
+        fake = self.gemini(FakeGemini())
+        self.eleven(status=429, body={"detail": {"status": "q", "message": "no"}})
+        url_a = asyncio.run(speak.speak("a", "s1"))
+        self.eleven()
+        speak._elevenlabs._transport = transport()
+        url_b = asyncio.run(speak.speak("b", "s2"))
+        self.assertIs(speak.client_for(url_a), fake)
+        self.assertIsInstance(speak.client_for(url_b), ElevenLabsSpeechClient)
 
     def test_both_failing_returns_none(self):
         self.gemini(FakeGemini(error=RuntimeError("gemini down")))
