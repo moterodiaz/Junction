@@ -27,10 +27,7 @@ Defaults come from `backend/app/config.py` and the `DEFAULT_MODEL_*` constants i
 
 **Attribution limit.** `backend/app/pipeline.py` fills `models.reason` from the configured or routed model name (`resolve_reason_model()` or the decision's `recommended_model`), not from the provider's response. `models.read` comes from the reader that returned the text, so it shows when the fallback was used. `models.image` is `stub` when no image was produced. A reported reasoning name therefore shows what was requested, not a provider-confirmed model ID.
 
-**Nemotron and Verda.** The configured endpoint is NVIDIA's hosted API (`integrate.api.nvidia.com`). Nothing in the repo points at a Verda-hosted endpoint, and no Verda inference has been recorded. Before any Verda claim, D (the lead) needs:
-1. The actual base URL the deployed secret uses for `NVIDIA_BASE_URL`, from the deployer (@Marcus228). Give the host only, never the key.
-2. Verda's written confirmation that this endpoint counts as Verda inference for their challenge.
-3. A dated live request whose card reports the Nemotron reader, not the Gemini fallback.
+**Nemotron and Verda.** The repo default endpoint is NVIDIA's hosted API (`integrate.api.nvidia.com`). The lead confirmed on 2026-11-15 that the deployed secret overrides `NVIDIA_BASE_URL` with a DataCrunch (now Verda) container endpoint, so deployed page reading runs on Verda. Live cards on the first build and v5 reported the Nemotron reader (`nemotron-3.5-super-vl`), not the Gemini fallback. Still open: Verda's written eligibility confirmation, if they require one. Current per-track state: `docs/evidence/HOST.md`.
 
 ## 3. Source grounding (REQ-SRC-01)
 
@@ -90,7 +87,7 @@ Per PR (threads / `claude-fix` commits / minutes to merge): #74 7/2/30, #75 11/4
 - **Decision routing live (#206)**: merged after the live run, off by default, and not deployed.
 - **Spoken answer audio live**: `audio_url` null; the #206 fix needs a redeploy.
 - **Deployed secret values** (`MODEL_*`, `NVIDIA_BASE_URL`): only the deployer can see them; asked above for the host and model names only.
-- **Verda eligibility**: no confirmation and no Verda endpoint (section 2).
+- **Verda eligibility**: the deployed endpoint is Verda's (lead, 2026-11-15); no written eligibility confirmation from Verda (section 2).
 - **Local test run on the lead's machine**: skipped (no install authorized); CI is the record.
 
 ## 7. Handoff to D (the lead)
