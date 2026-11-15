@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Offline tests for `tools/metrics --gate` (the required `trust` status, REQ-PROC-02): a fake `gh` on PATH
-# serves PRs, reviews and escape issues from a JSON file. Areas come from the repo's .github/CODEOWNERS.
+# serves PRs, reviews and escape issues from a JSON file. Areas come from a fixture CODEOWNERS, so a
+# real ownership change does not rewrite these expectations.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -r "$tmp"' EXIT
-export FAKE_DB="$tmp/db.json" METRICS_REPO=o/r PATH="$tmp:$PATH"
+export FAKE_DB="$tmp/db.json" METRICS_REPO=o/r PATH="$tmp:$PATH" METRICS_CODEOWNERS="$tmp/CODEOWNERS"
+printf '%s\n' '/.github/ @moterodiaz' '/backend/app/ @Ahm3d-KA' '/backend/ai/ @Marcus228' > "$METRICS_CODEOWNERS"
 
 cat > "$tmp/gh" <<'SH'
 #!/usr/bin/env bash
