@@ -90,8 +90,8 @@ public final class CaptureGate<Value: Sendable>: @unchecked Sendable {
         let pending = cleanups
         cleanups = []
         lock.unlock()
-        waiting?.resume(with: result)
         pending.forEach { $0() }
+        waiting?.resume(with: result)
         return true
     }
 }

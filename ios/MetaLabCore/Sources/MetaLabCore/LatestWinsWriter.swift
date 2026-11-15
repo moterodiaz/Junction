@@ -42,20 +42,23 @@ public final class LatestWinsWriter<Item: Sendable> {
         while let next = pending {
             pending = nil
             guard next.generation == generation else { continue }
-            await perform(next.item)
+            await perform(next.item, generation: next.generation)
         }
         draining = false
     }
 
-    private func perform(_ item: Item) async {
+    private func perform(_ item: Item, generation expected: Int) async {
         guard let writeTimeout else {
             await write(item)
             return
         }
         let done = CaptureGate<Bool>()
         let write = self.write
-        Task { @MainActor in
-            await write(item)
+        Task { @MainActor [weak self] in
+            // Re-check: a cancel or newer submit may have landed before this task started.
+            if let self, self.generation == expected {
+                await write(item)
+            }
             done.succeed(true)
         }
         _ = try? await done.value(timeout: writeTimeout, timeoutError: WriteTimedOut())
