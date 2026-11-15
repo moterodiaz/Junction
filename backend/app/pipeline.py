@@ -301,7 +301,8 @@ def sweep_expired(now: float | None = None) -> list[str]:
 
 
 # The anti-spoiler reading horizon (#197): a failed request must not advance it either.
-_HORIZON_FIELDS = ("max_position", "seen_passages", "_horizon_by_book")
+# is_default_book rides along: a failed request must not leave a default-Hamlet session "selected".
+_HORIZON_FIELDS = ("max_position", "seen_passages", "_horizon_by_book", "is_default_book")
 
 
 def _session_state(session) -> tuple:

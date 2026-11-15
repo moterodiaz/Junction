@@ -557,6 +557,59 @@ class BookSessionAndReasoningTest(unittest.IsolatedAsyncioTestCase):
         # sources must be empty list - no fabricated Gutenberg Hamlet URL
         self.assertEqual(answer["sources"], [])
 
+    async def test_brand_new_session_non_hamlet_page_names_identified_or_unknown_book(self):
+        """#231 REQ-SRC-01: When no passage is verified and page does not look like session's default book,
+        the card names the identified book or 'Unknown book' instead of Hamlet, without overwriting session.book."""
+        store = SessionStore()
+        # Brand-new session starts with default Hamlet
+        session_id = "s-brand-new-moby"
+        session = store.get_or_create(session_id)
+        self.assertEqual(session.book.title, "Hamlet")
+        self.assertEqual(session.book.author, "William Shakespeare")
+
+        # Non-Hamlet page: Moby-Dick
+        moby_page = "Call me Ishmael. Some years ago, never mind how long precisely"
+        command = "explain this passage"
+        answer = await think(command, moby_page, session_id, client=StubGeminiClient(), session_store=store)
+
+        self.assertNotEqual(answer["book"]["title"], "Hamlet")
+        self.assertEqual(answer["book"]["title"], "Moby-Dick")
+        self.assertNotEqual(answer["book"]["author"], "William Shakespeare")
+        self.assertEqual(answer["book"]["author"], "Herman Melville")
+        self.assertEqual(answer["sources"], [])
+        # Crucially: session.book is NOT overwritten by an unverified guess
+        self.assertEqual(session.book.title, "Hamlet")
+        self.assertEqual(session.book.author, "William Shakespeare")
+
+        # Another brand-new session with completely unrecognized text
+        session_id_unk = "s-brand-new-unk"
+        session_unk = store.get_or_create(session_id_unk)
+        unk_page = "Quantum decoherence in macroscopic wavefunctions leads to classical behavior."
+        answer_unk = await think(command, unk_page, session_id_unk, client=StubGeminiClient(), session_store=store)
+
+        self.assertEqual(answer_unk["book"]["title"], "Unknown book")
+        self.assertEqual(answer_unk["book"]["author"], "Unknown author")
+        self.assertEqual(answer_unk["sources"], [])
+        self.assertEqual(session_unk.book.title, "Hamlet")
+
+    async def test_hamlet_page_still_grounds_exactly_and_retains_canonical_citations(self):
+        """#231 REQ-SRC-01: A Hamlet page still grounds exactly with Act/Scene/Line and Gutenberg source citation."""
+        store = SessionStore()
+        session_id = "s-hamlet-exact"
+        session = store.get_or_create(session_id)
+        hamlet_page = "To be, or not to be, that is the question: Whether 'tis nobler in the mind to suffer"
+        command = "explain this passage"
+
+        answer = await think(command, hamlet_page, session_id, client=StubGeminiClient(), session_store=store)
+
+        self.assertEqual(answer["book"]["title"], "Hamlet")
+        self.assertEqual(answer["book"]["author"], "William Shakespeare")
+        self.assertTrue(answer["book"]["location"].startswith("Act 3, Scene 1"))
+        self.assertTrue(len(answer["sources"]) > 0)
+        self.assertEqual(answer["sources"][0]["url"], "https://www.gutenberg.org/ebooks/1524")
+        self.assertEqual(session.book.title, "Hamlet")
+        self.assertTrue(session.book.location.startswith("Act 3, Scene 1"))
+
     def test_parse_reasoning_json_unknown_book_strips_fabricated_hamlet_sources(self):
         """REQ-SRC-01: Model output for non-Hamlet book never retains silent DEFAULT_HAMLET_SOURCES fallback."""
         session = BookSession("s-gatsby", book=BookInfo(title="The Great Gatsby", author="F. Scott Fitzgerald"))

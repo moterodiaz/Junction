@@ -1040,6 +1040,39 @@ class PipelineCitationReferenceTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(card.sources, [])
                 self.assertEqual(card.book.location, pipeline.NO_SOURCE_TEXT)
                 self.assertNotRegex(card.title, r"Act \d|Scene \d|line \d")
+                self.assertNotEqual(card.book.title, "Hamlet")
+
+    async def test_brand_new_session_non_hamlet_page_card_is_not_hamlet(self):
+        """#231 REQ-SRC-01: A brand-new session gets a non-Hamlet page with no passage match:
+        the card's book.title is not Hamlet (and not William Shakespeare author), sources == [], and location == 'No source text'."""
+        moby_page = "Call me Ishmael. Some years ago, never mind how long precisely"
+        card = await self._card_for(moby_page, "s-card-moby-new")
+        self.assertNotEqual(card.book.title, "Hamlet")
+        self.assertEqual(card.book.title, "Moby-Dick")
+        self.assertNotEqual(card.book.author, "William Shakespeare")
+        self.assertEqual(card.book.author, "Herman Melville")
+        self.assertEqual(card.sources, [])
+        self.assertEqual(card.book.location, pipeline.NO_SOURCE_TEXT)
+        self.assertEqual(card.title, "Moby-Dick")
+
+        # Session's book is NOT overwritten by an unverified guess
+        session = default_session_store.get("s-card-moby-new")
+        self.assertIsNotNone(session)
+        self.assertEqual(session.book.title, "Hamlet")
+
+        # Unrecognized book
+        unk_page = "Quantum decoherence in macroscopic wavefunctions leads to classical behavior."
+        card_unk = await self._card_for(unk_page, "s-card-unk-new")
+        self.assertNotEqual(card_unk.book.title, "Hamlet")
+        self.assertEqual(card_unk.book.title, "Unknown book")
+        self.assertNotEqual(card_unk.book.author, "William Shakespeare")
+        self.assertEqual(card_unk.book.author, "Unknown author")
+        self.assertEqual(card_unk.sources, [])
+        self.assertEqual(card_unk.book.location, pipeline.NO_SOURCE_TEXT)
+        self.assertEqual(card_unk.title, "Unknown book")
+        session_unk = default_session_store.get("s-card-unk-new")
+        self.assertIsNotNone(session_unk)
+        self.assertEqual(session_unk.book.title, "Hamlet")
 
 
 class PipelineTerminalReplyTest(unittest.IsolatedAsyncioTestCase):
