@@ -48,11 +48,26 @@ _ACCEPT_FINISH = {None, "STOP", "FINISH_REASON_UNSPECIFIED"}
 class PageReadError(Exception):
     """Base exception for page reading failures."""
 
-    def __init__(self, message: str, code: str = "internal", retryable: bool = True) -> None:
+    def __init__(
+        self,
+        message: str,
+        code: str = "internal",
+        retryable: bool = True,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.retryable = retryable
+        if status_code is None:
+            import re
+            m = re.search(r"\bHTTP\s+(\d{3})\b", message)
+            if m:
+                try:
+                    status_code = int(m.group(1))
+                except ValueError:
+                    pass
+        self.status_code = status_code
 
 
 class NoTextFoundError(PageReadError):
@@ -235,9 +250,11 @@ class NemotronClient:
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     resp = await client.post(url, json=payload, headers=headers)
                     if resp.is_error:
+                        log.warning("Nemotron API failed: code=%d", resp.status_code)
                         raise PageReadError(
                             f"Nemotron API returned HTTP {resp.status_code}",
                             code="internal",
+                            status_code=resp.status_code,
                         )
                     try:
                         return resp.json()
@@ -273,9 +290,11 @@ class NemotronClient:
                             code="internal",
                         ) from exc
             except urllib.error.HTTPError as exc:
+                log.warning("Nemotron API failed: code=%d", exc.code)
                 raise PageReadError(
                     f"Nemotron API returned HTTP {exc.code}",
                     code="internal",
+                    status_code=exc.code,
                 ) from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 raise PageReadTimeoutError(
@@ -307,10 +326,16 @@ class StubNemotronClient:
         self,
         responses: Mapping[str, str | Exception] | None = None,
         default_response: str | Exception = "To be, or not to be, that is the question.",
+        delay_s: float = 0.0,
+        model: str | None = None,
     ) -> None:
         self.responses = dict(responses or {})
         self.default_response = default_response
+        self.delay_s = delay_s
+        if model is not None:
+            self.model = model
         self.calls: list[dict[str, Any]] = []
+        self.cancelled = False
 
     async def complete(
         self,
@@ -323,6 +348,13 @@ class StubNemotronClient:
             "mime": mime,
             "prompt": prompt,
         })
+
+        if self.delay_s:
+            try:
+                await asyncio.sleep(self.delay_s)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
 
         resp = self.responses.get(frame_b64)
         if resp is None:
@@ -386,7 +418,7 @@ async def read_page(
 # and then lets Gemini read the same frame within what is left of the stage timeout.
 
 DEFAULT_MODEL_READ_FALLBACK = "gemini-4-hydrogen"
-DEFAULT_READ_FALLBACK_AFTER_S = 8.0
+DEFAULT_READ_FALLBACK_AFTER_S = 3.0
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 
@@ -394,10 +426,17 @@ class PageText(str):
     """Page text that also records which model read it. Behaves as a plain str everywhere else."""
 
     model: str | None
+    fallback_from: str | None
 
-    def __new__(cls, text: str, model: str | None = None) -> "PageText":
+    def __new__(
+        cls,
+        text: str,
+        model: str | None = None,
+        fallback_from: str | None = None,
+    ) -> "PageText":
         obj = super().__new__(cls, text)
         obj.model = model
+        obj.fallback_from = fallback_from
         return obj
 
 
@@ -495,11 +534,16 @@ class StubGeminiPageReader:
         self.model = model
         self.delay_s = delay_s
         self.calls: list[dict[str, Any]] = []
+        self.cancelled = False
 
     async def complete(self, frame_b64: str, mime: str = "image/jpeg", prompt: str | None = None) -> str:
         self.calls.append({"frame_b64": frame_b64, "mime": mime, "prompt": prompt})
         if self.delay_s:
-            await asyncio.sleep(self.delay_s)
+            try:
+                await asyncio.sleep(self.delay_s)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
         if isinstance(self.response, Exception):
             raise self.response
         if _is_no_text_response(self.response):
@@ -528,10 +572,12 @@ async def read_page_with_fallback(
     fallback: Any | None = None,
     budget_s: float | None = None,
 ) -> PageText:
-    """Read the page with Nemotron; if it misses the budget or fails, let Gemini read it.
+    """Read the page with Nemotron; hedge with Gemini if Nemotron fails or misses budget.
 
-    NoTextFoundError from Nemotron is an answer, not a failure, so it is raised as is. Without a
-    fallback reader (no GEMINI_API_KEY) Nemotron gets no budget and its errors propagate unchanged.
+    Start the Gemini reader when Nemotron has either failed or not answered after
+    READ_FALLBACK_AFTER_S, and race both: first success wins, the other task is cancelled.
+    NoTextFoundError from either reader is an answer, not a failure, so it ends the stage immediately.
+    Without a fallback reader (no GEMINI_API_KEY) Nemotron gets no budget and its errors propagate unchanged.
     """
     mime, b64 = extract_frame_data(frame)
     if primary is None:
@@ -543,20 +589,96 @@ async def read_page_with_fallback(
     if fallback is None:
         return PageText(await primary.complete(b64, mime=mime), primary_model)
 
-    budget = _fallback_budget_s() if budget_s is None else budget_s
-    try:
-        text = await asyncio.wait_for(primary.complete(b64, mime=mime), budget)
-        log.info("page read by %s", primary_model)
-        return PageText(text, primary_model)
-    except NoTextFoundError:
-        raise
-    except TimeoutError:
-        reason = f"over {budget:g} s budget"
-    except PageReadError as exc:
-        reason = f"{type(exc).__name__}"
-
     fallback_model = getattr(fallback, "model", None) or DEFAULT_MODEL_READ_FALLBACK
-    log.info("page read fallback attempt: %s after %s %s", fallback_model, primary_model, reason)
-    text = await fallback.complete(b64, mime=mime)
-    log.info("page read by %s (fallback: %s %s)", fallback_model, primary_model, reason)
-    return PageText(text, fallback_model)
+    budget = _fallback_budget_s() if budget_s is None else budget_s
+
+    primary_task = asyncio.create_task(primary.complete(b64, mime=mime))
+    fallback_task: asyncio.Task | None = None
+
+    async def _cancel_and_drain(tasks: list[asyncio.Task]) -> None:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        for t in tasks:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    try:
+        if budget > 0:
+            done, _ = await asyncio.wait([primary_task], timeout=budget)
+        else:
+            done = set()
+
+        if primary_task in done:
+            exc = primary_task.exception()
+            if exc is None:
+                log.info("page read by %s", primary_model)
+                return PageText(primary_task.result(), primary_model)
+            if isinstance(exc, NoTextFoundError):
+                raise exc
+
+            # Primary failed before budget expired; run fallback immediately
+            code_val = getattr(exc, "status_code", None)
+            code_str = f" code={code_val}" if code_val is not None else ""
+            reason = f"{type(exc).__name__}{code_str}"
+            log.info("page read fallback attempt: %s after %s %s", fallback_model, primary_model, reason)
+            fallback_task = asyncio.create_task(fallback.complete(b64, mime=mime))
+            text = await fallback_task
+            log.info("page read by %s (fallback: %s %s)", fallback_model, primary_model, reason)
+            return PageText(text, fallback_model, fallback_from=primary_model)
+
+        # Primary has not answered after budget; start Gemini and race both
+        reason = f"over {budget:g} s budget"
+        log.info("page read fallback attempt: %s after %s %s", fallback_model, primary_model, reason)
+        fallback_task = asyncio.create_task(fallback.complete(b64, mime=mime))
+
+        active: set[asyncio.Task] = {primary_task, fallback_task}
+        primary_error: Exception | None = None
+        fallback_error: Exception | None = None
+
+        while active:
+            done_set, _ = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+            active -= done_set
+
+            # If both finish together, prioritize primary if successful
+            done_list = sorted(done_set, key=lambda t: 0 if t is primary_task else 1)
+            for t in done_list:
+                exc = t.exception()
+                if exc is None:
+                    # Winner!
+                    winner_text = t.result()
+                    await _cancel_and_drain(list(active))
+                    active.clear()
+
+                    if t is primary_task:
+                        log.info("page read by %s", primary_model)
+                        return PageText(winner_text, primary_model)
+                    else:
+                        log.info("page read by %s (fallback: %s %s)", fallback_model, primary_model, reason)
+                        return PageText(winner_text, fallback_model, fallback_from=primary_model)
+
+                if isinstance(exc, NoTextFoundError):
+                    await _cancel_and_drain(list(active))
+                    active.clear()
+                    raise exc
+
+                if t is primary_task:
+                    primary_error = exc
+                    code_val = getattr(exc, "status_code", None)
+                    code_str = f" code={code_val}" if code_val is not None else ""
+                    reason = f"{type(exc).__name__}{code_str}"
+                else:
+                    fallback_error = exc
+
+        # Both readers failed
+        if primary_error is not None:
+            raise primary_error
+        if fallback_error is not None:
+            raise fallback_error
+        raise PageReadError("All readers failed.")
+
+    finally:
+        tasks_to_cleanup = [t for t in (primary_task, fallback_task) if t is not None]
+        await _cancel_and_drain(tasks_to_cleanup)
