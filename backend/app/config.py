@@ -19,6 +19,9 @@ MODAL_SECRET_NAME = "metalab"
 
 REQUIRED = ("NVIDIA_API_KEY", "GEMINI_API_KEY")
 
+# Optional secrets: ElevenLabs speaks the answer only when both are set (stt/speak.py).
+OPTIONAL_SECRETS = ("ELEVEN_LABS_API_KEY", "ELEVEN_LABS_VOICE_ID")
+
 # Optional overrides and their defaults (PRD section 4, Models).
 DEFAULTS = {
     "NVIDIA_BASE_URL": "https://integrate.api.nvidia.com/v1",
@@ -26,6 +29,7 @@ DEFAULTS = {
     "MODEL_REASON": "gemini-4-argon",
     "MODEL_IMAGE": "gemini-nano-banana-2.1",
     "MODEL_TTS": "gemini-3.8-flash-tts",
+    "MODEL_TTS_ELEVENLABS": "eleven_flash_v2_5",
     "MODEL_DECISION": "gemini-decision-1",
     "MODEL_REASON_FAST": "gemini-3.5-flash-lite",
     "MODEL_REASON_DEEP": "gemini-4-carbon",
@@ -152,6 +156,9 @@ class Settings:
     model_reason_deep: str = "gemini-4-carbon"
     dynamic_model_routing: str = "false"
     stt_engine: str = "whisper"
+    model_tts_elevenlabs: str = "eleven_flash_v2_5"
+    eleven_labs_api_key: str = field(repr=False, default="")
+    eleven_labs_voice_id: str = field(repr=False, default="")
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -177,6 +184,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     return Settings(
         nvidia_api_key=get("NVIDIA_API_KEY"),
         gemini_api_key=get("GEMINI_API_KEY"),
+        **{name.lower(): get(name) for name in OPTIONAL_SECRETS},
         **{name.lower(): get(name) or default for name, default in DEFAULTS.items()},
     )
 
