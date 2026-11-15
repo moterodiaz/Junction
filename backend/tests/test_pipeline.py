@@ -1587,6 +1587,21 @@ class PipelineEarlyCardTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await image.wait_for_image(image_id, timeout=1))
         self.assertNotIn("s-ended", pipeline._PENDING_DRAWS)
 
+    async def test_at_the_cap_a_card_waits_for_its_picture(self):
+        set_image_client(_SlowImageClient(delay=0.3))
+        for n in range(pipeline._MAX_PENDING_DRAWS):
+            card = await pipeline.run(self._invoke("s-cap"), _noop_send_stage)
+            self._image_id(card.image_url)
+        self.assertEqual(len(pipeline._PENDING_DRAWS["s-cap"]), pipeline._MAX_PENDING_DRAWS)
+
+        with mock.patch.object(image, "reserve", wraps=image.reserve) as reserve:
+            started = time.monotonic()
+            card = await pipeline.run(self._invoke("s-cap"), _noop_send_stage)
+        reserve.assert_not_called()
+        self.assertGreaterEqual(time.monotonic() - started, 0.25)
+        self.assertIsNotNone(image.get_image(self._image_id(card.image_url)))
+        self.assertLessEqual(len(pipeline._PENDING_DRAWS.get("s-cap", ())), pipeline._MAX_PENDING_DRAWS)
+
     async def test_a_card_that_fails_to_build_stops_its_picture(self):
         set_image_client(_SlowImageClient(delay=5.0))
         reserved: list[str] = []
