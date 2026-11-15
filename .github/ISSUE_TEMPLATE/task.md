@@ -9,7 +9,7 @@ labels: task
 What this task must accomplish.
 
 ## PRD section
-Required: cite a section of `Junction-Prep/metalab_prd.md`, e.g. "section 4 Architecture"; the PRD wins over this issue if they disagree.
+The section in the PRD column of `docs/REQUIREMENTS.md` for your requirement, e.g. "§4", or `n/a`.
 
 ## Requirement
 Required: one id from `docs/REQUIREMENTS.md`, e.g. `REQ-WS-01` (add a row there first if none fits).

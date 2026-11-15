@@ -90,20 +90,22 @@ Run for this file on 2026-11-14, macOS (darwin 25.5.0), `main` at `418a1eb` unle
 | Contracts, local | `contracts/test.sh` | 40 tests OK, 2 skipped (the live tests skip without `WS_URL`) |
 | Swift package, local | `swift test --package-path ios/MetaLabCore` | **Did not run**: this machine has only Command Line Tools, whose Swift fails to link the package manifest. Not a test failure |
 | Swift package and backend in CI | `ci` run 43649231648 on `53b35ff` (`ios/` and `backend/` unchanged since) | success: `MetaLabCore` 27 tests, 0 failures; iOS proxy 7 tests; backend 408 tests |
-| iOS app target | `xcodebuild … CODE_SIGNING_ALLOWED=NO`, by @maksymmatviievskyi | BUILD SUCCEEDED at `6b3d353` only (`ios/DELIVERY_EVIDENCE.md`). Not built in CI, not installed on a phone |
+| iOS app target | `xcodebuild … CODE_SIGNING_ALLOWED=NO`, by @maksymmatviievskyi | BUILD SUCCEEDED at `6b3d353` only (reported by the iOS owner). Not built in CI, not installed on a phone |
 | Live models, v5 `5d1a6ee` | strict `WS_URL` + `WS_SUCCESS_CASES` run of `contracts/test.sh` | 40 tests, 2 failures, both only `audio_url` null. Reported models: read `nemotron-3.5-super-vl`, reason `gemini-4-hydrogen`, image `gemini-nano-banana-2.1` (`docs/evidence/base-live.md`) |
 | Live models, v6 `53b35ff` | the same strict run | Still 2 failures, only `audio_url` (typed 21.1 s, spoken 25.0 s). The new logging (#230) showed the cause: `400 INVALID_ARGUMENT`, the Gemini TTS model needs a different API shape. Fix pending under #226 |
 
-Model attribution limit: `models.reason` is the requested model name, not one the provider confirmed (`backend/ai/DELIVERY_EVIDENCE.md`).
+Model attribution limit: `models.reason` is the requested model name, not one the provider confirmed.
 
 ## 5. Named accountability
 
 | Who | Accountable for | Evidence file |
 |---|---|---|
 | @moterodiaz (lead) | `contracts/`, `.github/`, `.claude/`, `.agents/`, the trust pipeline, evidence docs, deploys, gate acceptance | this file, `TRUST-PIPELINE.md`, `base-live.md` |
-| @Ahm3d-KA | `backend/app/`, `backend/stt/`: orchestration, speech, errors, privacy | `backend/app/DELIVERY_EVIDENCE.md` |
-| @Marcus228 | `backend/ai/`: page reading, source text, reasoning, images | `backend/ai/DELIVERY_EVIDENCE.md` |
-| @maksymmatviievskyi | `ios/`: the app, DAT capture, the hardware round trip | `ios/DELIVERY_EVIDENCE.md` |
+| @Ahm3d-KA | `backend/app/`, `backend/stt/`: orchestration, speech, errors, privacy | `backend/README.md`, `backend/tests/` |
+| @Marcus228 | `backend/ai/`: page reading, source text, reasoning, images | `docs/evidence/HOST.md`, `backend/tests/` |
+| @maksymmatviievskyi | `ios/`: the app, DAT capture, the hardware round trip | `ios/README.md`, `ios/HARDWARE.md` |
+
+These were the area owners during the build; all areas moved to @moterodiaz on 2026-11-15 (`AGENTS.md` §4).
 
 Bots are never accountable: Greptile and `claude-fix` never approve, and each escalation names one of the four people above.
 

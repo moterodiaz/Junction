@@ -344,7 +344,7 @@ cmd_fill() {
     count=$((count + 1))
   done <<< "$list"
   if [ "$count" -ge 3 ]; then echo "Queue ok: $count ready tasks."; return 0; fi
-  echo "Queue low ($count ready < 3). Read Junction-Prep/metalab_prd.md. Pick PRD sections no open or closed task covers (lowest layer first: L0 before L1). File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
+  echo "Queue low ($count ready < 3). Read docs/REQUIREMENTS.md. Pick requirements no open or closed task covers. File each with: gh issue create -R $REPO --label task --title \"<area>: <what>\" --body-file - (sections: Goal, PRD section, Scope (one area), Acceptance check (a command that exits 0), Depends on, Area). Then run tools/task next."
 }
 
 # Resolve the login once; me() runs in subshells, which cannot fill the cache for later calls.

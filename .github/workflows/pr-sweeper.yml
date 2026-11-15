@@ -119,7 +119,7 @@ jobs:
             [ "$ready" = "true" ] && (( ++count )) || true
           done <<<"$tasks"
           if [[ "$count" =~ ^[0-9]+$ ]] && (( count < 3 )) && ! seen "task queue low"; then
-            board "task queue low ($count ready). Run tools/task fill and file tasks from Junction-Prep/metalab_prd.md."
+            board "task queue low ($count ready). Run tools/task fill and file tasks from docs/REQUIREMENTS.md."
           fi
 
       - name: Retry stuck claude-fix

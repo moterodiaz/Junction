@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="740" viewBox="0 0 1280 740" role="img" aria-labelledby="title">
+<title id="title">MetaLab runtime: one question, one card</title>
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#334155"/></marker>
+<marker id="ahd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ea580c"/></marker>
+<style>
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#0f172a}
+.h{font-size:22px;font-weight:700}.s{font-size:13px;fill:#475569}
+.t{font-size:14px;font-weight:700}.b{font-size:12px;fill:#334155}
+.l{font-size:11.5px;fill:#1e293b;font-weight:600}.g{font-size:13px;font-weight:700;fill:#475569}
+.lg{font-size:12px;fill:#475569}
+</style>
+</defs>
+<rect x="0" y="0" width="1280" height="740" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+<text x="30" y="42" class="h">MetaLab runtime: one question, one card</text>
+<text x="30" y="64" class="s">The student asks out loud; the glasses take one photo; the backend reads, reasons, draws and speaks.</text>
+<g><rect x="30" y="110" width="190" height="110" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.6"/><text x="42" y="132" class="t">Ray-Ban Display</text><text x="42" y="149" class="b">camera, mic,</text><text x="42" y="166" class="b">lens display, speakers</text><text x="42" y="183" class="b">Meta Wearables DAT</text></g>
+<g><rect x="30" y="320" width="190" height="150" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.6"/><text x="42" y="342" class="t">iOS app (Swift)</text><text x="42" y="359" class="b">thin client, no API keys</text><text x="42" y="376" class="b">one frame + one clip</text><text x="42" y="393" class="b">per question</text><text x="42" y="410" class="b">lens layout (DAT)</text><text x="42" y="427" class="b">plays the spoken answer</text></g>
+<path d="M110 220 L110 318" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="150" y="272" class="l">Bluetooth</text>
+<path d="M140 318 L140 222" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<rect x="320" y="90" width="620" height="610" rx="14" fill="none" stroke="#4f46e5" stroke-width="1.6" stroke-dasharray="8 5"/>
+<text x="340" y="114" class="g">Modal: FastAPI orchestrator  (backend/app, one WebSocket /ws)</text>
+<path d="M220 350 L318 350" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="234" y="342" class="l">invoke</text>
+<path d="M318 440 L222 440" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/><text x="230" y="432" class="l">status, card</text>
+<g><rect x="345" y="130" width="570" height="62" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="357" y="152" class="t">1  Speech to text   (backend/stt)</text><text x="357" y="169" class="b">faster-whisper small.en on Modal CPU; a typed command skips this step</text></g>
+<g><rect x="345" y="215" width="570" height="80" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="357" y="237" class="t">2  Read the page   (backend/ai/page_reader.py)</text><text x="357" y="254" class="b">Nemotron 3.5 Super VL reads the photo, thinking off</text><text x="357" y="271" class="b">No answer in 3 s: Gemini gemini-4-hydrogen reads too, first answer wins</text></g>
+<g><rect x="345" y="318" width="570" height="62" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="357" y="340" class="t">Ground the passage   (backend/ai/source_loader.py)</text><text x="357" y="357" class="b">local Hamlet text gives act, scene, line; no match: "No source text"</text></g>
+<g><rect x="345" y="403" width="570" height="80" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="357" y="425" class="t">3  Reason   (backend/ai/reasoning.py, session.py)</text><text x="357" y="442" class="b">Gemini gemini-4-argon + per-book session memory</text><text x="357" y="459" class="b">returns title, caption, speech text and an image prompt</text></g>
+<g><rect x="345" y="506" width="275" height="100" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="357" y="528" class="t">4  Draw   (backend/ai/image.py)</text><text x="357" y="545" class="b">gemini-nano-banana-2.1</text><text x="357" y="562" class="b">bright subject on black</text><text x="357" y="579" class="b">card ships first, picture</text><text x="357" y="596" class="b">served at /img/&lt;id&gt;.png</text></g>
+<g><rect x="640" y="506" width="275" height="100" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="652" y="528" class="t">5  Speak   (backend/stt/speak.py)</text><text x="652" y="545" class="b">ElevenLabs eleven_flash_v2_5</text><text x="652" y="562" class="b">fails: Gemini TTS once</text><text x="652" y="579" class="b">both fail: phone system voice</text><text x="652" y="596" class="b">served at /audio/&lt;id&gt;.wav</text></g>
+<g><rect x="345" y="628" width="570" height="56" rx="10" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/><text x="357" y="650" class="t">Card to the phone</text><text x="357" y="667" class="b">title, caption, image_url, audio_url, book, sources, models</text></g>
+<path d="M630 192 L630 213" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M630 295 L630 316" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M630 380 L630 401" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M482 483 L482 504" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M777 483 L777 504" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M482 606 L482 626" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M777 606 L777 626" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<path d="M345 656 L290 656 L290 455 L222 455" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#ah)"/>
+<g><rect x="980" y="200" width="270" height="110" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.6"/><text x="992" y="222" class="t">NVIDIA Nemotron on Verda</text><text x="992" y="239" class="b">OpenAI-compatible API</text><text x="992" y="256" class="b">Verda (DataCrunch) container</text><text x="992" y="273" class="b">set by NVIDIA_BASE_URL</text><text x="992" y="290" class="b">in the deployed secret</text></g>
+<g><rect x="980" y="370" width="270" height="130" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.6"/><text x="992" y="392" class="t">Google Gemini API</text><text x="992" y="409" class="b">reasoning with book memory</text><text x="992" y="426" class="b">illustration</text><text x="992" y="443" class="b">fallback page reader</text><text x="992" y="460" class="b">fallback speech</text></g>
+<g><rect x="980" y="560" width="270" height="80" rx="10" fill="#fff7ed" stroke="#ea580c" stroke-width="1.6"/><text x="992" y="582" class="t">ElevenLabs API</text><text x="992" y="599" class="b">primary voice</text><text x="992" y="616" class="b">for the spoken answer</text></g>
+<path d="M915 250 L978 250" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahd)"/>
+<path d="M915 280 L945 280 L945 400 L978 400" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahd)"/>
+<path d="M915 443 L978 443" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahd)"/>
+<path d="M620 560 L630 560 L630 500 L960 500 L960 480 L978 480" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahd)"/>
+<path d="M915 560 L950 560 L950 600 L978 600" fill="none" stroke="#ea580c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ahd)"/>
+<text x="30" y="722" class="lg">Solid: request path.  Dashed orange: calls to external model APIs.  Steps 4 and 5 run in parallel.  Every card names the models that produced it.</text>
+</svg>

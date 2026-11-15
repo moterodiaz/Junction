@@ -2,7 +2,7 @@
 
 Requirement: REQ-BUILD-01. PRD §12.10. Owner: Mateo (@moterodiaz, lead).
 
-**Status: partly validated.** Since #240 the required `ci` job runs on CRACI and passes, but it silently skips the Swift tests (section 5). Before #240, no CRACI build had run. This file records what a dedicated CRACI build would have to cover: dependencies, images, test commands and runner needs, read from the repo at `315d2d3` (2026-11-14). It also records the required `ci` it would be compared against, and what blocks the run. Required `ci` stays as it is (`.github/workflows/ci.yml`, unchanged). A `craci-evaluation.yml` workflow would be a separate, lead-merged, protected-path change. It is not part of this file.
+**Status: partly validated.** Since #240 the required `ci` job runs on CRACI. Since #283 it installs Swift 6.0 and the `MetaLabCore` tests are required there (section 5). Before #240, no CRACI build had run. This file records what a dedicated CRACI build would have to cover: dependencies, images, test commands and runner needs, read from the repo at `315d2d3` (2026-11-14). It also records the required `ci` it would be compared against, and what blocks the run. Required `ci` stays as it is (`.github/workflows/ci.yml`, unchanged). A `craci-evaluation.yml` workflow would be a separate, lead-merged, protected-path change. It is not part of this file.
 
 ## 1. What CRACI is, and what we could not confirm
 
@@ -19,7 +19,7 @@ CRACI (Helsinki) makes a supply-chain compliance platform for the EU Cyber Resil
 | iOS app (`ios/MetaLab.xcodeproj`) | `meta-wearables-dat-ios` exactly 1.0.1, revision `0bd3692` (`Package.resolved`) | Exact | Xcode, Swift 6.0, iOS 17.2 target, signing | `xcodebuild … CODE_SIGNING_ALLOWED=NO build` (manual only) |
 
 Gaps a supply-chain tool would flag, recorded rather than fixed here:
-- Backend dependencies are version ranges with no lockfile, so the deployed image's versions are whatever pip picked on deploy day. `backend/app/DELIVERY_EVIDENCE.md` lists one resolved set (fastapi 0.162.7, pydantic 2.14.3, uvicorn 0.54.0, httpx 0.28.1, google-genai 3.3.0) at `03c24bd`.
+- Backend dependencies are version ranges with no lockfile, so the deployed image's versions are whatever pip picked on deploy day. One resolved set recorded at `03c24bd` was fastapi 0.162.7, pydantic 2.14.3, uvicorn 0.54.0, httpx 0.28.1, google-genai 3.3.0.
 - No SBOM is generated anywhere in the repo.
 - The Modal base image (`debian_slim`) is pulled by tag, not digest.
 - The Whisper weights (`small.en`) are downloaded at image build time and are not pinned to a revision or checksum.
@@ -41,7 +41,7 @@ Gaps a supply-chain tool would flag, recorded rather than fixed here:
 
 1. **Access:** a CRACI account or token for this repo, and its integration docs. External, through the sponsor; nothing is sent from here.
 2. **Runner:** whether CRACI runs on GitHub-hosted `ubuntu-latest` or needs its own runner, and whether it supports macOS/Xcode for the app target. A missing Swift/Xcode runtime is a blocker, not a waived check.
-3. **Workflow:** `.github/workflows/craci-evaluation.yml` is a protected path, so the lead writes and merges it, and it runs alongside `ci`, never instead of it.
+3. **Workflow:** any CRACI workflow change is in `.github/`, a protected path, so the lead writes and merges it. (In the end the lead moved `ci` itself onto CRACI; see section 5.)
 
 Each of these needs a person and credentials. None can be done by an agent.
 
@@ -62,6 +62,8 @@ The lead moved the `ci` job to `runs-on: craci` in #240 (merged `f7cbe15`), with
 **Coverage regression.** The CRACI Slim image has no Swift toolchain. `ios/test.sh` runs `swift test` only when `swift` is on the path, so on CRACI it skips the Swift tests without saying so, and `ci` stays green. That is the failure mode this task warned about: a missing Swift runtime is a blocker, not a waived check. Two ways to close the gap; both are lead decisions:
 - Install Swift on the CRACI job (a setup step or an image with Swift), or move the Swift tests back to a GitHub-hosted job. That change is in `.github/`, a protected path.
 - Make `ios/test.sh` fail when Swift is missing in CI, instead of skipping. That is `ios/`, @maksymmatviievskyi's area.
+
+**Closed by #283.** `ci.yml` now installs Swift 6.0 on the CRACI runner, and `ios/test.sh` fails in CI when `swift` is missing, so the `MetaLabCore` tests are required again.
 
 The iOS app target with the DAT SDK still needs macOS and Xcode, and runs on neither runner.
 ## Reproduce

@@ -13,8 +13,8 @@ Every agent-written PR names a requirement id and a human owner (the CODEOWNERS 
 | Piece | What it does |
 |---|---|
 | `tools/metrics --gate <PR>` | Works out the PR's areas from its files, the open escapes per area, and who approved the **head commit**. Exit 0 passes; exit 3 holds, naming the escape and who must approve. |
-| `.github/workflows/trust.yml` (#190, by the lead: agent tokens cannot push workflows) | Posts the commit status `trust` on the PR's head when the PR changes, a review is submitted or dismissed, an escape issue changes, and every 30 minutes as a backstop. A `gh` failure posts `error`, so the PR stays held. |
-| main-protect ruleset | Lists `trust` as a required check, pinned to the GitHub Actions app (integration 15368), next to `ci` and `Greptile Review`. GitHub itself refuses the merge, auto-merge from `claude-fix` included, and a status posted by hand does not count. Added by the lead on 2026-11-14. |
+| `.github/workflows/trust.yml` (#190, by the lead: agent tokens cannot push workflows) | Posts the commit status `trust` on the PR's head when the PR changes, a review is submitted or dismissed, an escape issue changes, and hourly as a backstop. **Disabled since 2026-11-14** because of GitHub API rate limits (note at the top of `trust.yml`). A `gh` failure posts `error`, so the PR stays held. |
+| main-protect ruleset | Lists `trust` as a required check, pinned to the GitHub Actions app (integration 15368), next to `ci` and `Greptile Review`. GitHub itself refuses the merge, auto-merge from `claude-fix` included, and a status posted by hand does not count. Added by the lead on 2026-11-14, then removed again with the workflow; the ruleset now requires `ci` and `Greptile Review`, and `tools/metrics --gate` runs only in `ci` self-tests. |
 
 Choices, with the reason for each:
 - **Approval of the head commit only.** An approval does not cover code pushed after it.

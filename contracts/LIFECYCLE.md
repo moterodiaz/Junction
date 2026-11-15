@@ -2,7 +2,7 @@
 
 Issue [#128](https://github.com/moterodiaz/Junction/issues/128), REQ-WS-04 and
 REQ-PRIV-03; PRD §§6–7, §12.2. **Contract proposal, not a shipped capability.**
-Ahmed owns backend implementation; Maksym owns iOS implementation and verification.
+Backend and iOS implementation are owned by @moterodiaz (`AGENTS.md` §4).
 Compatibility review is requested on the
 [board proposal](https://github.com/moterodiaz/Junction/issues/1#issuecomment-6880594172).
 Do not infer owner agreement from passing tests or silence.

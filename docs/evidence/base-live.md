@@ -86,7 +86,7 @@ Inputs lived only in `/tmp` outside Git. No response text, transcript or media i
 |---|---|
 | Endpoint | `wss://junction26-vision--metalab-web.us-east.modal.run/ws` (`/health`: HTTP 200 `{"ok":true}` in 7.0 s) |
 | Test-client revision | `ae485be` (origin/main), `contracts/test.sh` from a worktree on macOS (darwin 25.5.0) |
-| Deployment revision | Not exposed by the endpoint. Per `backend/app/DELIVERY_EVIDENCE.md` the live build predates #107 and #171–#174, so a redeploy is still needed |
+| Deployment revision | Not exposed by the endpoint. At the time the live build predated #107 and #171–#174 (later redeploys: v5 onwards, below) |
 | Page input | `backend/ai/sample_frames/hamlet_act1_scene2.jpg` (repo sample, 720×1280, Hamlet Act 1 Scene 2, "O, that this too too solid flesh would melt") |
 | Spoken input | "Explain this page." synthesized with macOS `say` to 16 kHz 16-bit WAV (37 KB). No human voice |
 | Expected grounding (independent) | Book `Hamlet` / `William Shakespeare` / `Act 1, Scene 2`, from the sample's known passage. Source `Hamlet, public-domain text` / `https://www.gutenberg.org/ebooks/1524` (the Project Gutenberg text in `backend/ai/data/plays/hamlet.json`) |

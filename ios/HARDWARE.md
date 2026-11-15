@@ -1,6 +1,6 @@
 # Open questions 1–5
 
-PRD section 10. These stay unanswered until a paired Ray-Ban Display is in the room. Do not copy a guess into the PRD. The client is already shaped so each answer has a place to land. Answers, once we have them, go in a small follow-up PR.
+Hardware questions from planning. These stay unanswered until they are checked on a paired Ray-Ban Display. Do not record a guess as an answer. The client is already shaped so each answer has a place to land. Answers, once we have them, go in a small follow-up PR.
 
 1. **Capture and display in one flow.** The client stops the camera before `Display.send`. That is plan A. Plan B is the "Show the lens" switch: off, the answer is spoken and the card stays on the phone.
 2. **Stream frame versus `capturePhoto()`.** Default is one stream frame at 720×1280 and 2 fps, then the stream stops. "High-quality photo fallback" uses standalone photo capture. It stays off until a real page says the stream frame cannot be read.
