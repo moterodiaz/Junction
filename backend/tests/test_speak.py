@@ -198,6 +198,50 @@ class SpeakTest(SpeakBase):
             generate_content=generate_content, list=list_models)))
         return client, calls
 
+    def test_an_interactions_404_carrying_only_status_code_still_falls_back(self):
+        """The Interactions client's NotFoundError has .status_code and nothing else (live v7)."""
+        models = ["gemini-3.1-flash-tts"]
+        calls = []
+
+        class NotFound(Exception):
+            status_code = 404
+
+        async def create(model, input, response_format, generation_config):
+            calls.append(model)
+            if model == "gemini-3.8-flash-tts":
+                raise NotFound("Model 'gemini-3.8-flash-tts' not found")
+            return SimpleNamespace(output_audio=SimpleNamespace(data="AQA=", sample_rate=None))
+
+        async def listing():
+            for name in models:
+                yield SimpleNamespace(name="models/" + name)
+
+        async def list_models():
+            return listing()
+
+        client = speak.GeminiSpeechClient("KEY", "gemini-3.8-flash-tts")
+        client._genai = SimpleNamespace(aio=SimpleNamespace(
+            interactions=SimpleNamespace(create=create), models=SimpleNamespace(list=list_models)))
+        pcm, rate = asyncio.run(client.synthesize("hello"))
+        self.assertEqual(pcm, b"\x01\x00")
+        self.assertEqual(calls, ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts"])
+        self.assertEqual(client.model, "gemini-3.1-flash-tts")
+
+    def test_a_status_code_404_is_logged_with_its_code_and_lists_models(self):
+        class NotFound(Exception):
+            status_code = 404
+
+        class Lister(StubSpeech):
+            async def list_tts_models(self):
+                return ["gemini-3.1-flash-tts"]
+        speak._listed_models = False
+        speak.set_speech_client(Lister(error=NotFound("Model 'x' not found")))
+        with self.assertLogs("metalab.speak", level="INFO") as captured:
+            asyncio.run(speak.speak("hello", "s1"))
+        out = " ".join(captured.output)
+        self.assertIn("code=404", out)
+        self.assertIn("TTS models available to this key: gemini-3.1-flash-tts", out)
+
     def test_a_missing_model_falls_back_to_the_best_tts_model_and_retries_once(self):
         fake, calls = self.fake_genai(
             ["gemini-2.5-pro-preview-tts", "gemini-2.5-flash-preview-tts", "gemini-2.0-flash", "gemini-3.1-flash-tts"],
