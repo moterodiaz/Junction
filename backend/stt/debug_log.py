@@ -112,6 +112,9 @@ def _maybe_commit(force: bool = False) -> None:
             _log.debug("stt debug log commit skipped: %s", type(exc).__name__)
             if not force:
                 _schedule(COMMIT_INTERVAL_S)
+        else:
+            if _dirty and not force:  # a line landed while the hook ran; its own schedule may
+                _schedule(COMMIT_INTERVAL_S)  # have been skipped as this timer was alive
     finally:
         _commit_lock.release()
 
