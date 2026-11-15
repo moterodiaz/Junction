@@ -93,7 +93,8 @@ def _maybe_commit(force: bool = False) -> None:
     # A commit uploads the volume's changes, so run at most one at a time and at most every
     # COMMIT_INTERVAL_S; the shutdown commit catches whatever the throttle held back.
     if not _commit_lock.acquire(blocking=force):
-        _schedule(COMMIT_INTERVAL_S)  # the in-flight commit may predate this caller's lines
+        # The in-flight commit may predate this caller's lines, and may itself be the timer.
+        _schedule(COMMIT_INTERVAL_S, replace=True)
         return
     try:
         now = time.monotonic()
@@ -122,10 +123,13 @@ def _maybe_commit(force: bool = False) -> None:
 _timer: threading.Timer | None = None
 
 
-def _schedule(delay: float) -> None:
+def _schedule(delay: float, replace: bool = False) -> None:
     global _timer
-    if _timer is not None and _timer.is_alive() and _timer is not threading.current_thread():
-        return
+    old = _timer
+    if old is not None and old.is_alive() and old is not threading.current_thread():
+        if not replace:
+            return
+        old.cancel()  # no-op once it is running its commit; then the new timer follows it
     _timer = threading.Timer(delay, _maybe_commit)
     _timer.daemon = True
     _timer.start()
