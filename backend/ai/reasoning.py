@@ -50,8 +50,8 @@ def ground_passage(
     if not page_text or not page_text.strip():
         return None
     # ponytail: word-count guard prevents single common words like "He." from matching
-    from .source_loader import list_plays, load_play, normalize_text as _norm
-    if len(_norm(page_text).split()) < min_words:
+    from .source_loader import list_plays, load_play, normalize_text as _norm, strip_ocr_artefacts
+    if len(_norm(strip_ocr_artefacts(page_text)).split()) < min_words:
         return None
 
     target_play: Optional[str] = None

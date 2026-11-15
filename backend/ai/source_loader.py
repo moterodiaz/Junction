@@ -61,7 +61,8 @@ def strip_ocr_artefacts(text: str) -> str:
     # 2. Unbracketed stage directions like Enter Hamlet, Exit, Exeunt at start of line
     cleaned = re.sub(r"(?im)^\s*(?:enter|exit|exeunt|re-enter)\b[^\n]*$", " ", cleaned)
     # 3. All-caps speaker prefixes like HAMLET., SPEAKER., KING., FIRST CLOWN.
-    cleaned = re.sub(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,})*\s*[\.:]\s*", " ", cleaned)
+    # ponytail: cap at 3 words + start-of-line so multi-word uppercase dialogue (e.g. "WORDS WITHOUT THOUGHTS NEVER TO HEAVEN GO.") is not stripped
+    cleaned = re.sub(r"(?m)^\s*[A-Z]{2,}(?:\s+[A-Z]{2,}){0,2}\s*[\.:]\s*", " ", cleaned)
     # 4. Speaker prefixes with colon (e.g. Hamlet:) or Speaker.
     cleaned = re.sub(r"\b(?:[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*\s*:|Speaker\s*[\.:])\s*", " ", cleaned)
     # 5. Bare line numbers / margin numbers
