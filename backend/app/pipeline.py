@@ -105,6 +105,9 @@ def _transcribe_and_record(clip: bytes, mime: str | None, session_id: str | None
         )
 
 UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this."
+# Whisper over a Bluetooth headset mic often hears the question but not the command word, and
+# failing those requests felt random to students (#260), so anything heard counts as explain.
+DEFAULT_COMMAND: stt.Command = "explain"
 
 
 async def transcribe(audio: Media, session_id: str | None = None) -> str:
@@ -133,10 +136,11 @@ async def transcribe(audio: Media, session_id: str | None = None) -> str:
 
 
 def command_from(utterance: str) -> stt.Command:
-    command = stt.match_command(utterance)
-    if command is None:
+    """The L0 command heard; explain when no command word was heard. Only an empty transcript
+    fails (stt_failed), because then nothing was heard at all."""
+    if not utterance or not utterance.strip():
         raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
-    return command
+    return stt.match_command(utterance) or DEFAULT_COMMAND
 
 
 async def timed(stage: Awaitable[T]) -> T:
@@ -238,17 +242,66 @@ async def draw(
     image_prompt: str,
     session_id: str,
     style_preset: Optional[str] = None,
+    image_id: Optional[str] = None,
 ) -> str | None:
     # Offline/test path: preserve deterministic contract fixtures without an API key.
     if not os.environ.get("GEMINI_API_KEY", "").strip():
+        if image_id:
+            image.release(image_id)
         return None
+    kwargs: dict[str, Any] = {"session_id": session_id}
+    if style_preset is not None:
+        kwargs["style_preset"] = style_preset
+    if image_id is not None:
+        kwargs["image_id"] = image_id
     try:
-        if style_preset is not None:
-            return await image.draw(image_prompt, session_id=session_id, style_preset=style_preset)
-        return await image.draw(image_prompt, session_id=session_id)
+        return await image.draw(image_prompt, **kwargs)
     except Exception as exc:
         log.warning("Image generation unavailable: %s", type(exc).__name__)
+        if image_id:
+            image.release(image_id)
         return None
+
+
+# Pictures still drawing for cards already sent. They outlive run(), and asyncio keeps only
+# weak references to tasks, so hold them here until done; end_session cancels them.
+_PENDING_DRAWS: dict[str, set[asyncio.Task]] = {}
+_MAX_PENDING_DRAWS = 2  # per session; beyond this a card waits for its picture as before
+
+
+def _reserve_image(session_id: str) -> tuple[str, str] | None:
+    """Reserve an image id and its URL so the card can ship before the picture (REQ-IMG-01).
+    None when no picture can be made here (no key, no public URL, or a draw that cannot take
+    the id): the card must not carry a link that can only 404."""
+    if not os.environ.get("GEMINI_API_KEY", "").strip() or not _accepts_param(draw, "image_id"):
+        return None
+    try:
+        base_url = image._resolve_base_url()
+    except Exception:
+        return None
+    image_id = image.reserve(session_id)
+    return image_id, f"{base_url}/img/{image_id}.png"
+
+
+def _hold_draw(session_id: str, task: asyncio.Task, image_id: str) -> None:
+    tasks = _PENDING_DRAWS.setdefault(session_id, set())
+    tasks.add(task)
+
+    def _done(finished: asyncio.Task) -> None:
+        tasks.discard(finished)
+        if not tasks and _PENDING_DRAWS.get(session_id) is tasks:
+            _PENDING_DRAWS.pop(session_id, None)
+        if finished.cancelled():
+            image.release(image_id)
+            return
+        exc = finished.exception()
+        if exc is not None:
+            log.warning("Image generation failed after the card: %s", type(exc).__name__)
+        if exc is not None or finished.result() is None:
+            # The phone already has the URL: release it so its fetch gets a fast 404.
+            image.release(image_id)
+
+    task.add_done_callback(_done)
 
 
 def _image_model() -> str:
@@ -311,6 +364,8 @@ def end_session(session_id: str) -> None:
     import ai.image as image_module
     import stt.speak as speak_module
 
+    for task in list(_PENDING_DRAWS.pop(session_id, ())):
+        task.cancel()
     default_session_store.delete(session_id)
     speak_module.cleanup_session(session_id)
     image_module.cleanup_session(session_id)
@@ -493,6 +548,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     else:
         await send_stage("transcribing")
         utterance = await timed(transcribe(invoke.audio, session_id=invoke.session_id))
+        latency.note_stt_words(len(utterance.split()))
 
     if not dynamic_routing:
         command = command_from(utterance)
@@ -521,8 +577,10 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     clarify = False
     if dynamic_routing:
         decision = await timed(ai.decision.decide(utterance, page_text, session, passage_score=passage_score))
-        if decision.fallback_used and (stt.match_command(utterance) is None):
-            raise PipelineError("stt_failed", UNKNOWN_COMMAND, True)
+        if decision.fallback_used:
+            # Only an empty utterance fails. Otherwise fallback_decide's natural-intent keywords
+            # (backend/ai/decision.py) pick the action; the L0 default applies outside this mode.
+            command_from(utterance)
 
         if (
             not decision.fallback_used
@@ -602,11 +660,14 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             return None
 
     # A slow image costs only the picture: the card still ships with text and speech (PRD section 9).
-    async def _draw(style_preset: Optional[str] = None) -> str | None:
+    async def _draw(style_preset: Optional[str] = None, image_id: Optional[str] = None) -> str | None:
+        kwargs: dict[str, Any] = {}
+        if style_preset is not None and _draw_accepts_style_preset(draw):
+            kwargs["style_preset"] = style_preset
+        if image_id is not None:
+            kwargs["image_id"] = image_id
         try:
-            if style_preset is not None and _draw_accepts_style_preset(draw):
-                return await timed(draw(answer["image_prompt"], invoke.session_id, style_preset=style_preset))
-            return await timed(draw(answer["image_prompt"], invoke.session_id))
+            return await timed(draw(answer["image_prompt"], invoke.session_id, **kwargs))
         except PipelineError as exc:
             if exc.code != "model_timeout":
                 raise
@@ -614,14 +675,30 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             return None
 
     speaking = asyncio.create_task(_speak())
+    drawing: asyncio.Task | None = None
     try:
         skip_draw = clarify or (decision is not None and (decision.speak_only or not decision.needs_image))
-        if skip_draw:
-            image_url = None
-        else:
+        image_url = None
+        if not skip_draw:
             style_preset = getattr(decision, "style_preset", None) if decision is not None else None
-            image_url = await _draw(style_preset)
+            # At the cap, draw inline under the session lock so repeated requests cannot pile
+            # up paid background draws.
+            at_cap = len(_PENDING_DRAWS.get(invoke.session_id, ())) >= _MAX_PENDING_DRAWS
+            reserved = None if at_cap else _reserve_image(invoke.session_id)
+            if reserved is None:
+                image_url = await _draw(style_preset)
+            else:
+                # The card waits only for speech; the lens loads the picture from the reserved
+                # URL, which the image route holds open until the draw lands (REQ-LAT-02).
+                image_id, reserved_url = reserved
+                drawing = asyncio.create_task(_draw(style_preset, image_id))
+                _hold_draw(invoke.session_id, drawing, image_id)
         audio_url = await speaking
+        if drawing is not None:
+            if not drawing.done():
+                image_url = reserved_url
+            elif not drawing.cancelled() and drawing.exception() is None:
+                image_url = drawing.result()
         if clarify:
             session.awaiting_book_clarification = True
         models = {"read": _read_model, "reason": _reason_model,
@@ -667,7 +744,10 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
     except BaseException:
         # No card, so the clip would never reach the phone: stop it, or delete it if it is
         # already stored (#109). Covers a draw failure, the request timeout or a hang-up while
-        # waiting for speech, and a card that fails to build.
+        # waiting for speech, and a card that fails to build. A picture for that card is stopped
+        # too, which releases its reserved id.
+        if drawing is not None:
+            drawing.cancel()
         speaking.cancel()
         if speaking.done() and not speaking.cancelled() and speaking.exception() is None:
             clip = speaking.result()

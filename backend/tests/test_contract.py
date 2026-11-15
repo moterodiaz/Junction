@@ -85,7 +85,7 @@ class RepliesMatchSchemaTest(unittest.TestCase):
         cases = {
             "not json": "nope",
             "invalid invoke": invoke(text=None),
-            "unknown command": invoke(text="sing"),
+            "nothing heard": invoke(text="   "),  # #260: a command-less utterance is explained
         }
         for name, message in cases.items():
             with self.subTest(name):

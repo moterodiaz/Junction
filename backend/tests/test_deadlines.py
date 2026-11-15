@@ -55,5 +55,39 @@ class RequestBudgetTest(unittest.TestCase):
         self.assertEqual((reply["type"], reply["code"], reply["retryable"]), ("error", "model_timeout", True))
 
 
+class EarlyCardBudgetTest(unittest.TestCase):
+    """#261: the card waits only for speech, so a picture slower than the whole request budget
+    no longer turns the reply into model_timeout; the lens loads it from the reserved URL."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "dummy",
+                                               "IMAGE_BASE_URL": "https://example.com"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_picture_slower_than_the_request_budget_still_gets_the_card(self):
+        async def think(*args, **kwargs):
+            return {"title": "t", "caption": "c", "speech_text": "s", "image_prompt": "p",
+                    "book": {"title": "b", "author": "a", "location": "l"}}
+
+        async def slow_draw(image_prompt, session_id, image_id=None, **kwargs):
+            await asyncio.sleep(2)
+            return None
+
+        with mock.patch.object(pipeline, "STAGE_TIMEOUT_S", 5.0), \
+                mock.patch.object(pipeline, "REQUEST_TIMEOUT_S", 0.5), \
+                mock.patch.object(pipeline, "_is_dynamic_routing_active", return_value=False), \
+                mock.patch.object(pipeline, "think", think), \
+                mock.patch.object(pipeline, "speak", mock.AsyncMock(return_value=None)), \
+                mock.patch.object(pipeline, "draw", slow_draw):
+            with TestClient(app).websocket_connect("/ws") as ws:
+                ws.send_json({"type": "invoke", "request_id": "r2", "session_id": "s2",
+                              "frame": FRAME, "audio": None, "text": "draw this"})
+                while (reply := ws.receive_json())["type"] == "status":
+                    pass
+        self.assertEqual(reply["type"], "card", reply)
+        self.assertRegex(reply["image_url"], r"^https://example\.com/img/[0-9a-f]{16}\.png$")
+
+
 if __name__ == "__main__":
     unittest.main()

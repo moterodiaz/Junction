@@ -61,7 +61,9 @@ stt_logs = modal.Volume.from_name("metalab-stt-logs", create_if_missing=True)
     cpu=2.0,  # Whisper small.en takes ~4 s per clip on one full core
     memory=2048,
     scaledown_window=300,  # stay warm for 5 min after a request
-    min_containers=1 if DEMO_ON else 0,  # a demo must not wait for a cold start (44 s measured)
+    # Read when deploying: MODAL_MIN_CONTAINERS=1 keeps one container warm (and billed).
+    # DEMO_CANNED=on does the same, so a canned demo does not wait for a cold start (44 s measured).
+    min_containers=max(1 if DEMO_ON else 0, int(os.environ.get("MODAL_MIN_CONTAINERS", "0"))),
     timeout=600,
     volumes={STT_LOG_DIR: stt_logs},
 )

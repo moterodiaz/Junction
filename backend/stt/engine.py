@@ -22,6 +22,8 @@ Engine = Callable[[bytes], str]
 DEFAULT_ENGINE = "whisper"
 WHISPER_MODEL = "small.en"
 GEMINI_MODEL = "gemini-3.5-transcribe"
+# Biases Whisper toward the L0 command words, which a short headset clip often loses (#260).
+WHISPER_COMMAND_PROMPT = "Explain this. Draw this. Who is this?"
 
 SHAKESPEARE_VOCABULARY_PROMPT = (
     "Transcribe the spoken audio accurately and verbatim. "
@@ -137,7 +139,8 @@ def _faster_whisper() -> Engine:
 
     def run(audio: bytes) -> str:
         _set_run_info("whisper", WHISPER_MODEL)
-        segments, _ = model.transcribe(io.BytesIO(audio), language="en", beam_size=1)
+        segments, _ = model.transcribe(io.BytesIO(audio), language="en", beam_size=1,
+                                        initial_prompt=WHISPER_COMMAND_PROMPT)
         return " ".join(s.text.strip() for s in segments)
 
     return run
