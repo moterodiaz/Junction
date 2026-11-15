@@ -7,6 +7,7 @@ Not imported by tests: `modal` is not in backend/requirements.txt.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -51,7 +52,9 @@ stt_logs = modal.Volume.from_name("metalab-stt-logs", create_if_missing=True)
     max_containers=1,
     cpu=2.0,  # Whisper small.en takes ~4 s per clip on one full core
     memory=2048,
-    scaledown_window=300,  # stay warm for 5 min after a request; set min_containers=1 for the demo
+    scaledown_window=300,  # stay warm for 5 min after a request
+    # Read when deploying: MODAL_MIN_CONTAINERS=1 keeps one container warm (and billed) for the demo.
+    min_containers=int(os.environ.get("MODAL_MIN_CONTAINERS", "0")),
     timeout=600,
     volumes={STT_LOG_DIR: stt_logs},
 )

@@ -33,7 +33,9 @@ It prints a URL like `https://<workspace>--metalab-web.modal.run`. Then:
 - Health check: `curl https://<workspace>--metalab-web.modal.run/health` returns `{"ok":true}`
 - Add `IMAGE_BASE_URL=https://<workspace>--metalab-web.modal.run` to the `metalab` secret, then deploy again. Generated images and spoken answers are both served from it; without it `image_url` and `audio_url` stay null.
 
-`backend/.env` is never uploaded; keys come only from the Modal secret. A missing required key stops the container when it starts (check `modal app logs metalab`), not `modal deploy` itself. The Whisper weights are baked into the image at build time, so the first deploy takes a few minutes longer. For the demo, set `min_containers=1` in `modal_app.py` so the first request does not wait for a cold start (this keeps one container running and billed).
+`backend/.env` is never uploaded; keys come only from the Modal secret. A missing required key stops the container when it starts (check `modal app logs metalab`), not `modal deploy` itself. The Whisper weights are baked into the image at build time, so the first deploy takes a few minutes longer. For demo day, deploy with `MODAL_MIN_CONTAINERS=1 modal deploy backend/app/modal_app.py` so the first request does not wait for a cold start (this keeps one container running and billed; a plain deploy sets it back to 0).
+
+The card does not wait for the picture (`REQ-IMG-01`, `REQ-LAT-02`): it ships as soon as the spoken answer is ready, with `image_url` pointing at a reserved image. `GET /img/<id>.png` holds the request open until the picture is drawn (up to `IMAGE_WAIT_S`, default 25 s), and answers 404 at once if the draw failed.
 
 ### STT debug log for glasses test runs (`REQ-OBS-02`)
 
