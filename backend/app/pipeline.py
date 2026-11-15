@@ -728,7 +728,8 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
             tts_model = getattr(_speech_client, "model", None)
             if tts_model:
                 _configured = getattr(_speech_client, "_configured_model", tts_model)
-                _safe_record("tts", tts_model, fallback=bool(tts_model != _configured))
+                _safe_record("tts", tts_model, fallback=bool(tts_model != _configured
+                                                             or stt.speak.served_by_fallback(audio_url)))
             else:
                 try:
                     from .config import get_settings

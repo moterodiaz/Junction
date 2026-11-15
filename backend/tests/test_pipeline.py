@@ -1330,6 +1330,52 @@ class PipelineModelDistributionTelemetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dist["stages"]["tts"].get("stub"), 1)
         self.assertEqual(dist["fallback_by_stage"]["tts"], 1)
 
+    async def _run_with_real_speech(self, elevenlabs_status):
+        """Real stt.speak with an ElevenLabs client (MockTransport) and a stub Gemini fallback."""
+        import httpx
+        import stt.speak as speak_module
+        from stt.elevenlabs import ElevenLabsSpeechClient
+
+        def answer(request):
+            if elevenlabs_status != 200:
+                return httpx.Response(elevenlabs_status, json={"detail": {"status": "invalid_api_key"}})
+            return httpx.Response(200, content=b"\x01\x00" * 2400)
+
+        class Gemini(speak_module.GeminiSpeechClient):
+            async def synthesize(self, text):
+                return b"\x01\x00" * 2400, 24000
+
+        eleven = ElevenLabsSpeechClient("EL-KEY", "voice-1", "eleven_flash_v2_5",
+                                        transport=httpx.MockTransport(answer))
+        gemini = Gemini("GEMINI-KEY", "gemini-3.8-flash-tts")
+        set_decision_client(StubDecisionClient(default_result=DecisionResult(
+            action="explain", task_tier="fast", recommended_model="gemini-3.5-flash-lite",
+            needs_image=False, speak_only=True, confidence=0.95, fallback_used=False,
+            raw_utterance="explain this briefly")))
+        speak_module.set_speech_client(None)
+        self.addCleanup(speak_module.clear)
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "dummy", "DYNAMIC_MODEL_ROUTING": "true",
+                                          "IMAGE_BASE_URL": "https://metalab.example"}), \
+             mock.patch.object(speak_module, "_elevenlabs", eleven), \
+             mock.patch.object(speak_module, "_elevenlabs_client", lambda: eleven), \
+             mock.patch.object(speak_module, "_gemini_client", lambda: gemini), \
+             mock.patch.object(pipeline, "read_page", new_callable=mock.AsyncMock, return_value="To be, or not to be"):
+            card = await pipeline.run(self._invoke, _noop_send_stage)
+        self.assertIsNotNone(card.audio_url)
+        return latency.get_model_distribution()
+
+    async def test_tts_fallback_recorded_when_elevenlabs_fails_and_gemini_serves(self):
+        """#252 REQ-LAT-01: Gemini serving after an ElevenLabs failure counts as a TTS fallback."""
+        dist = await self._run_with_real_speech(elevenlabs_status=401)
+        self.assertEqual(dist["stages"]["tts"].get("gemini-3.8-flash-tts"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["tts"], 1)
+
+    async def test_tts_no_fallback_when_elevenlabs_serves(self):
+        """#252 REQ-LAT-01: the configured ElevenLabs voice serving is not a fallback."""
+        dist = await self._run_with_real_speech(elevenlabs_status=200)
+        self.assertEqual(dist["stages"]["tts"].get("eleven_flash_v2_5"), 1)
+        self.assertEqual(dist["fallback_by_stage"]["tts"], 0)
+
     async def test_model_distribution_fallback_tracking_when_decision_fallback_used(self):
         """#198: Fallback recorded for decision stage when decision.fallback_used is True."""
         dec_result = DecisionResult(

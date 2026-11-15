@@ -50,6 +50,7 @@ _client: Any = None
 _gemini: Optional["GeminiSpeechClient"] = None
 _elevenlabs: Optional[ElevenLabsSpeechClient] = None
 _served_by: OrderedDict[str, Any] = OrderedDict()  # clip id -> client that made it, for model attribution
+_fallback_clips: set[str] = set()  # clip ids made by the fallback client, a subset of _served_by
 
 
 def is_not_found(exc: BaseException) -> bool:
@@ -131,6 +132,7 @@ def set_speech_client(client: Any) -> None:
     global _client
     _client = client
     _served_by.clear()
+    _fallback_clips.clear()
 
 
 def _expire() -> None:
@@ -280,13 +282,18 @@ def provider_name(client: Any) -> str:
     return "custom"
 
 
+def is_fallback(first: Any, served: Any) -> bool:
+    """True when the clip came from a client other than the one tried first."""
+    return served is not first
+
+
 def log_speech_ready(first: Any, served: Any, synth_s: float, pcm: bytes, rate: int, wav_bytes: int) -> None:
     """One line per stored clip naming the voice that spoke, so a live test can tell the
     ElevenLabs voice from the Gemini fallback. Never the answer text or the key."""
     model = getattr(served, "model", None) or "unknown"
     audio_s = len(pcm) / (2 * rate) if rate else 0.0
     log.info("speech ready: provider=%s model=%s fallback=%s synth_s=%.1f audio_s=%.1f bytes=%d",
-             provider_name(served), model, "true" if served is not first else "false",
+             provider_name(served), model, "true" if is_fallback(first, served) else "false",
              synth_s, audio_s, wav_bytes)
 
 
@@ -341,8 +348,10 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     clip_id = store(wav, session_id)
     log_speech_ready(client, attempt["client"], synth_s, pcm, rate, len(wav))
     _served_by[clip_id] = attempt["client"]  # tied to this clip, not to the latest request
+    if is_fallback(client, attempt["client"]):
+        _fallback_clips.add(clip_id)
     while len(_served_by) > MAX_CLIPS:
-        _served_by.popitem(last=False)
+        _fallback_clips.discard(_served_by.popitem(last=False)[0])
     return f"{base}/audio/{clip_id}.wav"
 
 
@@ -352,6 +361,14 @@ def client_for(audio_url: Optional[str]) -> Optional[Any]:
         return _client
     clip_id = audio_url.rsplit("/", 1)[-1].removesuffix(".wav") if audio_url else ""
     return _served_by.get(clip_id) or active_speech_client()
+
+
+def served_by_fallback(audio_url: Optional[str]) -> bool:
+    """True if the clip behind audio_url came from the fallback voice (Gemini after an
+    ElevenLabs failure); the same fact the "speech ready" log line reports."""
+    if _client or not audio_url:
+        return False
+    return audio_url.rsplit("/", 1)[-1].removesuffix(".wav") in _fallback_clips
 
 
 async def _synthesize(client: Any, text: str, attempt: dict) -> Any:
