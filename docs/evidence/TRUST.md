@@ -105,6 +105,8 @@ Model attribution limit: `models.reason` is the requested model name, not one th
 | @Marcus228 | `backend/ai/`: page reading, source text, reasoning, images | `docs/evidence/HOST.md`, `backend/tests/` |
 | @maksymmatviievskyi | `ios/`: the app, DAT capture, the hardware round trip | `ios/README.md`, `ios/HARDWARE.md` |
 
+These were the area owners during the build; all areas moved to @moterodiaz on 2026-11-15 (`AGENTS.md` §4).
+
 Bots are never accountable: Greptile and `claude-fix` never approve, and each escalation names one of the four people above.
 
 ## 6. Limits

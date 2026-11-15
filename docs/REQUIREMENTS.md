@@ -4,7 +4,7 @@ Every task issue and every PR names at least one requirement id from this table 
 
 To add a requirement, add a row in the same PR as the task that needs it. Use the next free number in its group.
 
-Module additions below preserve the 19 IDs introduced by #117/#122. New acceptance scenarios/evaluators are work to implement, not available checks or claimed passes. “Specified only” is not delivered or challenge-ready. Existing checks may use stubs/proxies; real model, Swift/Xcode and hardware evidence remains separate. The DeepMind priority lane (#185, #194–#199, Order 1–7) is owned end-to-end by @Marcus228 under lead approval (cross-area takeover across backend/ai, backend/app, backend/stt, and docs).
+Module additions below preserve the 19 IDs introduced by #117/#122. New acceptance scenarios/evaluators are work to implement, not available checks or claimed passes. “Specified only” is not delivered or challenge-ready. Existing checks may use stubs/proxies; real model, Swift/Xcode and hardware evidence remains separate. The DeepMind priority lane (#185, #194–#199, Order 1–7) was owned end-to-end by @Marcus228 under lead approval during the build; all areas moved to @moterodiaz on 2026-11-15 (AGENTS.md §4).
 
 | ID | PRD | Requirement | Acceptance check | Delivered by |
 |---|---|---|---|---|
