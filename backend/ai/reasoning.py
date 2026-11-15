@@ -27,7 +27,7 @@ import urllib.error
 import urllib.request
 
 from .session import BookInfo, BookSession, SessionStore, default_session_store
-from .source_loader import PassageMatch, find_passage
+from .source_loader import PassageMatch, context_window, find_passage, get_scene_notes, normalize_text
 
 log = logging.getLogger("metalab.reasoning")
 
@@ -208,6 +208,51 @@ def is_spoiler_guard_enabled(spoiler_guard: bool = False) -> bool:
     return os.environ.get("DECISION_ENABLE_SPOILER_CHECK", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _format_lines(lines: List[Any]) -> str:
+    return "\n".join(
+        f"  {l.line} {l.speaker + ': ' if l.speaker else ''}{l.text}" for l in lines
+    ) or "  (none in this scene)"
+
+
+def build_scene_notes_block(passage_match: Optional[PassageMatch], page_text: str) -> str:
+    """Authoritative scene notes for a matched passage, or "" when there is no match or no notes."""
+    if passage_match is None:
+        return ""
+    try:
+        notes = get_scene_notes(passage_match)
+        if not notes:
+            return ""
+        window = context_window(passage_match, before=6, after=6)
+        page_norm = f" {normalize_text(page_text or passage_match.text)} "
+        glossary = [
+            g for g in notes.get("glossary", [])
+            if isinstance(g, dict) and g.get("term") and f" {normalize_text(g['term'])} " in page_norm
+        ]
+        parts = [
+            "\nAuthoritative Scene Notes (from the verified source text and study notes in the repository):",
+            f"- Scene: Act {passage_match.act}, Scene {passage_match.scene}",
+            f"- Summary: {str(notes.get('summary') or '').strip()}",
+        ]
+        if notes.get("characters_on_stage"):
+            parts.append(f"- Characters on stage: {', '.join(str(c) for c in notes['characters_on_stage'])}")
+        if window is not None:
+            parts.append("- Canonical lines before the matched passage:\n" + _format_lines(window.before))
+            parts.append("- Canonical lines after the matched passage:\n" + _format_lines(window.after))
+        if glossary:
+            parts.append(
+                "- Glossary for words on this page:\n"
+                + "\n".join(f"  {g['term']}: {g.get('gloss', '')}" for g in glossary)
+            )
+        parts.append(
+            "Use these scene notes, canonical lines and glossary as the authoritative account of this scene. "
+            "Do NOT recall the play from memory; if they do not cover the question, say so briefly rather than guess.\n"
+        )
+        return "\n".join(parts)
+    except Exception as exc:
+        log.warning("scene notes unavailable: %s", type(exc).__name__)
+        return ""
+
+
 class ReasoningError(RuntimeError):
     """Raised when book reasoning fails."""
 
@@ -266,6 +311,7 @@ class HttpGeminiClient:
                 f"- Matched Text: \"\"\"{passage_match.text}\"\"\"\n"
                 f"You MUST use this exact title, location ('{passage_match.location}'), and source citation.\n"
             )
+            grounding_info += build_scene_notes_block(passage_match, page_text)
         elif is_session_default_book(session) and not page_looks_like_book(page_text, session.book, command=command, passage_match=passage_match):
             grounding_info = (
                 f"\nNo verified local source passage matched this page text, and the page text does NOT "
