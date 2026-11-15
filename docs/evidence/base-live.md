@@ -2,14 +2,25 @@
 
 Requirements: REQ-INT-01, REQ-BASE-01. PRD §§7, 12.2, 14.1.
 
-**Not yet validated.** From the v5 redeploy (2026-11-14, `5d1a6ee`) through v7
-(`9d10e28`), the strict success check passes on stages, the illustration, book
-grounding and the source citation, for both typed and spoken requests. It still fails
-on spoken output: `audio_url` is null because Gemini speech synthesis fails (v5/v6: a
-rejected request shape; v7: model not found for this key; see "Live reruns after v6
-and v7"). An unknown book gets no invented citation, but the card
-names it as Hamlet. The iOS round trip on hardware has not run.
+**Not yet validated (hardware).** On v10 (2026-11-15, `99ae635`) the strict success check
+passes in full for both typed and spoken requests: stages, illustration, book grounding
+(`Act 1, Scene 2, lines 135-138`), the Gutenberg citation and a working `audio_url`
+spoken by ElevenLabs (see "Live reruns after v8, v9 and v10"). What is still missing:
+audible playback, the unknown-book label (#231) and the iOS round trip on hardware.
 
+## Live reruns after v8, v9 and v10, 2026-11-15 (authorized by the lead, no glasses)
+
+Same page and spoken inputs and expected values as "Live rerun after redeploy" below, with fresh request and session IDs.
+Command: `env WS_URL=wss://junction26-vision--metalab-web.us-east.modal.run/ws WS_SUCCESS_CASES=<tmp cases> WS_TIMEOUT_S=300 PIP_NO_INDEX=1 PIP_DRY_RUN=1 contracts/test.sh`.
+Inputs lived only in `/tmp` and were deleted after the run.
+
+| Deploy | Commit | Strict run | Server log for speech (`metalab.speak`) |
+|---|---|---|---|
+| v8 | `35e7477` (#241: Gemini model-list fallback) | **2 failures**, each only `audio_url` null | Gemini 404 for `gemini-3.8-flash-tts`, then `TTS models available to this key: none`. The Gemini key has no speech access |
+| v9 | `3381300` (#244: ElevenLabs first, then Gemini once, sharing one 20 s budget) | 40 tests, **2 failures**, each only `audio_url` null. Grounding, citation, stages and image pass for typed and spoken | No ElevenLabs attempt, only the Gemini 404. A check that printed environment variable names only showed that the keys were in the separate Modal secrets `ELEVEN_LABS_KEY` and `ELEVVOICE_ID`, which the app did not attach |
+| v10 | `99ae635` (#246: attach those two secrets) | 40 tests in 74.8 s, **OK**. Typed card 21.3 s, spoken card 23.5 s | No speech failure for the v10 requests |
+
+Audio check on v10: an extra typed request returned an `audio_url` on the app's host. `GET` gave HTTP 200, `audio/wav`, 1,373,180 bytes: a 24 kHz, 16-bit mono WAV of 28.6 s. Nobody has listened to it yet, and the card's `models` field does not name the speech model.
 ## Live reruns after v6 and v7, 2026-11-14/15 (authorized by the lead, no glasses)
 
 Same inputs, expected values and command as "Live rerun after redeploy" below. Inputs lived only in `/tmp` and were deleted after each run.
@@ -127,9 +138,9 @@ text, transcript or media is kept here.
 - [x] Run `contracts/test.sh` locally with no live environment variables.
 - [x] Run schema-only remote conformance with `WS_URL`.
 - [x] Run the strict typed/audio cases with both `WS_URL` and `WS_SUCCESS_CASES`.
-  The first run failed on grounding and audio. After the v5 redeploy, they fail only on `audio_url`.
+  The first run failed on grounding and audio. From v5 to v9 they failed only on `audio_url`. On v10 (`99ae635`) they pass.
 - [ ] Verify generated illustration retrieval/display and audible answer playback.
-  Retrieval passed. Display and playback were not checked.
+  Image and audio retrieval passed (v10: `audio/wav`, 24 kHz). Display and audible playback were not checked.
 - [ ] Record actual latency, model attribution, Hamlet citations and unknown-book
   no-source behavior. Latency, attribution and exact Hamlet citations are recorded for v5.
   The unknown-book card has no citation, but it is mislabelled as Hamlet.
