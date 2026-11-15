@@ -22,6 +22,9 @@ log = logging.getLogger("metalab.ai.source_loader")
 # Default location for public-domain play JSON files
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data" / "plays"
 
+# Study notes live next to the play as <play>_notes.json and are not plays themselves.
+NOTES_SUFFIX = "_notes"
+
 _custom_data_dir: Optional[Path] = None
 _play_cache: Dict[str, Play] = {}
 
@@ -160,6 +163,7 @@ class Play:
     acts: List[Act] = field(default_factory=list)
     _indexed_lines: List[FlatLineIndex] = field(default_factory=list, repr=False)
     _scenes: List[SceneIndex] = field(default_factory=list, repr=False)
+    notes: Optional[Dict[Tuple[int, int], Dict[str, Any]]] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not self._indexed_lines or not getattr(self, "_scenes", None):
@@ -327,8 +331,27 @@ def list_plays(data_dir: Optional[Path | str] = None) -> List[str]:
         return []
     plays: List[str] = []
     for file in sorted(dir_path.glob("*.json")):
+        if file.stem.endswith(NOTES_SUFFIX):
+            continue
         plays.append(file.stem)
     return plays
+
+
+def _load_notes_file(play_file: Path) -> Optional[Dict[Tuple[int, int], Dict[str, Any]]]:
+    """Read <play>_notes.json next to the play file; a missing or unreadable file yields None."""
+    notes_file = play_file.with_name(f"{play_file.stem}{NOTES_SUFFIX}.json")
+    if not notes_file.is_file():
+        return None
+    try:
+        with open(notes_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        notes: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        for entry in data.get("scenes", []):
+            notes[(int(entry["act"]), int(entry["scene"]))] = entry
+        return notes or None
+    except Exception as exc:
+        log.warning("ignoring unreadable notes file %s: %s", notes_file.name, type(exc).__name__)
+        return None
 
 
 def load_play(
@@ -351,10 +374,14 @@ def load_play(
 
     # 1. Exact or lowercase filename match (<name>.json)
     target_file = dir_path / f"{key}.json"
+    if key.endswith(NOTES_SUFFIX):
+        raise FileNotFoundError(f"Play '{play_name_or_id}' not found in {dir_path}")
     if not target_file.is_file():
         # Search all json files for matching ID or Title
         matching_file: Optional[Path] = None
         for candidate in dir_path.glob("*.json"):
+            if candidate.stem.endswith(NOTES_SUFFIX):
+                continue
             if candidate.stem.lower() == key:
                 matching_file = candidate
                 break
@@ -381,6 +408,7 @@ def load_play(
         data = json.load(f)
 
     play = _parse_play_json(data)
+    play.notes = _load_notes_file(target_file)
     _play_cache[cache_key] = play
     _play_cache[f"{dir_path}::{play.id.lower()}"] = play
     _play_cache[f"{dir_path}::{play.title.lower()}"] = play
@@ -388,6 +416,58 @@ def load_play(
 
 
 get_play = load_play
+
+
+def _play_for_match(match: "PassageMatch", data_dir: Optional[Path | str] = None) -> Optional[Play]:
+    try:
+        return load_play(match.play_id, data_dir=data_dir)
+    except Exception as exc:
+        log.warning("play for match not loadable: %s", type(exc).__name__)
+        return None
+
+
+def get_scene_notes(match: "PassageMatch", data_dir: Optional[Path | str] = None) -> Optional[Dict[str, Any]]:
+    """Study notes for the matched scene, or None when the play has no notes file or no entry."""
+    play = _play_for_match(match, data_dir)
+    if play is None or not play.notes:
+        return None
+    return play.notes.get((match.act, match.scene))
+
+
+@dataclass
+class ContextWindow:
+    before: List[FlatLineIndex]
+    matched: List[FlatLineIndex]
+    after: List[FlatLineIndex]
+
+    @property
+    def lines(self) -> List[FlatLineIndex]:
+        return self.before + self.matched + self.after
+
+
+def context_window(
+    match: "PassageMatch",
+    before: int = 6,
+    after: int = 6,
+    data_dir: Optional[Path | str] = None,
+) -> Optional[ContextWindow]:
+    """Canonical lines around a match, clipped to the matched scene (never crosses a scene boundary)."""
+    play = _play_for_match(match, data_dir)
+    if play is None:
+        return None
+    sc = next((s for s in play._scenes if s.act == match.act and s.scene == match.scene), None)
+    if sc is None:
+        return None
+    sc_lines = play._indexed_lines[sc.start_idx : sc.end_idx]
+    idx = [i for i, l in enumerate(sc_lines) if match.line_start <= l.line <= match.line_end]
+    if not idx:
+        return None
+    first, last = idx[0], idx[-1]
+    return ContextWindow(
+        before=sc_lines[max(0, first - max(0, before)) : first],
+        matched=sc_lines[first : last + 1],
+        after=sc_lines[last + 1 : last + 1 + max(0, after)],
+    )
 
 
 def get_source_citation(play: str = "Hamlet") -> Dict[str, str]:

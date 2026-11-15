@@ -11,6 +11,13 @@ This directory contains public-domain reference texts for plays used by MetaLab'
 - **Licence**: Public Domain in the United States and most jurisdictions. Project Gutenberg License allows copying, redistribution, and derivative works.
 - **File**: `hamlet.json`
 
+### Hamlet scene notes
+
+- **File**: `hamlet_notes.json` (one entry per scene: summary, characters on stage, glossary, themes)
+- **Origin**: hand-written study notes in original wording for this project. They are not copied from any copyrighted edition, commentary or study guide; glossary terms are words from the public-domain text above.
+- **Use**: loaded next to `hamlet.json` by `source_loader.py` and added to the reasoning prompt when a page matches a passage. The backend never calls a model to produce notes.
+- **Validation**: `python3 backend/ai/make_notes.py` checks that every scene in `hamlet.json` has an entry and every glossary term occurs in its scene. `--skeleton <play>` prints an empty notes file for a new play; a play without a notes file works as before.
+
 ## Adding a Play (Data-Only Change)
 
 Per PRD Section 10 Open Question 7 (C4) and Issue #29:
