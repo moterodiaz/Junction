@@ -372,5 +372,46 @@ class HedgeNemotronWithGeminiTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(secret_body, all_logs)
 
 
+
+    async def test_hedge_notext_during_race(self):
+        nemotron = StubNemotronClient(default_response='', delay_s=0.2)
+        gemini = StubGeminiPageReader(response='valid text', delay_s=0.2)
+        with mock.patch.dict(os.environ, {'READ_FALLBACK_AFTER_S': '0.05'}):
+            with self.assertRaises(NoTextFoundError):
+                await read_page_with_fallback(
+                    FRAME,
+                    primary=nemotron,
+                    fallback=gemini,
+                )
+
+    async def test_hedge_both_fail_during_race(self):
+        nemotron = StubNemotronClient(default_response=PageReadError('nemotron boom', status_code=500), delay_s=0.1)
+        gemini = StubGeminiPageReader(response=RuntimeError('gemini boom'), delay_s=0.1)
+        with mock.patch.dict(os.environ, {'READ_FALLBACK_AFTER_S': '0.05'}):
+            with self.assertRaises(PageReadError):
+                await read_page_with_fallback(
+                    FRAME,
+                    primary=nemotron,
+                    fallback=gemini,
+                )
+
+    async def test_hedge_caller_cancels_race(self):
+        nemotron = StubNemotronClient(default_response='nemotron', delay_s=1.0)
+        gemini = StubGeminiPageReader(response='gemini', delay_s=1.0)
+        with mock.patch.dict(os.environ, {'READ_FALLBACK_AFTER_S': '0.05'}):
+            task = asyncio.create_task(
+                read_page_with_fallback(
+                    FRAME,
+                    primary=nemotron,
+                    fallback=gemini,
+                )
+            )
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertTrue(nemotron.cancelled)
+            self.assertTrue(gemini.cancelled)
+
 if __name__ == "__main__":
     unittest.main()

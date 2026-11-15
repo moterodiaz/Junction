@@ -673,10 +673,10 @@ async def read_page_with_fallback(
                     fallback_error = exc
 
         # Both readers failed
-        if fallback_error is not None:
-            raise fallback_error
         if primary_error is not None:
             raise primary_error
+        if fallback_error is not None:
+            raise fallback_error
         raise PageReadError("All readers failed.")
 
     finally:
