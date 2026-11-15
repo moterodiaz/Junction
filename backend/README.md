@@ -51,6 +51,29 @@ modal volume get metalab-stt-logs transcripts.jsonl
 
 Lines are committed to the Volume at most every 10 s and at shutdown. `STT_DEBUG_LOG_PATH` moves the file (default `/stt-logs/transcripts.jsonl`); locally, point it at a temp file.
 
+### Test spoken answers on the glasses (`REQ-VOICE-01`)
+
+Every stored clip logs one line naming the voice that spoke (never the answer text or a key):
+
+```
+speech ready: provider=elevenlabs model=eleven_flash_v2_5 fallback=false synth_s=2.4 audio_s=28.6 bytes=1373180
+```
+
+`provider` is `elevenlabs`, `gemini` or `custom` (a stub client); `fallback=true` means Gemini spoke because ElevenLabs failed. When no clip is made the log says `speech synthesis failed, the phone will use its own voice: …` (or `speech synthesis skipped: …`), the card ships with `audio_url` null, and the phone reads `speech_text` in the built-in iPhone voice. If you hear the iPhone voice, the log tells you why.
+
+1. **Deploy.** `modal deploy backend/app/modal_app.py`. The `metalab` secret needs `IMAGE_BASE_URL`; the separate secrets `ELEVEN_LABS_KEY` and `ELEVVOICE_ID` set `ELEVEN_LABS_API_KEY` and `ELEVEN_LABS_VOICE_ID`.
+2. **Mac check, no glasses.** With a photo of a Hamlet page (e.g. `backend/ai/sample_frames/hamlet_act3_scene1.jpg`):
+   ```sh
+   backend/.venv/bin/python backend/scripts/voice_check.py \
+     --url wss://<workspace>--metalab-web.modal.run/ws --frame page.jpg [--text "explain this"]
+   ```
+   It prints each stage and its time, the card's `models`, whether `audio_url` is set and the card time, then downloads the clip (HTTP status, content type, sample rate, length), plays it with `afplay` and deletes it. It never prints the transcript or the answer. It exits 1 if `audio_url` is null or the download fails (`--no-play` skips playback). You should hear the ElevenLabs voice, and `modal app logs metalab` should show `speech ready: provider=elevenlabs`.
+3. **Glasses.** Pair the iPhone with the glasses, turn on Developer Mode in the Meta AI app and run MetaLab from Xcode with the same `wss://` URL. Check that iOS shows the glasses as the audio route. Say "Hey Meta, start MetaLab", look at the page and say "explain this". Expect status chimes, the card on the lens, then the ElevenLabs voice in the glasses speakers. The built-in iPhone voice means fallback: check the log.
+4. **Display off.** Repeat with the display off; the answer should still be spoken.
+5. **Gemini fallback.** On a local run with a working `GEMINI_API_KEY`, set a wrong `ELEVEN_LABS_VOICE_ID` (or leave the ElevenLabs keys out). The log shows `provider=gemini` (`fallback=true` for a wrong voice) and the request still returns a card.
+6. **Built-in iPhone voice.** Make both speech providers unavailable: leave out the ElevenLabs keys and use a `GEMINI_API_KEY` that works for reasoning but has no speech access (an invalid key fails reasoning and returns an error instead of a card). The log shows `speech synthesis failed, the phone will use its own voice`, `audio_url` is null, the phone reads `speech_text` in the iPhone voice and the request still returns a card.
+7. **Record** in `docs/evidence/base-live.md`: device, app commit, deploy version, the `speech ready` line, card time, whether it was audible and on which route, and anything that failed.
+
 ---
 
 ## AI Architecture & Gemini Stack (Paid Tier 3)

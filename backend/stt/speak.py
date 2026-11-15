@@ -271,6 +271,25 @@ async def log_tts_models(client: Any, exc: Any = None) -> None:
         log.warning("could not list TTS models: %s", type(exc).__name__)
 
 
+def provider_name(client: Any) -> str:
+    """elevenlabs, gemini, or custom (a client set with set_speech_client, e.g. a test stub)."""
+    if isinstance(client, ElevenLabsSpeechClient):
+        return "elevenlabs"
+    if isinstance(client, GeminiSpeechClient):
+        return "gemini"
+    return "custom"
+
+
+def log_speech_ready(first: Any, served: Any, synth_s: float, pcm: bytes, rate: int, wav_bytes: int) -> None:
+    """One line per stored clip naming the voice that spoke, so a live test can tell the
+    ElevenLabs voice from the Gemini fallback. Never the answer text or the key."""
+    model = getattr(served, "model", None) or "unknown"
+    audio_s = len(pcm) / (2 * rate) if rate else 0.0
+    log.info("speech ready: provider=%s model=%s fallback=%s synth_s=%.1f audio_s=%.1f bytes=%d",
+             provider_name(served), model, "true" if served is not first else "false",
+             synth_s, audio_s, wav_bytes)
+
+
 async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     """Return an https URL for the spoken text, or None to let the phone speak it."""
     # Same public base as generated images (backend/ai/image.py); the contract needs https.
@@ -292,6 +311,7 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
         _epochs_inflight[session_id] = _epochs_inflight.get(session_id, 0) + 1
     # The ElevenLabs attempt and its one Gemini fallback share a single TTS_TIMEOUT_S budget.
     attempt = {"client": client}
+    started = time.monotonic()
     try:
         result = await asyncio.wait_for(_synthesize(client, text, attempt), TTS_TIMEOUT_S)
     except Exception as exc:
@@ -316,7 +336,10 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     if not pcm:
         log.warning("speech synthesis returned empty audio")
         return None
-    clip_id = store(to_wav(pcm, rate), session_id)
+    synth_s = time.monotonic() - started
+    wav = to_wav(pcm, rate)
+    clip_id = store(wav, session_id)
+    log_speech_ready(client, attempt["client"], synth_s, pcm, rate, len(wav))
     _served_by[clip_id] = attempt["client"]  # tied to this clip, not to the latest request
     while len(_served_by) > MAX_CLIPS:
         _served_by.popitem(last=False)

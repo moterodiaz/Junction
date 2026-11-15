@@ -461,6 +461,65 @@ class SpeakTest(SpeakBase):
         self.assertIsNotNone(speak.get(ids[-1]))
 
 
+class SpeechReadyLogTest(SpeakBase):
+    """#268: one line per stored clip names the voice that spoke, never the text or the key."""
+
+    TEXT = "SECRET_ANSWER_WORDS_2468"
+    KEY = "EL-KEY-do-not-log-1357"
+
+    def elevenlabs(self, status=200, pcm=b"\x01\x00" * 24000):
+        import httpx
+        from stt.elevenlabs import ElevenLabsSpeechClient
+
+        def answer(request):
+            if status != 200:
+                return httpx.Response(status, json={"detail": {"status": "invalid_api_key",
+                                                               "message": f"bad key {self.KEY}"}})
+            return httpx.Response(200, content=pcm)
+        return ElevenLabsSpeechClient(self.KEY, "voice-1", "eleven_flash_v2_5",
+                                      transport=httpx.MockTransport(answer))
+
+    def ready_log(self, client):
+        speak.set_speech_client(client)
+        with self.assertLogs("metalab.speak", level="INFO") as captured:
+            url = asyncio.run(speak.speak(self.TEXT, "s1"))
+        out = " ".join(captured.output)
+        self.assertNotIn(self.TEXT, out)
+        self.assertNotIn(self.KEY, out)
+        return url, out
+
+    def test_elevenlabs_clip_logs_provider_model_and_length(self):
+        url, out = self.ready_log(self.elevenlabs())
+        self.assertIsNotNone(url)
+        wav_bytes = len(speak.get(url.rsplit("/", 1)[-1].removesuffix(".wav")))
+        self.assertIn("speech ready: provider=elevenlabs model=eleven_flash_v2_5 fallback=false", out)
+        self.assertIn("audio_s=1.0", out)  # 24000 samples at 24 kHz
+        self.assertIn(f"bytes={wav_bytes}", out)
+        self.assertRegex(out, r"synth_s=\d+\.\d")
+
+    def test_gemini_after_an_elevenlabs_failure_logs_fallback_true(self):
+        class Gemini(speak.GeminiSpeechClient):
+            async def synthesize(self, text):
+                return b"\x01\x00" * 12000, 24000
+
+        gemini = Gemini("GEMINI-KEY", "gemini-3.8-flash-tts")
+        with mock.patch.object(speak, "_gemini_client", lambda: gemini):
+            url, out = self.ready_log(self.elevenlabs(status=401))
+        self.assertIsNotNone(url)
+        self.assertIn("ElevenLabs speech failed, trying Gemini", out)
+        self.assertIn("speech ready: provider=gemini model=gemini-3.8-flash-tts fallback=true", out)
+        self.assertIn("audio_s=0.5", out)
+        self.assertNotIn("GEMINI-KEY", out)
+
+    def test_a_stub_client_is_custom(self):
+        _, out = self.ready_log(StubSpeech())
+        self.assertIn("speech ready: provider=custom model=unknown fallback=false", out)
+
+    def test_a_failure_logs_no_ready_line(self):
+        _, out = self.ready_log(self.elevenlabs(status=401))
+        self.assertIn("speech synthesis failed, the phone will use its own voice", out)
+        self.assertNotIn("speech ready", out)
+
 class SessionClipsTest(SpeakBase):
     """#109: clips belong to the session that asked, and never outlive it (PRD section 6)."""
 
