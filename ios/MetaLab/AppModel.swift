@@ -252,12 +252,11 @@ final class AppModel: ObservableObject {
             return
         }
         try Task.checkCancellation()
-        // Only a sent invocation refreshes the retention deadline; an expired session is not revived.
-        guard bookSession.recordInvocation(at: ContinuousClock.now) else {
+        // An expired session is not revived; the deadline refreshes only once the invocation is sent.
+        guard !bookSession.isExpired(at: ContinuousClock.now) else {
             endBookSession()
             return
         }
-        armRetention()
         let requestId = UUID().uuidString
         activeRequest = requestId
         let message = try Contract.makeInvoke(
@@ -276,6 +275,10 @@ final class AppModel: ObservableObject {
         let plan = HandshakePlan(config: config, credential: HandshakeCredential(defaults: .standard))
         activeSocket = socket.connect(plan: plan)
         try await socket.send(body)
+        // Sent: commit the refresh, unless the session ended or expired while sending.
+        if activeRequest == requestId, bookSession.recordInvocation(at: ContinuousClock.now) {
+            armRetention()
+        }
         guard ReplyGate.entersWaitingAfterSend(phase: phase, requestId: requestId, activeRequest: activeRequest)
         else { return }
         phase = .waiting
