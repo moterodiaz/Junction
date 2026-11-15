@@ -93,8 +93,7 @@ def _maybe_commit(force: bool = False) -> None:
     # A commit uploads the volume's changes, so run at most one at a time and at most every
     # COMMIT_INTERVAL_S; the shutdown commit catches whatever the throttle held back.
     if not _commit_lock.acquire(blocking=force):
-        # The in-flight commit may predate this caller's lines, and may itself be the timer.
-        _schedule(COMMIT_INTERVAL_S, replace=True)
+        _schedule(COMMIT_INTERVAL_S)  # the in-flight commit may predate this caller's lines
         return
     try:
         now = time.monotonic()
@@ -113,27 +112,46 @@ def _maybe_commit(force: bool = False) -> None:
             _log.debug("stt debug log commit skipped: %s", type(exc).__name__)
             if not force:
                 _schedule(COMMIT_INTERVAL_S)
-        else:
-            if _dirty and not force:  # a line landed while the hook ran; its own schedule may
-                _schedule(COMMIT_INTERVAL_S)  # have been skipped as this timer was alive
     finally:
         _commit_lock.release()
 
 
 _timer: threading.Timer | None = None
+_timer_lock = threading.Lock()
 
 
-def _schedule(delay: float, replace: bool = False) -> None:
+def _schedule(delay: float) -> None:
+    # At most one timer: a pending one fires later, and a running one re-checks _dirty in
+    # _retire_timer before it lets go, so a caller that finds any timer can rely on it.
     global _timer
-    old = _timer
-    if old is not None and old.is_alive() and old is not threading.current_thread():
-        if not replace:
+    with _timer_lock:
+        if _timer is not None:
             return
-        old.cancel()  # no-op once it is running its commit; then the new timer follows it
-    _timer = threading.Timer(delay, _maybe_commit)
-    _timer.daemon = True
-    _timer.start()
+        _timer = _start_timer(delay)
 
+
+def _on_timer() -> None:
+    try:
+        _maybe_commit()
+    finally:
+        _retire_timer()
+
+
+def _retire_timer() -> None:
+    """Called by the timer thread when its commit attempt is over: re-arm while lines are
+    still uncommitted, otherwise clear the slot so the next write arms a fresh timer."""
+    global _timer
+    with _timer_lock:
+        _timer = None
+        if _dirty and _commit_hook is not None:
+            _timer = _start_timer(COMMIT_INTERVAL_S)
+
+
+def _start_timer(delay: float) -> threading.Timer:
+    timer = threading.Timer(delay, _on_timer)
+    timer.daemon = True
+    timer.start()  # if this raises, the slot stays empty and the next write tries again
+    return timer
 
 def flush() -> None:
     """Commit any lines written since the last commit (called at shutdown)."""
