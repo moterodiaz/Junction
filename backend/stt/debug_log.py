@@ -93,6 +93,7 @@ def _maybe_commit(force: bool = False) -> None:
     # A commit uploads the volume's changes, so run at most one at a time and at most every
     # COMMIT_INTERVAL_S; the shutdown commit catches whatever the throttle held back.
     if not _commit_lock.acquire(blocking=force):
+        _schedule(COMMIT_INTERVAL_S)  # the in-flight commit may predate this caller's lines
         return
     try:
         now = time.monotonic()
@@ -109,6 +110,11 @@ def _maybe_commit(force: bool = False) -> None:
         except Exception as exc:
             _dirty = True
             _log.debug("stt debug log commit skipped: %s", type(exc).__name__)
+            if not force:
+                _schedule(COMMIT_INTERVAL_S)
+        else:
+            if _dirty and not force:  # a line landed while the hook ran; its own schedule may
+                _schedule(COMMIT_INTERVAL_S)  # have been skipped as this timer was alive
     finally:
         _commit_lock.release()
 
