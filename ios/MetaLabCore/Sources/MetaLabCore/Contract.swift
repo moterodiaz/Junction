@@ -1,7 +1,8 @@
 import Foundation
 
-/// Wire types for the draft in PRD section 7.
-/// `contracts/` replaces this decoder when issue #24 lands. Field names stay identical.
+/// Legacy wire types of `contracts/ws-messages.schema.json` (PRD section 7).
+/// The `metalab.v2` lifecycle messages live apart, in `SessionLifecycle.swift`, so this decoder
+/// never accepts them.
 
 public enum PipelineStage: String, Codable, Sendable, CaseIterable, Equatable {
     case transcribing

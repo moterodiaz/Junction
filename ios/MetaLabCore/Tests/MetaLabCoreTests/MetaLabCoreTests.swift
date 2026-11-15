@@ -310,3 +310,50 @@ final class AudioPrivacyAndConfigTests: XCTestCase {
         XCTAssertTrue(deadline.isTimedOut(elapsed: 90, sinceLastServerMessage: 1))
     }
 }
+
+final class ReconnectAndFallbackSpeechTests: XCTestCase {
+    func testAReconnectOnlyListensToTheNewSocket() {
+        // The first question ran on socket 1; the phone reconnected and asked again on socket 2.
+        XCTAssertFalse(ReplyGate.acceptsReply(phase: .waiting, fromSocket: 1, activeSocket: 2))
+        XCTAssertTrue(ReplyGate.acceptsReply(phase: .waiting, fromSocket: 2, activeSocket: 2))
+        XCTAssertFalse(ReplyGate.failsOnDisconnect(phase: .waiting, fromSocket: 1, activeSocket: 2))
+        XCTAssertTrue(ReplyGate.failsOnDisconnect(phase: .waiting, fromSocket: 2, activeSocket: 2))
+        XCTAssertTrue(ReplyGate.failsOnDisconnect(phase: .capturing, fromSocket: 2, activeSocket: 2))
+        XCTAssertFalse(ReplyGate.failsOnDisconnect(phase: .speaking, fromSocket: 2, activeSocket: 2))
+        // After a session reset there is no active socket: nothing old is accepted.
+        let unparsed = ServerEvent.error(ErrorMessage(requestId: nil, code: .internalError, message: "m", retryable: false))
+        XCTAssertFalse(ReplyGate.acceptsReply(phase: .idle, fromSocket: 2, activeSocket: nil))
+        XCTAssertFalse(ResponseFilter.accepts(unparsed, fromSocket: 2, activeSocket: nil, activeRequest: nil))
+    }
+
+    func testAReconnectKeepsTheBookSessionAndDoesNotRefreshIt() {
+        let start = ContinuousClock.now
+        var book = ClientSession(id: "book", now: start)
+        book.recordInvocation(at: start + .seconds(10))
+        // A new socket per question carries the same session id; only an end, reset or expiry changes it,
+        // and only a sent invocation moves the deadline.
+        XCTAssertEqual(book.id, "book")
+        XCTAssertEqual(book.deadline, start + .seconds(910))
+        XCTAssertEqual(book.generation, 0)
+    }
+
+    func testFallbackSpeechUsesTheCardTextWhenThereIsNoUsableClip() throws {
+        var card = CardMessage(
+            requestId: "r", title: "T", caption: "C", imageURL: nil,
+            speechText: "  Hamlet is alone.  ", audioURL: nil, book: nil, sources: [], models: ModelTrace()
+        )
+        XCTAssertEqual(SpeechPlan.route(card: card, displayEnabled: true), .systemVoice(text: "Hamlet is alone."))
+        for broken in ["http://cdn.example/a.mp3", "not a url", ""] {
+            card.audioURL = broken
+            XCTAssertEqual(SpeechPlan.route(card: card, displayEnabled: false), .systemVoice(text: "Hamlet is alone."), broken)
+        }
+        card.audioURL = "https://cdn.example/a.mp3"
+        XCTAssertEqual(
+            SpeechPlan.route(card: card, displayEnabled: false),
+            .remoteAudio(url: try XCTUnwrap(URL(string: "https://cdn.example/a.mp3")), fallbackText: "  Hamlet is alone.  ")
+        )
+        card.audioURL = nil
+        card.speechText = "   "
+        XCTAssertEqual(SpeechPlan.route(card: card, displayEnabled: true), .silent)
+    }
+}
