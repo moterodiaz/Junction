@@ -56,8 +56,8 @@ to deploy; see `backend/.env.example`.
 | `STT_SLOT_POLL_S` | `0.05` | none | `backend/app/pipeline.py` | How often a waiting request checks for a free STT slot. |
 | `_MAX_PENDING_DRAWS` | `2` | none | `backend/app/pipeline.py` | Background picture draws per session; beyond this a card waits for its picture. |
 | `DYNAMIC_MODEL_ROUTING` | `"false"` | `DYNAMIC_MODEL_ROUTING` | `backend/app/pipeline.py`, `backend/app/config.py` | Enables Gemini Decisions API routing of each request. |
-| `MAX_QUEUED_FRAMES` | `4` | none | `backend/app/main.py` | Maximum queued outbound WebSocket frames per connection. |
-| `MAX_QUEUED_BYTES` | `32 * 1024 * 1024` (32 MiB) | none | `backend/app/main.py` | Maximum queued outbound WebSocket bytes per connection. |
+| `MAX_QUEUED_FRAMES` | `4` | none | `backend/app/main.py` | Maximum queued incoming WebSocket frames per connection; exceeding the limit closes the connection with code 1008. |
+| `MAX_QUEUED_BYTES` | `32 * 1024 * 1024` (32 MiB) | none | `backend/app/main.py` | Maximum queued incoming WebSocket bytes per connection; exceeding the limit closes the connection with code 1008. |
 | `DEFAULT_STAGES` | `("decision", "read", "reason", "image", "tts")` | none | `backend/app/latency.py` | Stages tracked by latency and model-choice telemetry. |
 
 ## AI modules
@@ -79,7 +79,7 @@ to deploy; see `backend/.env.example`.
 | `MIN_CONFIDENCE_THRESHOLD` | `0.5` | none | `backend/ai/decision.py` | Routing answers below this confidence fall back to the heuristic. |
 | `DECISION_ENABLE_SPOILER_CHECK` | `"false"` | `DECISION_ENABLE_SPOILER_CHECK` | `backend/ai/decision.py`, `backend/ai/reasoning.py` | Turns on the anti-spoiler guard. |
 | `MODEL_IMAGE` | `"gemini-nano-banana-2.1"` | `MODEL_IMAGE` | `backend/app/config.py`, `backend/ai/image.py`, `backend/app/pipeline.py` | Image generation model (module default `DEFAULT_MODEL_IMAGE`). |
-| `MAX_STORED_IMAGES` | `200` | none | `backend/ai/image.py` | In-memory generated images kept before the oldest are evicted. |
+| `MAX_STORED_IMAGES` | `200` | none | `backend/ai/image.py` | Maximum in-memory images without a session (`session_id` is `None`); the oldest are evicted above this count. Images tied to sessions use separate cleanup rules. |
 | `_DEFAULT_IMAGE_WAIT_S` | `25.0` | `IMAGE_WAIT_S` | `backend/ai/image.py` | How long `GET /img/<id>.png` waits for a picture still being drawn. |
 | `_DEFAULT_SESSION_TTL` | `3600.0` | `IMAGE_SESSION_TTL_SECONDS` | `backend/ai/image.py` | Images of sessions idle longer than this are swept. |
 | `_UNOWNED_RESERVATION_TTL_S` | `600.0` | none | `backend/ai/image.py` | Abandoned image reservations without a session expire after this. |
