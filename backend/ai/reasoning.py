@@ -81,10 +81,23 @@ def identify_book_from_text(text: str) -> tuple[Optional[str], Optional[str]]:
     if not text or not text.strip():
         return None, None
     from .source_loader import normalize_text
-    norm = normalize_text(text)
+    words = normalize_text(text).split()
     for keywords, title, author in _KNOWN_BOOK_SIGNATURES:
-        if all(kw in norm for kw in keywords):
-            return title, author
+        # whole words, in order, with at most 4 filler words between them
+        n = len(keywords)
+        for start in range(len(words)):
+            if words[start] != keywords[0]:
+                continue
+            pos = start
+            ok = True
+            for kw in keywords[1:]:
+                nxt = next((j for j in range(pos + 1, min(pos + 6, len(words))) if words[j] == kw), None)
+                if nxt is None:
+                    ok = False
+                    break
+                pos = nxt
+            if ok and n:
+                return title, author
     return None, None
 
 
@@ -122,9 +135,7 @@ def page_looks_like_book(page_text: str, book: Optional[BookInfo], command: Opti
 
 def is_session_default_book(session: BookSession) -> bool:
     """Return True if session's book is the initial default (Hamlet)."""
-    if getattr(session, "is_default_book", False):
-        return True
-    return bool(session.book and session.book.title and session.book.title.strip().lower() == "hamlet")
+    return bool(getattr(session, "is_default_book", False))
 
 SYSTEM_INSTRUCTION = (
     "You are MetaLab's literature reading companion for high school students reading assigned texts like Shakespeare. "

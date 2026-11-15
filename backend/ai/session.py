@@ -239,7 +239,7 @@ class SessionStore:
         if session_id not in self._sessions:
             self._sessions[session_id] = BookSession(
                 session_id=session_id,
-                book=default_book or BookInfo(),
+                book=default_book,
             )
         return self._sessions[session_id]
 
