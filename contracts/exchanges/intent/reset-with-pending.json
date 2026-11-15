@@ -1,0 +1,64 @@
+{
+  "description": "Ending a session while an invocation is pending: the pending invocation's cancelled terminal precedes the session_ended acknowledgement, and no card follows.",
+  "offered": [
+    "metalab.v2.intent",
+    "metalab.v2"
+  ],
+  "server": {
+    "v2": true,
+    "intent": true
+  },
+  "selected": "metalab.v2.intent",
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": false,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "What is Hamlet afraid of in this speech?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "send": {
+        "type": "session_end",
+        "request_id": "e1",
+        "session_id": "s1"
+      }
+    },
+    {
+      "receive": {
+        "type": "cancelled",
+        "request_id": "r1",
+        "session_id": "s1"
+      }
+    },
+    {
+      "receive": {
+        "type": "session_ended",
+        "request_id": "e1",
+        "session_id": "s1",
+        "cleanup": "complete"
+      }
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "description": "Unknown book and weak passage match: clarify ambiguous_book (the clarification that today ships as a card). The page text is retained session-only, so the named-book reply needs no new frame.",
+  "offered": [
+    "metalab.v2.intent",
+    "metalab.v2"
+  ],
+  "server": {
+    "v2": true,
+    "intent": true
+  },
+  "selected": "metalab.v2.intent",
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": false,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "What does this line mean?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "clarify",
+        "request_id": "r1",
+        "session_id": "s1",
+        "reason": "ambiguous_book",
+        "utterance": "What does this line mean?",
+        "speech_text": "Which book are you reading right now? Please name the play or book.",
+        "audio_url": "https://api.metalab.example/audio/r1.wav",
+        "options": []
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": null,
+        "audio": null,
+        "text": "It's Hamlet"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r2",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+        "image_url": "https://api.metalab.example/img/r2.png",
+        "speech_text": "Hamlet is alone, weighing whether to keep living through suffering or end it.",
+        "audio_url": "https://api.metalab.example/audio/r2.wav",
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [
+          {
+            "title": "Hamlet, public-domain text",
+            "url": "https://www.gutenberg.org/ebooks/1524"
+          }
+        ],
+        "models": {
+          "read": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+          "reason": "gemini-4-argon",
+          "image": "gemini-nano-banana-2.1"
+        },
+        "intent": "reading",
+        "utterance": "It's Hamlet"
+      }
+    }
+  ]
+}

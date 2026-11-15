@@ -1,0 +1,10 @@
+{
+  "type": "clarify",
+  "request_id": "req-1",
+  "session_id": "session-b",
+  "reason": "needs_frame",
+  "utterance": "Why does he say that?",
+  "speech_text": "I don't have a page for this session yet. Look at the page and ask again.",
+  "audio_url": null,
+  "options": []
+}

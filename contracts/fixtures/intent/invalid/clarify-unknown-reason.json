@@ -1,0 +1,13 @@
+{
+  "type": "clarify",
+  "request_id": "req-3",
+  "session_id": "session-a",
+  "reason": "low_confidence",
+  "utterance": "Tell me more about Denmark",
+  "speech_text": "Do you want help with this passage, or a web search about Denmark?",
+  "audio_url": null,
+  "options": [
+    "reading",
+    "research"
+  ]
+}

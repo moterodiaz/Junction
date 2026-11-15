@@ -1,0 +1,100 @@
+{
+  "description": "Out-of-set requests and requests for disabled modules get clarify unsupported_intent with no options; they never start disabled modules and add no context.",
+  "offered": [
+    "metalab.v2.intent",
+    "metalab.v2"
+  ],
+  "server": {
+    "v2": true,
+    "intent": true
+  },
+  "selected": "metalab.v2.intent",
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": false,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "Set a timer for ten minutes"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "clarify",
+        "request_id": "r1",
+        "session_id": "s1",
+        "reason": "unsupported_intent",
+        "utterance": "Set a timer for ten minutes",
+        "speech_text": "I can only help with the page you are reading.",
+        "audio_url": null,
+        "options": []
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "Search the web for reviews of this edition"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "clarify",
+        "request_id": "r2",
+        "session_id": "s1",
+        "reason": "unsupported_intent",
+        "utterance": "Search the web for reviews of this edition",
+        "speech_text": "Web search is not available. I can explain this page instead.",
+        "audio_url": null,
+        "options": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "type": "clarify",
+  "request_id": "req-1",
+  "session_id": "session-a",
+  "reason": "ambiguous_book",
+  "utterance": "What does this line mean?",
+  "speech_text": "Which book are you reading right now? Please name the play or book.",
+  "audio_url": "https://api.metalab.example/audio/req-1.wav",
+  "options": []
+}

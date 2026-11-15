@@ -1,0 +1,169 @@
+{
+  "description": "Cancelling a follow-up does not delete previously committed context: the next follow-up still reasons over the first card.",
+  "offered": [
+    "metalab.v2.intent",
+    "metalab.v2"
+  ],
+  "server": {
+    "v2": true,
+    "intent": true
+  },
+  "selected": "metalab.v2.intent",
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": false,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "What is Hamlet afraid of in this speech?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r1",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+        "image_url": "https://api.metalab.example/img/r1.png",
+        "speech_text": "Hamlet is alone, weighing whether to keep living through suffering or end it.",
+        "audio_url": "https://api.metalab.example/audio/r1.wav",
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [
+          {
+            "title": "Hamlet, public-domain text",
+            "url": "https://www.gutenberg.org/ebooks/1524"
+          }
+        ],
+        "models": {
+          "read": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+          "reason": "gemini-4-argon",
+          "image": "gemini-nano-banana-2.1"
+        },
+        "intent": "reading",
+        "utterance": "What is Hamlet afraid of in this speech?"
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": null,
+        "audio": null,
+        "text": "Summarise the whole play"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "thinking"
+      }
+    },
+    {
+      "send": {
+        "type": "cancel",
+        "request_id": "r2",
+        "session_id": "s1"
+      }
+    },
+    {
+      "receive": {
+        "type": "cancelled",
+        "request_id": "r2",
+        "session_id": "s1"
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r3",
+        "session_id": "s1",
+        "frame": null,
+        "audio": null,
+        "text": "Why does he say that?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r3",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r3",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r3",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "He fears what dreams may come after death.",
+        "image_url": "https://api.metalab.example/img/r3.png",
+        "speech_text": "He is afraid that death may not be peaceful, because of the dreams that might follow.",
+        "audio_url": "https://api.metalab.example/audio/r3.wav",
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [
+          {
+            "title": "Hamlet, public-domain text",
+            "url": "https://www.gutenberg.org/ebooks/1524"
+          }
+        ],
+        "models": {
+          "read": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+          "reason": "gemini-4-argon",
+          "image": "gemini-nano-banana-2.1"
+        },
+        "intent": "reading",
+        "utterance": "Why does he say that?"
+      }
+    }
+  ]
+}

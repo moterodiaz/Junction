@@ -1,0 +1,51 @@
+{
+  "description": "A frame-free follow-up in a session with no committed book context gets a terminal clarify with reason needs_frame, keeping the utterance; it is not an error and never borrows another session's context.",
+  "offered": [
+    "metalab.v2.intent",
+    "metalab.v2"
+  ],
+  "server": {
+    "v2": true,
+    "intent": true
+  },
+  "selected": "metalab.v2.intent",
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": false,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s2",
+        "frame": null,
+        "audio": null,
+        "text": "Why does he say that?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "clarify",
+        "request_id": "r1",
+        "session_id": "s2",
+        "reason": "needs_frame",
+        "utterance": "Why does he say that?",
+        "speech_text": "I don't have a page for this session yet. Look at the page and ask again.",
+        "audio_url": null,
+        "options": []
+      }
+    }
+  ]
+}

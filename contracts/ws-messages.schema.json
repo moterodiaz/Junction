@@ -184,6 +184,148 @@
         "message": { "$ref": "#/$defs/nonEmptyString" },
         "retryable": { "type": "boolean" }
       }
+    },
+    "intentName": {
+      "description": "Proposed metalab.v2.intent only (INTENT-D1, #142). Bounded intent set; research and document stay unsupported until their modules are accepted and enabled.",
+      "type": "string",
+      "enum": ["reading", "research", "document"]
+    },
+    "clarifyReason": {
+      "description": "Proposed metalab.v2.intent only (INTENT-D1, #142).",
+      "type": "string",
+      "enum": ["ambiguous_intent", "ambiguous_book", "needs_frame", "unsupported_intent"]
+    },
+    "followUpInvokeMessage": {
+      "description": "Proposed metalab.v2.intent only (INTENT-D1, #142): a frame-free follow-up. Identical to invokeMessage except that frame is present and null. Never valid on a legacy or plain metalab.v2 connection.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id", "frame"],
+      "properties": {
+        "type": { "const": "invoke" },
+        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "session_id": { "$ref": "#/$defs/nonEmptyString" },
+        "frame": { "type": "null" },
+        "audio": {
+          "oneOf": [
+            { "$ref": "#/$defs/audioPayload" },
+            { "type": "null" }
+          ]
+        },
+        "text": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonEmptyString" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["audio"],
+          "properties": {
+            "audio": { "$ref": "#/$defs/audioPayload" },
+            "text": { "type": "null" }
+          }
+        },
+        {
+          "required": ["text"],
+          "properties": {
+            "text": { "$ref": "#/$defs/nonEmptyString" },
+            "audio": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "intentCardMessage": {
+      "description": "Proposed metalab.v2.intent only (INTENT-D1, #142): cardMessage plus the resolved bounded intent and the full preserved utterance. Every shared field keeps its cardMessage schema and meaning.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "request_id",
+        "title",
+        "caption",
+        "image_url",
+        "speech_text",
+        "audio_url",
+        "book",
+        "sources",
+        "models",
+        "intent",
+        "utterance"
+      ],
+      "properties": {
+        "type": { "const": "card" },
+        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "title": { "$ref": "#/$defs/nonEmptyString" },
+        "caption": { "$ref": "#/$defs/nonEmptyString" },
+        "image_url": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/httpsUrl" }
+          ]
+        },
+        "speech_text": { "$ref": "#/$defs/nonEmptyString" },
+        "audio_url": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/httpsUrl" }
+          ]
+        },
+        "book": { "$ref": "#/$defs/bookInfo" },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sourceItem" }
+        },
+        "models": { "$ref": "#/$defs/modelInfo" },
+        "intent": { "$ref": "#/$defs/intentName" },
+        "utterance": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "clarifyMessage": {
+      "description": "Proposed metalab.v2.intent only (INTENT-D1, #142): a terminal reply that asks the user to clarify or explains that the request is unsupported. It carries the full preserved utterance so the question is never lost.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "session_id", "reason", "utterance", "speech_text", "audio_url", "options"],
+      "properties": {
+        "type": { "const": "clarify" },
+        "request_id": { "$ref": "#/$defs/nonEmptyString" },
+        "session_id": { "$ref": "#/$defs/nonEmptyString" },
+        "reason": { "$ref": "#/$defs/clarifyReason" },
+        "utterance": { "$ref": "#/$defs/nonEmptyString" },
+        "speech_text": { "$ref": "#/$defs/nonEmptyString" },
+        "audio_url": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/httpsUrl" }
+          ]
+        },
+        "options": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/intentName" }
+        }
+      },
+      "if": {
+        "properties": { "reason": { "const": "ambiguous_intent" } }
+      },
+      "then": {
+        "properties": { "options": { "minItems": 2 } }
+      },
+      "else": {
+        "properties": { "options": { "maxItems": 0 } }
+      }
+    },
+    "intentProtocolMessage": {
+      "description": "Proposed metalab.v2.intent only (INTENT-D1, #142). The application messages allowed on a connection that negotiated exactly metalab.v2.intent; lifecycle controls still use ws-lifecycle.schema.json. Not referenced by the root oneOf, so legacy validation is unchanged.",
+      "oneOf": [
+        { "$ref": "#/$defs/invokeMessage" },
+        { "$ref": "#/$defs/followUpInvokeMessage" },
+        { "$ref": "#/$defs/statusMessage" },
+        { "$ref": "#/$defs/intentCardMessage" },
+        { "$ref": "#/$defs/clarifyMessage" },
+        { "$ref": "#/$defs/errorMessage" }
+      ]
     }
   }
 }

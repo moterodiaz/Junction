@@ -1,0 +1,95 @@
+{
+  "description": "Old client or old server: an invoke with frame null is rejected with the existing fixed invalid-request error echoing its request id, and the connection keeps working. Replayed live.",
+  "offered": [],
+  "server": {
+    "v2": false,
+    "intent": false
+  },
+  "selected": null,
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": true,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": null,
+        "audio": null,
+        "text": "Why does he say that?"
+      },
+      "invalid": true
+    },
+    {
+      "receive": {
+        "type": "error",
+        "request_id": "r2",
+        "code": "internal",
+        "message": "Invalid request.",
+        "retryable": false
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r3",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "What is Hamlet afraid of in this speech?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r3",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r3",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r3",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r3",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+        "image_url": null,
+        "speech_text": "Hamlet is alone, weighing whether to keep living.",
+        "audio_url": null,
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [],
+        "models": {
+          "read": "stub",
+          "reason": "stub",
+          "image": "stub"
+        }
+      }
+    }
+  ]
+}

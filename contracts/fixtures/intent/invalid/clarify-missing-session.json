@@ -1,0 +1,9 @@
+{
+  "type": "clarify",
+  "request_id": "req-4",
+  "reason": "unsupported_intent",
+  "utterance": "Set a timer for ten minutes",
+  "speech_text": "I can only help with the page you are reading.",
+  "audio_url": null,
+  "options": []
+}

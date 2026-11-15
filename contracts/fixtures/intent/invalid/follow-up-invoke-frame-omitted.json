@@ -1,0 +1,7 @@
+{
+  "type": "invoke",
+  "request_id": "req-2",
+  "session_id": "session-a",
+  "audio": null,
+  "text": "Why does he say that?"
+}

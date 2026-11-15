@@ -1,0 +1,118 @@
+{
+  "description": "With RESEARCH enabled (not the default), an utterance that fits two enabled intents gets clarify ambiguous_intent listing them; the reply resolves against the retained utterance.",
+  "offered": [
+    "metalab.v2.intent",
+    "metalab.v2"
+  ],
+  "server": {
+    "v2": true,
+    "intent": true
+  },
+  "selected": "metalab.v2.intent",
+  "enabled_intents": [
+    "reading",
+    "research"
+  ],
+  "live": false,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "Tell me more about Denmark"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "clarify",
+        "request_id": "r1",
+        "session_id": "s1",
+        "reason": "ambiguous_intent",
+        "utterance": "Tell me more about Denmark",
+        "speech_text": "Do you want help with this passage, or a web search about Denmark?",
+        "audio_url": null,
+        "options": [
+          "reading",
+          "research"
+        ]
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": null,
+        "audio": null,
+        "text": "This passage"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r2",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Denmark is the setting; Hamlet calls it a prison.",
+        "image_url": "https://api.metalab.example/img/r2.png",
+        "speech_text": "In this passage Denmark is Hamlet's home, and he feels trapped there.",
+        "audio_url": "https://api.metalab.example/audio/r2.wav",
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [
+          {
+            "title": "Hamlet, public-domain text",
+            "url": "https://www.gutenberg.org/ebooks/1524"
+          }
+        ],
+        "models": {
+          "read": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+          "reason": "gemini-4-argon",
+          "image": "gemini-nano-banana-2.1"
+        },
+        "intent": "reading",
+        "utterance": "This passage"
+      }
+    }
+  ]
+}

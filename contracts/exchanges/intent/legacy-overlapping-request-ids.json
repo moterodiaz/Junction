@@ -1,0 +1,187 @@
+{
+  "description": "Old client against the current backend: back-to-back invokes are handled one at a time in order and a repeated request id simply runs again (legacy has no duplicate rejection). Replayed live.",
+  "offered": [],
+  "server": {
+    "v2": false,
+    "intent": false
+  },
+  "selected": null,
+  "enabled_intents": [
+    "reading"
+  ],
+  "live": true,
+  "deadlines": {
+    "phone_idle_s": 30,
+    "phone_overall_s": 90
+  },
+  "steps": [
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "What is happening here?"
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r2",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "Who is speaking?"
+      }
+    },
+    {
+      "send": {
+        "type": "invoke",
+        "request_id": "r1",
+        "session_id": "s1",
+        "frame": {
+          "mime": "image/jpeg",
+          "b64": "/9j/4AAQSkZJRgABAQEASABIAAD/"
+        },
+        "audio": null,
+        "text": "What is happening here?"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r1",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+        "image_url": null,
+        "speech_text": "Hamlet is alone, weighing whether to keep living.",
+        "audio_url": null,
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [],
+        "models": {
+          "read": "stub",
+          "reason": "stub",
+          "image": "stub"
+        }
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r2",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r2",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+        "image_url": null,
+        "speech_text": "Hamlet is alone, weighing whether to keep living.",
+        "audio_url": null,
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [],
+        "models": {
+          "read": "stub",
+          "reason": "stub",
+          "image": "stub"
+        }
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "reading"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "thinking"
+      }
+    },
+    {
+      "receive": {
+        "type": "status",
+        "request_id": "r1",
+        "stage": "drawing"
+      }
+    },
+    {
+      "receive": {
+        "type": "card",
+        "request_id": "r1",
+        "title": "Hamlet, Act 3, Scene 1",
+        "caption": "Hamlet asks whether enduring pain is nobler than ending it.",
+        "image_url": null,
+        "speech_text": "Hamlet is alone, weighing whether to keep living.",
+        "audio_url": null,
+        "book": {
+          "title": "Hamlet",
+          "author": "William Shakespeare",
+          "location": "Act 3, Scene 1"
+        },
+        "sources": [],
+        "models": {
+          "read": "stub",
+          "reason": "stub",
+          "image": "stub"
+        }
+      }
+    }
+  ]
+}

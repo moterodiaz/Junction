@@ -18,6 +18,149 @@ current backend. These run through `./test.sh` alongside the existing legacy
 conformance tests. Backend/iOS implementation and compatibility approval remain
 with Ahmed/Maksym; runtime flags/auth remain off.
 
+## Proposed natural intent extension (INTENT-D1, not runtime implementation)
+
+Issue [#142](https://github.com/moterodiaz/Junction/issues/142), REQ-INTENT-01,
+REQ-INTENT-02 and REQ-WS-04; PRD §§6–7, §12.1 and §12.3. **Contract proposal,
+built ahead of its activation gate [#141](https://github.com/moterodiaz/Junction/issues/141)
+under the lead's build-ahead waiver.** Nothing here is deployed, advertised or
+enabled. Backend (INTENT-A1/C1) and iOS (INTENT-B1) adopt it only after the gate.
+
+### Negotiation and default-off guarantee
+
+Frame-free follow-ups change the meaning of a required field (`frame`), and
+clarification is a new terminal reply. Both are incompatible with strict old
+clients, so they need a negotiated version. They reuse the
+[LIFECYCLE.md](LIFECYCLE.md) mechanism with one more subprotocol token:
+
+- A new client offers `Sec-WebSocket-Protocol: metalab.v2.intent, metalab.v2`
+  (preference order). It may use the features below only after the HTTP
+  upgrade selects **exactly** `metalab.v2.intent`.
+- The server selects `metalab.v2.intent` only when it is offered, `metalab.v2`
+  is supported and the server's INTENT runtime flag is on. **The flag defaults
+  off.** Otherwise it selects `metalab.v2` (when offered and supported) or
+  nothing (legacy).
+- `metalab.v2.intent` is a strict superset of `metalab.v2`. Every LIFECYCLE.md
+  rule (ownership, `cancel`, `session_end`, expiry, `lifecycle_error` codes,
+  one terminal per accepted invocation) applies unchanged, with
+  `ws-lifecycle.schema.json` unchanged.
+- No new wire stage, error code or lifecycle code. `status.stage` stays
+  `transcribing | reading | thinking | drawing`; intent resolution happens
+  inside `thinking`.
+
+The root `oneOf` of `ws-messages.schema.json` and every pre-existing `$defs`
+entry are byte-identical (pinned by digest in `test_intent.py`). The new `$defs`
+entries are not referenced from the root, so legacy validation accepts and rejects
+exactly what it did before. On `metalab.v2.intent`, application messages validate
+against `$defs/intentProtocolMessage` instead of the root.
+
+| Selected subprotocol | What the client may send | What the server sends |
+|---|---|---|
+| none (old client, old server, flag off without v2) | legacy `invoke` only | legacy `status`/`card`/`error` only; nothing new |
+| `metalab.v2` | legacy `invoke`, v2 controls | legacy messages, v2 lifecycle messages; no `clarify`, no intent card |
+| `metalab.v2.intent` | `invoke` (framed or frame-free), v2 controls | `status`, intent `card`, `clarify`, legacy `error`, v2 lifecycle messages |
+
+### What an old client sees
+
+Nothing new. With no selected subprotocol (an old client, or a new client whose
+offer was ignored) the server behaves exactly as today:
+
+- A natural sentence is handled by today's L0 path (no command word means
+  `explain`) and gets a legacy card.
+- Ambiguity keeps today's behaviour (for example the existing book question
+  shipped as a legacy card), never `clarify`.
+- An invoke with `frame: null` is rejected with the existing fixed
+  invalid-request error (`internal`, `"Invalid request."`, `retryable: false`)
+  echoing its `request_id`; the connection keeps working.
+- Back-to-back invokes run one at a time in arrival order; a repeated
+  `request_id` simply runs again (legacy has no duplicate rejection).
+
+The same holds for `metalab.v2` connections, which additionally keep the
+LIFECYCLE.md controls.
+
+### Messages on `metalab.v2.intent`
+
+- **`invoke`** (phone to backend): either the unchanged legacy invoke, or a
+  frame-free follow-up (`$defs/followUpInvokeMessage`): identical fields with
+  `frame` present and `null`. Exactly one of `audio` or `text` still applies; no
+  other field is added. `audio`/`text` carry the whole utterance as today.
+- **`card`** (`$defs/intentCardMessage`): every legacy card field with the same
+  schema and meaning (`image_url` null when generation is unavailable,
+  `audio_url` null means the phone speaks `speech_text` with the system voice,
+  `sources` HTTPS citations, `models` read/reason/image), plus two required
+  fields:
+  - `intent`: the dispatched bounded intent, one of `reading | research | document`;
+  - `utterance`: the full preserved utterance (the typed `text` exactly, or the
+    full transcript of `audio`), never an L0 token.
+- **`clarify`** (`$defs/clarifyMessage`, terminal): `request_id`, `session_id`,
+  `reason`, `utterance`, `speech_text`, `audio_url` (card meaning), `options`.
+  - `ambiguous_intent`: the utterance fits two or more **enabled** intents;
+    `options` lists 2–3 of them.
+  - `ambiguous_book`: the book cannot be identified; `options` is empty.
+  - `needs_frame`: a frame-free follow-up in a session with no book context;
+    `options` is empty. It is a reply, not an error, so the question survives.
+  - `unsupported_intent`: outside the bounded set, or an intent whose module is
+    disabled; `options` is empty. Disabled modules never start.
+- **`error`**: unchanged legacy error, same codes.
+
+### Rules
+
+- **Full utterance.** The server resolves intent over the whole utterance, the
+  extracted page text and the session. A failed or timed-out classifier falls
+  back to the established L0 resolver (`reading`), never losing the question.
+  The utterance is user text: never logged, persisted beyond the session or put
+  in evidence (PRD §6).
+- **Bounded intents.** Only `reading` is enabled by default. `research` and
+  `document` stay `unsupported_intent` until their modules pass their gates.
+- **Exactly one terminal.** An accepted invocation ends with exactly one of
+  `card`, `error`, `clarify` or (v2) `cancelled`; nothing follows it.
+- **Frame-free follow-ups** reuse only this session's committed context (book,
+  position and earlier questions/answers, at least the last ten committed turns).
+  Stages are a subsequence in PRD order without `reading`. Without context the
+  reply is `clarify` with `needs_frame`; another session's context is never used.
+  A frame-free invoke is an accepted invocation and refreshes expiry like any other.
+- **Clarification context.** `clarify` commits no answer to history. After an
+  `ambiguous_*` clarification on a framed invoke, the page text and the pending
+  question are kept session-only so the next follow-up can answer without a new
+  frame. They are deleted on end/expiry like all session text.
+- **Cancel** is the LIFECYCLE.md `cancel`: its only terminal is `cancelled`,
+  nothing it produced is appended, and earlier committed context stays.
+- **Reset** is `session_end` (pending invocations get `cancelled` first, then
+  `session_ended` with `cleanup: "complete"`) followed by a fresh session ID.
+  The ended ID is never reused (`session_unavailable`); the phone discards any
+  late reply for the old session.
+- **Overlapping and repeated requests.** One connection processes invocations
+  one at a time in arrival order, as today; controls are handled immediately,
+  even while an invocation runs or waits. A follow-up sees every card committed
+  before it starts. A reused `request_id` on the connection is rejected at
+  admission with `duplicate_request` and starts no work. To interrupt, the
+  phone sends `cancel` before the new invoke.
+- **Deadlines unchanged.** The phone keeps its 30 s idle / 90 s overall
+  deadlines per invocation (queue time included) and the backend keeps its
+  current request/stage limits. Classification and clarification get bounded
+  portions of that budget, not larger deadlines.
+
+### Fixtures, exchanges and tests
+
+- `fixtures/intent/valid/` and `fixtures/intent/invalid/`: message shapes for
+  `$defs/intentProtocolMessage`. The legacy `fixtures/valid` and
+  `fixtures/invalid` folders are unchanged and still pass/fail the root schema.
+- `exchanges/intent/*.json`: ordered `steps` (`{"send": ...}` or
+  `{"receive": ...}`) with `offered`, `server` (`v2`, `intent` flags),
+  `selected`, `enabled_intents`, `live` and `deadlines`. They live in a
+  subfolder so the legacy conformance and remote harnesses do not replay them.
+  Exchanges with `"live": true` are old-client cases replayed against the
+  actual current backend; the rest are proposed protocol traces.
+- `test_intent.py` (run by `./test.sh`) pins the legacy schema, validates every
+  new fixture, checks the negotiation table and default-off flag, runs every
+  exchange through a test-only model of the rules above (including mutated
+  exchanges that must fail), and replays the live old-client exchanges against
+  `../backend` to show that nothing new reaches an old client.
+
+These are proposed protocol tests, not backend/iOS conformance. INTENT-G1 still
+needs deployed natural requests, a real spoken follow-up, reset and cancel on
+hardware, and lead acceptance.
+
 ## Message Types
 
 ### Phone to Backend

@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "request_id": "req-1",
+  "code": "unsupported_intent",
+  "message": "Unsupported.",
+  "retryable": false
+}
