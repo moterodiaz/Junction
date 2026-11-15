@@ -16,6 +16,9 @@ from typing import Mapping
 
 # Name of the Modal secret that holds the variables below.
 MODAL_SECRET_NAME = "metalab"
+# Separate Modal secrets that set ELEVEN_LABS_API_KEY and ELEVEN_LABS_VOICE_ID (stt/speak.py).
+# Deploy fails if either secret is missing from the Modal workspace.
+ELEVENLABS_SECRET_NAMES = ("ELEVEN_LABS_KEY", "ELEVVOICE_ID")
 
 REQUIRED = ("NVIDIA_API_KEY", "GEMINI_API_KEY")
 
