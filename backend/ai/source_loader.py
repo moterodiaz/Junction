@@ -52,6 +52,23 @@ def normalize_text(text: str) -> str:
     return " ".join(cleaned.split())
 
 
+def strip_ocr_artefacts(text: str) -> str:
+    """Strip OCR artefacts before scoring: speaker prefixes, bare line numbers, and stage directions."""
+    if not text:
+        return ""
+    # 1. Bracketed stage directions like [Enter Hamlet.], [Exit.], etc.
+    cleaned = re.sub(r"\[[^\]]*\]", " ", text)
+    # 2. Unbracketed stage directions like Enter Hamlet, Exit, Exeunt at start of line
+    cleaned = re.sub(r"(?im)^\s*(?:enter|exit|exeunt|re-enter)\b[^\n]*$", " ", cleaned)
+    # 3. All-caps speaker prefixes like HAMLET., SPEAKER., KING., FIRST CLOWN.
+    cleaned = re.sub(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,})*\s*[\.:]\s*", " ", cleaned)
+    # 4. Speaker prefixes with colon (e.g. Hamlet:) or Speaker.
+    cleaned = re.sub(r"\b(?:[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*\s*:|Speaker\s*[\.:])\s*", " ", cleaned)
+    # 5. Bare line numbers / margin numbers
+    cleaned = re.sub(r"\b\d+\b", " ", cleaned)
+    return cleaned
+
+
 @dataclass
 class Line:
     type: str  # "line" or "stage_direction"
@@ -416,6 +433,144 @@ def _fuzzy_token_similarity(query_words: List[str], window_norm: str, threshold:
     return matched / len(query_words)
 
 
+def _match_single_chunk(
+    chunk_norm_text: str,
+    loaded_play: Play,
+    min_score: float = 0.45,
+) -> Optional[PassageMatch]:
+    lines = loaded_play._indexed_lines
+    if not lines:
+        return None
+    q_words = chunk_norm_text.split()
+    if not q_words:
+        return None
+    q_words_set = set(q_words)
+    len_q = len(chunk_norm_text)
+    padded_q = f" {chunk_norm_text} "
+
+    # 1. Exact substring in scene
+    if getattr(loaded_play, "_scenes", None):
+        first_w = q_words[0]
+        for sc in loaded_play._scenes:
+            if padded_q in sc.norm_text:
+                sc_lines = lines[sc.start_idx : sc.end_idx]
+                max_w = min(len(q_words) // 2 + 4, len(sc_lines) + 1)
+                for w_len in range(2, max_w):
+                    for i in range(len(sc_lines) - w_len + 1):
+                        if first_w not in sc_lines[i].norm:
+                            continue
+                        w_norm = " ".join(sc_lines[i + k].norm for k in range(w_len))
+                        if padded_q in f" {w_norm} ":
+                            g_start = sc.start_idx + i
+                            g_end = g_start + w_len
+                            m_lines = lines[g_start:g_end]
+                            first, last = m_lines[0], m_lines[-1]
+                            loc_str = (
+                                f"Act {first.act}, Scene {first.scene}, line {first.line}"
+                                if first.line == last.line
+                                else f"Act {first.act}, Scene {first.scene}, lines {first.line}-{last.line}"
+                            )
+                            return PassageMatch(
+                                play_id=loaded_play.id,
+                                play_title=loaded_play.title,
+                                author=loaded_play.author,
+                                act=first.act,
+                                scene=first.scene,
+                                act_roman=first.act_roman,
+                                scene_roman=first.scene_roman,
+                                line_start=first.line,
+                                line_end=last.line,
+                                speaker=first.speaker or None,
+                                text="\n".join(l.text for l in m_lines),
+                                location=loc_str,
+                                score=0.95,
+                                source=loaded_play.get_source_citation(),
+                            )
+
+    # 2. Fast candidate search
+    scenes = getattr(loaded_play, "_scenes", None)
+    if not scenes:
+        return None
+
+    cand_scenes = []
+    for sc in scenes:
+        ov = len(q_words_set & sc.words_set) / len(q_words_set)
+        cand_scenes.append((ov, sc))
+    cand_scenes.sort(key=lambda x: x[0], reverse=True)
+
+    best: Optional[PassageMatch] = None
+    _best_score = min_score
+    max_w = min(len(q_words) // 2 + 3, 14)
+    needed = int(0.35 * len(q_words_set))
+
+    for ov, sc in cand_scenes[:2]:
+        sc_lines = lines[sc.start_idx : sc.end_idx]
+        n_sc = len(sc_lines)
+        line_counts = [len(l.words_set & q_words_set) for l in sc_lines]
+        candidates = []
+        for i in range(n_sc):
+            running = 0
+            len_w = 0
+            w_set: set[str] = set()
+            for w in range(1, max_w + 1):
+                j = i + w - 1
+                if j >= n_sc:
+                    break
+                l_j = sc_lines[j]
+                len_w = (len_w + 1 + len(l_j.norm)) if len_w else len(l_j.norm)
+                running += line_counts[j]
+                w_set.update(l_j.words_set)
+                if running < needed:
+                    continue
+                tok_sim = len(q_words_set & w_set) / len(q_words_set)
+                if tok_sim < 0.4:
+                    continue
+                rq = 2.0 * min(len_q, len_w) / (len_q + len_w)
+                ub = 0.6 * tok_sim + 0.4 * rq
+                if ub >= _best_score:
+                    candidates.append((ub, tok_sim, i, w))
+
+        candidates.sort(key=lambda c: -c[0])
+        for ub, tok_sim, i, w in candidates[:15]:
+            if ub < _best_score:
+                break
+            w_norm = " ".join(sc_lines[k].norm for k in range(i, i + w))
+            sm = SequenceMatcher(None, chunk_norm_text, w_norm)
+            if 0.6 * tok_sim + 0.4 * sm.quick_ratio() < _best_score:
+                continue
+            sr = sm.ratio()
+            score = 0.6 * tok_sim + 0.4 * sr
+            if score >= min_score and score > _best_score:
+                _best_score = score
+                m_lines = lines[sc.start_idx + i : sc.start_idx + i + w]
+                first, last = m_lines[0], m_lines[-1]
+                loc_str = (
+                    f"Act {first.act}, Scene {first.scene}, line {first.line}"
+                    if first.line == last.line
+                    else f"Act {first.act}, Scene {first.scene}, lines {first.line}-{last.line}"
+                )
+                best = PassageMatch(
+                    play_id=loaded_play.id,
+                    play_title=loaded_play.title,
+                    author=loaded_play.author,
+                    act=first.act,
+                    scene=first.scene,
+                    act_roman=first.act_roman,
+                    scene_roman=first.scene_roman,
+                    line_start=first.line,
+                    line_end=last.line,
+                    speaker=first.speaker or None,
+                    text="\n".join(l.text for l in m_lines),
+                    location=loc_str,
+                    score=score,
+                    source=loaded_play.get_source_citation(),
+                )
+        if _best_score >= 0.70:
+            break
+
+    return best
+
+
 def find_passage(
     query: str,
     play: Optional[str] = "Hamlet",
@@ -433,7 +588,8 @@ def find_passage(
     if not query or not query.strip():
         return None
 
-    norm_query = normalize_text(query)
+    cleaned_query = strip_ocr_artefacts(query)
+    norm_query = normalize_text(cleaned_query)
     query_words = norm_query.split()
     if not query_words:
         return None
@@ -457,6 +613,67 @@ def find_passage(
     lines = loaded_play._indexed_lines
     if not lines:
         return None
+
+    # Chunk and vote for long queries (> 60 words) to handle scene breaks, full pages, and stay under 0.3s
+    if len(query_words) > 60:
+        chunk_size = 40
+        stride = 35
+        chunks = []
+        for idx in range(0, len(query_words), stride):
+            cw = query_words[idx : idx + chunk_size]
+            if len(cw) >= 15:
+                chunks.append(" ".join(cw))
+            elif chunks:
+                chunks[-1] += " " + " ".join(cw)
+        if not chunks:
+            chunks = [" ".join(query_words)]
+
+        votes: Dict[Tuple[int, int], List[PassageMatch]] = {}
+        for ch in chunks:
+            m = _match_single_chunk(ch, loaded_play, min_score=0.45)
+            if m:
+                key = (m.act, m.scene)
+                votes.setdefault(key, []).append(m)
+
+        if votes:
+            winning_key = max(votes.keys(), key=lambda k: (len(votes[k]), sum(m.score for m in votes[k])))
+            winning_matches = votes[winning_key]
+            line_start = min(m.line_start for m in winning_matches)
+            line_end = max(m.line_end for m in winning_matches)
+            best_score = max(m.score for m in winning_matches)
+            if best_score >= min_score:
+                matched_lines = [
+                    l for l in lines
+                    if l.act == winning_key[0] and l.scene == winning_key[1] and line_start <= l.line <= line_end
+                ]
+                first = matched_lines[0] if matched_lines else winning_matches[0]
+                last = matched_lines[-1] if matched_lines else winning_matches[-1]
+                loc_str = (
+                    f"Act {winning_key[0]}, Scene {winning_key[1]}, line {line_start}"
+                    if line_start == line_end
+                    else f"Act {winning_key[0]}, Scene {winning_key[1]}, lines {line_start}-{line_end}"
+                )
+                combined_text = (
+                    "\n".join(l.text for l in matched_lines)
+                    if matched_lines
+                    else "\n".join(m.text for m in winning_matches)
+                )
+                return PassageMatch(
+                    play_id=loaded_play.id,
+                    play_title=loaded_play.title,
+                    author=loaded_play.author,
+                    act=winning_key[0],
+                    scene=winning_key[1],
+                    act_roman=first.act_roman,
+                    scene_roman=first.scene_roman,
+                    line_start=line_start,
+                    line_end=line_end,
+                    speaker=first.speaker or None,
+                    text=combined_text,
+                    location=loc_str,
+                    score=best_score,
+                    source=loaded_play.get_source_citation(),
+                )
 
     # 1. Exact normalized single-line match
     # Whole-line equality wins over word-bounded partial matches.
@@ -633,7 +850,7 @@ def find_passage(
             # Sort candidate windows by upper bound descending, tie-breaking by i ascending, w ascending
             candidates.sort(key=lambda c: (-c[0], c[3], c[4]))
 
-            for upper_bound, tok_sim, real_quick, i, w, len_w in candidates:
+            for upper_bound, tok_sim, real_quick, i, w, len_w in candidates[:30]:
                 if upper_bound < _best_score:
                     break
                 window_norm = " ".join(sc_lines[k].norm for k in range(i, i + w))

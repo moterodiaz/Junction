@@ -50,11 +50,33 @@ def ground_passage(
     if not page_text or not page_text.strip():
         return None
     # ponytail: word-count guard prevents single common words like "He." from matching
-    from .source_loader import normalize_text as _norm
+    from .source_loader import list_plays, load_play, normalize_text as _norm
     if len(_norm(page_text).split()) < min_words:
         return None
+
+    target_play: Optional[str] = None
+    if play is not None and str(play).strip():
+        play_key = str(play).strip().lower()
+        available = list_plays()
+        for p in available:
+            if p.lower() == play_key:
+                target_play = p
+                break
+        if target_play is None:
+            for p in available:
+                try:
+                    loaded = load_play(p)
+                    if loaded.id.lower() == play_key or loaded.title.lower() == play_key:
+                        target_play = p
+                        break
+                except Exception:
+                    continue
+        # If the session title is not a loaded play (e.g. "Unknown book"), search play=None instead of raising
+        if target_play is None:
+            target_play = None
+
     try:
-        return find_passage(query=page_text, play=play, min_score=min_score)
+        return find_passage(query=page_text, play=target_play, min_score=min_score)
     except Exception as exc:
         log.warning("ground_passage lookup failed: %s", type(exc).__name__)
         return None
@@ -101,13 +123,24 @@ def identify_book_from_text(text: str) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-def page_looks_like_book(page_text: str, book: Optional[BookInfo], command: Optional[str] = None) -> bool:
+_LOOKUP_SENTINEL = object()
+
+
+def page_looks_like_book(
+    page_text: str,
+    book: Optional[BookInfo],
+    command: Optional[str] = None,
+    passage_match: Any = _LOOKUP_SENTINEL,
+) -> bool:
     """Return True if the visible page text or command appears to belong to the session's book."""
     text_to_check = f"{page_text or ''} {command or ''}".strip()
     if not text_to_check:
         return False
     if book is None or not book.title:
         return False
+
+    if passage_match is not _LOOKUP_SENTINEL and passage_match is not None:
+        return True
 
     title_lower = book.title.strip().lower()
     from .source_loader import normalize_text
@@ -121,6 +154,8 @@ def page_looks_like_book(page_text: str, book: Optional[BookInfo], command: Opti
     if title_lower == "hamlet":
         if any(kw in words for kw in _HAMLET_KEYWORDS):
             return True
+        if passage_match is not _LOOKUP_SENTINEL:
+            return False
         return ground_passage(page_text or "", min_score=0.6, play="Hamlet") is not None
 
     title_words = set(normalize_text(book.title).split())
@@ -231,7 +266,7 @@ class HttpGeminiClient:
                 f"- Matched Text: \"\"\"{passage_match.text}\"\"\"\n"
                 f"You MUST use this exact title, location ('{passage_match.location}'), and source citation.\n"
             )
-        elif is_session_default_book(session) and not page_looks_like_book(page_text, session.book, command=command):
+        elif is_session_default_book(session) and not page_looks_like_book(page_text, session.book, command=command, passage_match=passage_match):
             grounding_info = (
                 f"\nNo verified local source passage matched this page text, and the page text does NOT "
                 f"appear to be from the session's default book ({session.book.title}).\n"
@@ -260,7 +295,7 @@ class HttpGeminiClient:
                 f"Keep explanations strictly within or before the student's current reading position.\n"
             )
 
-        if passage_match is not None or not is_session_default_book(session) or page_looks_like_book(page_text, session.book, command=command):
+        if passage_match is not None or not is_session_default_book(session) or page_looks_like_book(page_text, session.book, command=command, passage_match=passage_match):
             book_header = f"Book: {session.book.title} ({session.book.author})\nCurrent Position: {session.book.location}\n"
         else:
             book_header = f"Session Default Book: {session.book.title} (Page text appears to be from a different or unknown book)\nCurrent Position: No source text\n"
@@ -331,7 +366,9 @@ class HttpGeminiClient:
         parts = candidates[0].get("content", {}).get("parts", [])
         if not parts:
             raise ReasoningError("Gemini candidate has no parts")
-        text = parts[0].get("text", "")
+        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+        if not text:
+            raise ReasoningError("Gemini candidate has no text")
         return parse_reasoning_json(text, session, passage_match=passage_match, page_text=page_text)
 
 
@@ -374,7 +411,7 @@ class StubGeminiClient:
         if self.default_answer:
             return dict(self.default_answer)
 
-        looks_like_session = page_looks_like_book(page_text, session.book, command=command)
+        looks_like_session = page_looks_like_book(page_text, session.book, command=command, passage_match=passage_match)
         is_session_default = is_session_default_book(session)
 
         if passage_match is not None:
@@ -539,7 +576,7 @@ def parse_reasoning_json(
         raw_location = str(raw_book.get("location") or "").strip()
         session_title = session.book.title.strip()
 
-        if page_text and is_session_default_book(session) and not page_looks_like_book(page_text, session.book):
+        if page_text and is_session_default_book(session) and not page_looks_like_book(page_text, session.book, passage_match=passage_match):
             if raw_title and raw_title.lower() != session_title.lower() and raw_title.lower() != "unknown":
                 book_title = raw_title
                 book_author = raw_author or "Unknown author"
@@ -649,7 +686,7 @@ async def think(
     # Local grounding via source_loader.find_passage if omitted and page_text present
     if passage_match is None and page_text and page_text.strip():
         book_title = session.book.title if session.book and session.book.title else "Hamlet"
-        passage_match = ground_passage(page_text, min_score=0.6, play=book_title)
+        passage_match = await asyncio.to_thread(ground_passage, page_text, min_score=0.6, play=book_title)
 
     # When passage_match is found, update session.book before reasoning
     if passage_match is not None:
@@ -705,7 +742,7 @@ async def think(
         # No verified passage: never emit unverified source citations
         answer["sources"] = []
         has_custom_default = getattr(active_client, "default_answer", None) is not None
-        if not has_custom_default and is_session_default_book(session) and not page_looks_like_book(page_text, session.book, command=command):
+        if not has_custom_default and is_session_default_book(session) and not page_looks_like_book(page_text, session.book, command=command, passage_match=passage_match):
             book_dict = answer.get("book")
             if not isinstance(book_dict, dict):
                 book_dict = {}
