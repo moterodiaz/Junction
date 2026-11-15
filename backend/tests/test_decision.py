@@ -837,11 +837,25 @@ class DecisionMalformedFieldsTest(unittest.TestCase):
                     [],
                 )
                 self.assertEqual(res.action, "explain")
-                self.assertIsInstance(res.needs_image, bool)
-                self.assertIsInstance(res.speak_only, bool)
-                self.assertIsInstance(res.spoiler_risk, bool)
-                self.assertIsInstance(res.book_changed, bool)
+                self.assertIs(res.needs_image, False)
+                self.assertIs(res.speak_only, False)
+                self.assertIs(res.spoiler_risk, False)
+                self.assertIs(res.book_changed, False)
 
+    def test_malformed_noul_uses_the_question_default(self) -> None:
+        specs = {"needs_image": DecisionQuestionSpec("needs_image", "noul", "", default=True)}
+        for bad in (None, "maybe", [1]):
+            with self.subTest(noul=bad):
+                res = _parse_decision_response(
+                    {"answers": {
+                        "action": {"choice": "explain", "confidence": 0.9},
+                        "needs_image": {"noul": bad, "confidence": 0.9},
+                    }},
+                    "explain",
+                    specs,
+                    [],
+                )
+                self.assertIs(res.needs_image, True)
     def test_noul_none_is_false(self) -> None:
         res = _parse_decision_response(
             {"answers": {
@@ -868,6 +882,7 @@ class DecisionMalformedFieldsTest(unittest.TestCase):
                 )
                 self.assertEqual(dict_res.action, "draw")
                 self.assertTrue(dict_res.needs_image)
+                self.assertEqual(dict_res.confidence, 1.0)
 
                 sdk_res = _parse_decision_response(
                     mock.Mock(answers={"action": mock.Mock(choice="draw", confidence=bad)}),
@@ -876,6 +891,7 @@ class DecisionMalformedFieldsTest(unittest.TestCase):
                     [],
                 )
                 self.assertEqual(sdk_res.action, "draw")
+                self.assertEqual(sdk_res.confidence, 1.0)
 
 
 if __name__ == "__main__":
