@@ -29,7 +29,10 @@ final class AppModel: ObservableObject {
     private let glasses: GlassesBridge?
     private let socket = BackendSocket()
     private let speaker = AnswerSpeaker()
-    private var bookSessionId: String
+    /// The book session: its id, its generation and its local retention deadline.
+    private var bookSession: ClientSession
+    /// Ends the book session on the phone when its retention deadline passes.
+    private var retentionTask: Task<Void, Never>?
     private var activeRequest: String?
     /// Token of the socket carrying `activeRequest`; replies from any other socket are stale.
     private var activeSocket: Int?
@@ -47,12 +50,10 @@ final class AppModel: ObservableObject {
     init() {
         let stored = UserDefaults.standard.string(forKey: Keys.backend)
         backendURL = (stored?.isEmpty == false) ? stored! : BackendConfig.placeholder
-        if let existing = UserDefaults.standard.string(forKey: Keys.book) {
-            bookSessionId = existing
-        } else {
-            bookSessionId = UUID().uuidString
-            UserDefaults.standard.set(bookSessionId, forKey: Keys.book)
-        }
+        let storedBook = UserDefaults.standard.string(forKey: Keys.book)
+        let bookId = (storedBook?.isEmpty == false) ? storedBook! : UUID().uuidString
+        bookSession = ClientSession(id: bookId, now: ContinuousClock.now)
+        UserDefaults.standard.set(bookId, forKey: Keys.book)
         if UserDefaults.standard.object(forKey: Keys.earcons) != nil {
             earconsEnabled = UserDefaults.standard.bool(forKey: Keys.earcons)
         } else {
@@ -72,6 +73,7 @@ final class AppModel: ObservableObject {
             configureError = error.localizedDescription
         }
         speaker.earconsEnabled = earconsEnabled
+        armRetention()
     }
 
     var blockedReason: String? {
@@ -100,20 +102,45 @@ final class AppModel: ObservableObject {
     func handle(url: URL) async { await glasses?.handle(url: url) }
 
     func newBook() {
+        endBookSession()
+    }
+
+    /// Ends the book session on the phone, for "New book" and for local expiry. The legacy protocol
+    /// has no end control, so nothing is acknowledged by the server; its own expiry removes its copy.
+    private func endBookSession() {
         // Invalidate any request in flight so its answer cannot restore the old book's card.
         cancelWork()
         glasses?.stopCamera()
         activeRequest = nil
         activeSocket = nil
         phase = .idle
-        bookSessionId = UUID().uuidString
-        UserDefaults.standard.set(bookSessionId, forKey: Keys.book)
-        session.lastCard = nil
+        bookSession.reset(to: UUID().uuidString, at: ContinuousClock.now)
+        UserDefaults.standard.set(bookSession.id, forKey: Keys.book)
+        session = session.endingBookSession()
+        glassesWriter.cancelPending()
         show(Self.idleLens)
+        armRetention()
+    }
+
+    private func armRetention() {
+        retentionTask?.cancel()
+        let deadline = bookSession.deadline
+        let generation = bookSession.generation
+        retentionTask = Task { [weak self] in
+            try? await Task.sleep(until: deadline, clock: .continuous)
+            guard !Task.isCancelled, let self, self.bookSession.owns(generation: generation),
+                  self.bookSession.isExpired(at: ContinuousClock.now)
+            else { return }
+            self.endBookSession()
+        }
     }
 
     func invoke() {
         guard session.canInvoke, phase == .idle, BackendConfig(string: backendURL) != nil else { return }
+        // An expired session cannot be refreshed; this question starts a fresh one.
+        if bookSession.isExpired(at: ContinuousClock.now) {
+            endBookSession()
+        }
         // A pending idle or error push would stop the camera this request is about to use.
         glassesWriter.cancelPending()
         // The previous question's socket may still be open; nothing from it belongs to this one.
@@ -153,12 +180,16 @@ final class AppModel: ObservableObject {
                 self?.receive(text, socket: token)
             }
         }
-        socket.onDisconnect = { [weak self] token in
+        socket.onDisconnect = { [weak self] token, refusal in
             Task { @MainActor in
                 guard let self,
                       ReplyGate.failsOnDisconnect(phase: self.phase, fromSocket: token, activeSocket: self.activeSocket)
                 else { return }
-                self.fail(.backendTimeout, retryable: true)
+                if let refusal {
+                    self.fail(.backend, retryable: refusal.retryable, message: refusal.banner)
+                } else {
+                    self.fail(.backendTimeout, retryable: true)
+                }
             }
         }
     }
@@ -200,6 +231,10 @@ final class AppModel: ObservableObject {
         } catch is CancellationError {
             // A newer request may own the camera now; whoever cancelled already stopped it.
             return
+        } catch let refusal as HandshakeRefusal {
+            if Task.isCancelled { return }
+            glasses?.stopCamera()
+            fail(.backend, retryable: refusal.retryable, message: refusal.banner)
         } catch let problem as GlassesProblem {
             if Task.isCancelled { return }
             glasses?.stopCamera()
@@ -217,11 +252,17 @@ final class AppModel: ObservableObject {
             return
         }
         try Task.checkCancellation()
+        // Only a sent invocation refreshes the retention deadline; an expired session is not revived.
+        guard bookSession.recordInvocation(at: ContinuousClock.now) else {
+            endBookSession()
+            return
+        }
+        armRetention()
         let requestId = UUID().uuidString
         activeRequest = requestId
         let message = try Contract.makeInvoke(
             requestId: requestId,
-            sessionId: bookSessionId,
+            sessionId: bookSession.id,
             jpegBase64: frame.base64EncodedString(),
             wavBase64: wav?.base64EncodedString(),
             text: text
@@ -232,7 +273,8 @@ final class AppModel: ObservableObject {
         lastServerMessage = Date()
         armDeadline(for: requestId)
         socket.disconnect()
-        activeSocket = socket.connect(url: config.webSocketURL)
+        let plan = HandshakePlan(config: config, credential: HandshakeCredential(defaults: .standard))
+        activeSocket = socket.connect(plan: plan)
         try await socket.send(body)
         guard ReplyGate.entersWaitingAfterSend(phase: phase, requestId: requestId, activeRequest: activeRequest)
         else { return }
@@ -261,12 +303,15 @@ final class AppModel: ObservableObject {
             session = SessionMachine.reduce(session, .card(card))
             phase = .speaking
             let requestId = card.requestId
+            let generation = bookSession.generation
             presentTask?.cancel()
             show(LensCopy.content(for: card))
             presentTask = Task { [weak self] in
-                guard let self, !Task.isCancelled, self.activeRequest == requestId else { return }
+                guard let self, !Task.isCancelled, self.activeRequest == requestId,
+                      self.bookSession.owns(generation: generation) else { return }
                 await self.speaker.speak(SpeechPlan.route(card: card, displayEnabled: self.session.displayEnabled))
-                guard !Task.isCancelled, self.activeRequest == requestId, self.phase == .speaking else { return }
+                guard !Task.isCancelled, self.activeRequest == requestId, self.phase == .speaking,
+                      self.bookSession.owns(generation: generation) else { return }
                 self.phase = .idle
             }
         case .error(let error):

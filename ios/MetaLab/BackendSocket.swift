@@ -1,12 +1,15 @@
 import Foundation
+import MetaLabCore
 import os
 
 /// One WebSocket for one question. The payload is the invoke message and nothing else:
-/// no API key, no frame after the send completes.
+/// no API key, no frame after the send completes. The optional handshake credential travels only
+/// in the `Authorization` header that `HandshakePlan` builds, and is never logged.
 final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     /// Each callback carries the token `connect` returned, so a caller can drop replies from an older socket.
     var onText: (@Sendable (String, Int) -> Void)?
-    var onDisconnect: (@Sendable (Int) -> Void)?
+    /// The refusal is set when the server answered the handshake with an HTTP error status (401 with auth on).
+    var onDisconnect: (@Sendable (Int, HandshakeRefusal?) -> Void)?
 
     private struct State {
         var session: URLSession?
@@ -17,12 +20,12 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     @discardableResult
-    func connect(url: URL) -> Int {
+    func connect(plan: HandshakePlan) -> Int {
         disconnect()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = true
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-        let task = session.webSocketTask(with: url)
+        let task = session.webSocketTask(with: plan.urlRequest)
         let token = state.withLock { value -> Int in
             value.generation += 1
             value.session = session
@@ -37,7 +40,11 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func send(_ data: Data) async throws {
         let task = state.withLock { $0.task }
         guard let task else { throw URLError(.notConnectedToInternet) }
-        try await task.send(.data(data))
+        do {
+            try await task.send(.data(data))
+        } catch {
+            throw Self.refusal(of: task) ?? error
+        }
     }
 
     func disconnect() {
@@ -51,6 +58,20 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
         previous.0?.cancel(with: .goingAway, reason: nil)
         previous.1?.invalidateAndCancel()
+    }
+
+    /// A subprotocol the phone did not offer makes the socket unusable (contracts/LIFECYCLE.md);
+    /// closing it surfaces as a disconnect on the receive loop.
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        let outcome = ProtocolNegotiation.evaluate(
+            offered: ProtocolNegotiation.clientOffers, selected: `protocol`, upgraded: true
+        )
+        guard !outcome.usable else { return }
+        webSocketTask.cancel(with: .protocolError, reason: nil)
+    }
+
+    private static func refusal(of task: URLSessionWebSocketTask) -> HandshakeRefusal? {
+        HandshakeRefusal(httpStatus: (task.response as? HTTPURLResponse)?.statusCode)
     }
 
     private func receive(on task: URLSessionWebSocketTask, token: Int) {
@@ -68,7 +89,7 @@ final class BackendSocket: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 }
                 self.receive(on: task, token: token)
             case .failure:
-                self.onDisconnect?(token)
+                self.onDisconnect?(token, Self.refusal(of: task))
             @unknown default:
                 self.receive(on: task, token: token)
             }
