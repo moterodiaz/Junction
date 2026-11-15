@@ -87,7 +87,7 @@ See [`backend/README.md`](backend/README.md) (Modal).
 
 - One frame and one audio clip per invocation, only after the user asks.
 - The backend processes the frame and audio in memory and drops them once the card is built, without writing them to disk. On the phone, enabling "Keep a sample frame for the reading test" saves captured photos in the app's Documents folder.
-- Generated images and spoken clips stay in backend memory so the lens and phone can load them. A book session idle longer than `SESSION_IDLE_TTL_S` (one hour by default) ends with its history, clips and images, and their URLs then return 404. A session with a request in flight is never expired. The protocol has no end-of-session message yet, so idle expiry is the only end.
+- Generated images and spoken clips stay in backend memory so the lens and phone can load them. A book session idle longer than `SESSION_IDLE_TTL_S` (one hour by default) is deleted with its history, clips and images, and their URLs then return 404. Cleanup runs when the next request starts, not at the timeout itself, so an idle server can hold the data until then. A session with a request in flight is never expired. The protocol has no end-of-session message yet, so idle expiry is the only end.
 - The book session holds text only: book, position, earlier questions and answers.
 - If a frame has no readable text, MetaLab says so and discards it.
 
