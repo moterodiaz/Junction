@@ -662,6 +662,49 @@ class STTDebugLogTest(unittest.TestCase):
             self.assertFalse(self.debug_log._dirty)
         self.assertEqual(len(self.lines()), 2)
 
+    def test_line_written_while_the_timer_commits_is_committed_later(self):
+        started, release = threading.Event(), threading.Event()
+        commits = []
+
+        def slow_hook():
+            commits.append(1)
+            if len(commits) == 1:
+                started.set()
+                release.wait(5)
+
+        self.debug_log.set_commit_hook(slow_hook)
+        self.addCleanup(release.set)
+        with mock.patch.object(self.debug_log, "_last_commit", time.monotonic()), \
+                mock.patch.object(self.debug_log, "_timer", None), \
+                mock.patch.object(self.debug_log, "COMMIT_INTERVAL_S", 0.05):
+            self.debug_log.record(transcript="line1")  # throttled: the timer runs this commit
+            self.assertTrue(started.wait(5))
+            self.debug_log.record(transcript="line2")
+            self.debug_log.wait_for_commit()
+            release.set()
+            self.assertTrue(self.wait_until(lambda: len(commits) == 2), commits)
+            self.assertTrue(self.wait_until(lambda: not self.debug_log._dirty))
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_busy_lock_arms_a_new_timer_even_while_one_is_running(self):
+        running, release = threading.Event(), threading.Event()
+
+        def busy():
+            running.set()
+            release.wait(5)
+
+        self.addCleanup(release.set)
+        old = threading.Timer(0, busy)
+        old.daemon = True
+        with mock.patch.object(self.debug_log, "_timer", old), \
+                mock.patch.object(self.debug_log, "_maybe_commit", lambda: None):
+            old.start()
+            self.assertTrue(running.wait(5))
+            self.debug_log._schedule(5.0, replace=True)
+            new = self.debug_log._timer
+            self.assertIsNot(new, old)
+            new.cancel()
+
     def test_failed_commit_is_retried(self):
         attempts = []
 
