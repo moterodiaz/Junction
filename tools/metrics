@@ -31,8 +31,8 @@ REQ = re.compile(r"REQ-[A-Z]+-[0-9]+")
 FIXER_PREFIX = "fix: address greptile review"
 # Same order as AGENTS.md section 4 and .github/CODEOWNERS (used when CODEOWNERS is missing).
 DEFAULT_OWNERS = [("/.github/", "@moterodiaz"), ("/.claude/", "@moterodiaz"), ("/.agents/", "@moterodiaz"),
-                  ("/contracts/", "@moterodiaz"), ("/docs/", "@moterodiaz"), ("/ios/", "@maksymmatviievskyi"),
-                  ("/backend/app/", "@Ahm3d-KA"), ("/backend/stt/", "@Ahm3d-KA"), ("/backend/ai/", "@Marcus228")]
+                  ("/contracts/", "@moterodiaz"), ("/docs/", "@moterodiaz"), ("/ios/", "@moterodiaz"),
+                  ("/backend/app/", "@moterodiaz"), ("/backend/stt/", "@moterodiaz"), ("/backend/ai/", "@moterodiaz")]
 LEAD = "@moterodiaz"
 
 def usage(code=1):
