@@ -38,6 +38,9 @@ DEFAULTS = {
     "MODEL_REASON_DEEP": "gemini-4-carbon",
     "DYNAMIC_MODEL_ROUTING": "false",
     "STT_ENGINE": "whisper",
+    # Opt-in transcript log for glasses test runs (REQ-OBS-02); writes user speech, so off by default.
+    "STT_DEBUG_LOG": "off",
+    "STT_DEBUG_LOG_PATH": "/stt-logs/transcripts.jsonl",
 }
 
 
@@ -142,6 +145,11 @@ def config_problems(env: Mapping[str, str]) -> list[str]:
     if raw_stt and raw_stt not in ("whisper", "gemini"):
         problems.append("STT_ENGINE must be 'whisper' or 'gemini'")
 
+    if env.get("STT_DEBUG_LOG", "").strip().lower() not in ON + OFF:
+        problems.append("STT_DEBUG_LOG must be on or off")
+    if "STT_DEBUG_LOG_PATH" in env and not env["STT_DEBUG_LOG_PATH"].strip():
+        problems.append("STT_DEBUG_LOG_PATH must not be empty")
+
     return problems
 
 
@@ -159,6 +167,8 @@ class Settings:
     model_reason_deep: str = "gemini-4-carbon"
     dynamic_model_routing: str = "false"
     stt_engine: str = "whisper"
+    stt_debug_log: str = "off"
+    stt_debug_log_path: str = "/stt-logs/transcripts.jsonl"
     model_tts_elevenlabs: str = "eleven_flash_v2_5"
     eleven_labs_api_key: str = field(repr=False, default="")
     eleven_labs_voice_id: str = field(repr=False, default="")

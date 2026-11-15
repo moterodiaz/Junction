@@ -417,5 +417,178 @@ class GeminiSTTBehaviorTest(unittest.TestCase):
         self.assertIn("no speech", str(ctx.exception).lower())
 
 
+class STTDebugLogTest(unittest.TestCase):
+    """REQ-OBS-02: the opt-in transcript log for glasses test runs."""
+
+    def setUp(self):
+        import tempfile
+
+        from stt import debug_log
+
+        self.debug_log = debug_log
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "logs", "transcripts.jsonl")
+        patcher = mock.patch.dict("os.environ", {
+            "NVIDIA_API_KEY": "", "GEMINI_API_KEY": "",
+            "STT_DEBUG_LOG": "on", "STT_DEBUG_LOG_PATH": self.path,
+        })
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(stt.set_engine, None)
+        engine.set_gemini_client(None)
+        self.addCleanup(engine.set_gemini_client, None)
+        self.addCleanup(debug_log.set_commit_hook, debug_log.set_commit_hook(None))
+
+    def exchange(self, message, expect):
+        with TestClient(app).websocket_connect("/ws") as ws:
+            ws.send_json(message)
+            return [ws.receive_json() for _ in range(expect)]
+
+    def lines(self):
+        import json
+
+        with open(self.path, encoding="utf-8") as f:
+            return [json.loads(line) for line in f]
+
+    def transcribe(self, raw=b"RIFF fake wav", session_id="s1"):
+        media = pipeline.Media(mime="audio/wav", b64=base64.b64encode(raw).decode())
+        return asyncio.run(pipeline.transcribe(media, session_id=session_id))
+
+    def test_flag_off_writes_no_file(self):
+        os.environ["STT_DEBUG_LOG"] = "off"
+        stt.set_engine(lambda audio: "Draw this.")
+        replies = self.exchange(spoken(), 5)
+        self.assertEqual(replies[4]["type"], "card")
+        self.assertFalse(os.path.exists(self.path))
+        self.assertFalse(os.path.exists(os.path.dirname(self.path)))
+
+    def test_one_line_per_clip_with_every_field(self):
+        stt.set_engine(lambda audio: " Draw this. ")
+        for request_id in ("r1", "r2"):
+            replies = self.exchange(spoken(request_id=request_id), 5)
+            self.assertEqual(replies[4]["type"], "card")
+        lines = self.lines()
+        self.assertEqual(len(lines), 2)
+        line = lines[0]
+        self.assertEqual(set(line), {"ts", "session_id", "engine", "model", "latency_ms", "fallback_used",
+                                     "fallback_reason", "clip_bytes", "mime", "transcript", "ok", "error_type"})
+        self.assertEqual(line["session_id"], "s1")
+        self.assertEqual(line["engine"], "custom")
+        self.assertIsNone(line["model"])
+        self.assertEqual(line["transcript"], "Draw this.")
+        self.assertEqual(line["clip_bytes"], len(b"RIFF fake wav"))
+        self.assertEqual(line["mime"], "audio/wav")
+        self.assertIs(line["ok"], True)
+        self.assertIsNone(line["error_type"])
+        self.assertIs(line["fallback_used"], False)
+        self.assertIsNone(line["fallback_reason"])
+        self.assertIsInstance(line["latency_ms"], int)
+        self.assertTrue(line["ts"].endswith("Z"))
+
+    def test_engine_failure_is_recorded_without_its_message(self):
+        def broken(audio):
+            raise RuntimeError("secret words")
+
+        stt.set_engine(broken)
+        with self.assertLogs("metalab", "ERROR"):
+            with self.assertRaises(pipeline.PipelineError):
+                self.transcribe()
+        [line] = self.lines()
+        self.assertIs(line["ok"], False)
+        self.assertEqual(line["error_type"], "RuntimeError")
+        self.assertEqual(line["transcript"], "")
+        self.assertNotIn("secret words", open(self.path, encoding="utf-8").read())
+
+    def test_gemini_error_falls_back_to_whisper(self):
+        class FailingModels:
+            def generate_content(self, model, contents, **kwargs):
+                raise ConnectionError("connection reset")
+
+        client = mock.Mock()
+        client.models = FailingModels()
+        with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "draw this"):
+            stt.set_engine(engine._gemini_engine(client=client, fallback_to_whisper=True))
+            self.assertEqual(self.transcribe(), "draw this")
+        [line] = self.lines()
+        self.assertEqual((line["engine"], line["model"]), ("gemini", engine.WHISPER_MODEL))
+        self.assertIs(line["fallback_used"], True)
+        self.assertEqual(line["fallback_reason"], "gemini_error")
+        self.assertEqual(line["transcript"], "draw this")
+
+    def test_failed_whisper_fallback_keeps_the_fallback_reason(self):
+        def failing_whisper(audio):
+            engine._set_run_info("whisper", engine.WHISPER_MODEL)
+            raise RuntimeError("whisper down")
+
+        with mock.patch.object(engine, "_faster_whisper", return_value=failing_whisper):
+            stt.set_engine(engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True))
+            with self.assertLogs("metalab", "ERROR"):
+                with self.assertRaises(pipeline.PipelineError):
+                    self.transcribe()
+        [line] = self.lines()
+        self.assertIs(line["ok"], False)
+        self.assertIs(line["fallback_used"], True)
+        self.assertEqual(line["fallback_reason"], "no_key")
+
+    def test_no_key_and_bad_format_fallbacks(self):
+        with mock.patch.object(engine, "_faster_whisper", return_value=lambda a: "explain"):
+            stt.set_engine(engine._gemini_engine(client=None, api_key="", fallback_to_whisper=True))
+            self.transcribe()
+            stt.set_engine(engine._gemini_engine(client=mock.Mock(), fallback_to_whisper=True))
+            self.transcribe(raw=b"not a known container")
+        no_key, bad_format = self.lines()
+        self.assertEqual((no_key["fallback_reason"], no_key["model"]), ("no_key", engine.WHISPER_MODEL))
+        self.assertEqual((bad_format["fallback_reason"], bad_format["model"]), ("bad_format", engine.WHISPER_MODEL))
+        self.assertTrue(no_key["fallback_used"] and bad_format["fallback_used"])
+
+    def test_gemini_success_reports_the_gemini_model(self):
+        response = mock.Mock(text="who is this")
+        client = mock.Mock()
+        client.models.generate_content.return_value = response
+        stt.set_engine(engine._gemini_engine(client=client, model="gemini-test", fallback_to_whisper=False))
+        self.assertEqual(self.transcribe(), "who is this")
+        [line] = self.lines()
+        self.assertEqual((line["engine"], line["model"], line["fallback_used"]), ("gemini", "gemini-test", False))
+
+    def test_unwritable_path_never_fails_the_request_or_logs_the_transcript(self):
+        blocker = os.path.join(self.tmp.name, "a_file")
+        open(blocker, "w").close()
+        os.environ["STT_DEBUG_LOG_PATH"] = os.path.join(blocker, "sub", "transcripts.jsonl")
+        transcript = " ".join(["draw", "the", "ghost", "please"])
+        stt.set_engine(lambda audio: transcript)
+        with self.assertLogs("metalab", "DEBUG") as logs:
+            replies = self.exchange(spoken(), 5)
+        self.assertEqual(replies[4]["type"], "card")
+        self.assertTrue(any("stt debug log write skipped" in out for out in logs.output))
+        for out in logs.output:
+            self.assertNotIn("ghost", out)
+
+    def test_commit_hook_is_throttled(self):
+        commits = []
+        self.debug_log.set_commit_hook(lambda: commits.append(1))
+        with mock.patch.object(self.debug_log, "_last_commit", -1e9), \
+                mock.patch.object(self.debug_log, "_schedule") as schedule:
+            self.debug_log.record(transcript="one")
+            self.debug_log.wait_for_commit()
+            self.debug_log.record(transcript="two")
+            self.debug_log.wait_for_commit()
+            self.assertEqual(len(commits), 1)
+            schedule.assert_called_once()
+            self.debug_log.flush()
+            self.assertEqual(len(commits), 2)
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_config_problems_for_the_new_variables(self):
+        from app.config import config_problems, load_settings
+
+        self.assertTrue(any("STT_DEBUG_LOG must" in p for p in config_problems({"STT_DEBUG_LOG": "maybe"})))
+        self.assertTrue(any("STT_DEBUG_LOG_PATH" in p for p in config_problems({"STT_DEBUG_LOG_PATH": "  "})))
+        for ok in ({}, {"STT_DEBUG_LOG": "on"}, {"STT_DEBUG_LOG": "off"}, {"STT_DEBUG_LOG_PATH": "/tmp/x.jsonl"}):
+            self.assertFalse(any("STT_DEBUG_LOG" in p for p in config_problems(ok)), ok)
+        s = load_settings({"NVIDIA_API_KEY": "k", "GEMINI_API_KEY": "k"})
+        self.assertEqual((s.stt_debug_log, s.stt_debug_log_path), ("off", "/stt-logs/transcripts.jsonl"))
+
+
 if __name__ == "__main__":
     unittest.main()

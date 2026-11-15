@@ -21,6 +21,7 @@ from typing import Awaitable, Callable, Optional, TypeVar
 import httpx
 
 import stt
+from stt import debug_log as stt_debug_log, engine as stt_engine
 from stt.speak import discard as discard_clip, speak
 import ai.decision
 import ai.reasoning
@@ -66,16 +67,47 @@ _STT_SLOTS = threading.BoundedSemaphore(_STT_WORKERS)
 STT_SLOT_POLL_S = 0.05  # how often a waiting request checks for a free slot
 
 
-def _transcribe_in_slot(clip: bytes) -> str:
+def _transcribe_in_slot(clip: bytes, mime: str | None = None, session_id: str | None = None) -> str:
     try:
-        return stt.transcribe(clip)
+        if not stt_debug_log.enabled():
+            return stt.transcribe(clip)
+        return _transcribe_and_record(clip, mime, session_id)
     finally:
         _STT_SLOTS.release()
+
+
+def _transcribe_and_record(clip: bytes, mime: str | None, session_id: str | None) -> str:
+    """Transcribe and append one STT debug log line (REQ-OBS-02), written in the worker before
+    the slot is released so a timed-out request still leaves its record."""
+    started = time.monotonic()
+    text, error = "", None
+    try:
+        text, _ = stt_engine.transcribe_detailed(clip)
+        return text
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        info = stt_engine.last_run_info()
+        stt_debug_log.record(
+            ts=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
+            session_id=session_id,
+            engine=info["engine"],
+            model=info["model"],
+            latency_ms=round((time.monotonic() - started) * 1000),
+            fallback_used=info["fallback_used"],
+            fallback_reason=info["fallback_reason"],
+            clip_bytes=len(clip),
+            mime=mime,
+            transcript=text,
+            ok=error is None,
+            error_type=type(error).__name__ if error is not None else None,
+        )
 
 UNKNOWN_COMMAND = "Sorry, I didn't catch that. Say explain, draw, or who is this."
 
 
-async def transcribe(audio: Media) -> str:
+async def transcribe(audio: Media, session_id: str | None = None) -> str:
     # Take a slot before decoding or queueing so a stuck engine or a burst of waiters cannot pile
     # up decoded clips; the slot is released only when the worker really finishes, not when the
     # request times out. With both slots busy, wait for one: timed() bounds the wait, and polling
@@ -85,7 +117,7 @@ async def transcribe(audio: Media) -> str:
         await asyncio.sleep(STT_SLOT_POLL_S)
     try:
         clip = base64.b64decode(audio.b64)  # Invoke validation (#85) guarantees valid base64
-        future = _STT_THREADS.submit(_transcribe_in_slot, clip)
+        future = _STT_THREADS.submit(_transcribe_in_slot, clip, audio.mime, session_id)
     except BaseException:
         _STT_SLOTS.release()
         raise
@@ -460,7 +492,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
         utterance = invoke.text
     else:
         await send_stage("transcribing")
-        utterance = await timed(transcribe(invoke.audio))
+        utterance = await timed(transcribe(invoke.audio, session_id=invoke.session_id))
 
     if not dynamic_routing:
         command = command_from(utterance)
