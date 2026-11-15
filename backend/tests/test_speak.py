@@ -57,7 +57,8 @@ class StubSpeech:
 
 class SpeakBase(unittest.TestCase):
     def setUp(self):
-        env = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "", "IMAGE_BASE_URL": BASE})
+        env = mock.patch.dict(os.environ, {"NVIDIA_API_KEY": "", "GEMINI_API_KEY": "", "IMAGE_BASE_URL": BASE,
+                                           "ELEVEN_LABS_API_KEY": "", "ELEVEN_LABS_VOICE_ID": ""})
         env.start()
         self.addCleanup(env.stop)
         self.addCleanup(stt.set_engine, stt.set_engine(lambda audio: "explain"))

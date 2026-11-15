@@ -614,7 +614,7 @@ async def _run(invoke: Invoke, send_stage: SendStage) -> Card:
                      fallback=bool(models["image"] == "stub") and not clarify)
 
         if audio_url:
-            _speech_client = stt.speak.active_speech_client()
+            _speech_client = stt.speak.client_for(audio_url)
             tts_model = getattr(_speech_client, "model", None)
             if tts_model:
                 _configured = getattr(_speech_client, "_configured_model", tts_model)

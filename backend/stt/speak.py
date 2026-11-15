@@ -1,5 +1,8 @@
 """Spoken answer (PRD section 3 step 6, section 4 Models): speech_text -> WAV at card.audio_url.
 
+ElevenLabs speaks when ELEVEN_LABS_API_KEY and ELEVEN_LABS_VOICE_ID are set; if it fails, Gemini
+tries once (with GEMINI_API_KEY) inside the same TTS_TIMEOUT_S.
+
 Any failure returns None, so the card ships with audio_url null and the phone speaks
 speech_text with the system voice (PRD section 7). Clips live only in memory, belong to the
 session that asked, and are deleted with it or after CLIP_TTL_S (section 6).
@@ -22,6 +25,8 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Response
 
+from .elevenlabs import DEFAULT_MODEL_TTS_ELEVENLABS, ElevenLabsSpeechClient
+
 log = logging.getLogger("metalab.speak")
 
 DEFAULT_MODEL_TTS = "gemini-3.8-flash-tts"
@@ -43,6 +48,8 @@ _sweeper: Optional[threading.Thread] = None
 _sweep_now = threading.Event()  # wakes the sweeper early (tests)
 _client: Any = None
 _gemini: Optional["GeminiSpeechClient"] = None
+_elevenlabs: Optional[ElevenLabsSpeechClient] = None
+_served_by: OrderedDict[str, Any] = OrderedDict()  # clip id -> client that made it, for model attribution
 
 
 def is_not_found(exc: BaseException) -> bool:
@@ -120,9 +127,10 @@ class GeminiSpeechClient:
 
 
 def set_speech_client(client: Any) -> None:
-    """Replace the TTS client (None restores the Gemini client from env)."""
+    """Replace the TTS client (None restores the ElevenLabs or Gemini client from env)."""
     global _client
     _client = client
+    _served_by.clear()
 
 
 def _expire() -> None:
@@ -267,9 +275,9 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     """Return an https URL for the spoken text, or None to let the phone speak it."""
     # Same public base as generated images (backend/ai/image.py); the contract needs https.
     base = _resolve_base_url()
-    client = _client or _gemini_client()
+    client = _client or _elevenlabs_client() or _gemini_client()
     if client is None:
-        log.info("speech synthesis skipped: no TTS client or GEMINI_API_KEY unset")
+        log.info("speech synthesis skipped: no TTS client, ElevenLabs and GEMINI_API_KEY unset")
         return None
     if base is None:
         log.info("speech synthesis skipped: IMAGE_BASE_URL unset")
@@ -282,13 +290,16 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
         if session_id in _epochs:
             _epochs.move_to_end(session_id)  # LRU: active session stays at the back
         _epochs_inflight[session_id] = _epochs_inflight.get(session_id, 0) + 1
+    # The ElevenLabs attempt and its one Gemini fallback share a single TTS_TIMEOUT_S budget.
+    attempt = {"client": client}
     try:
-        result = await asyncio.wait_for(client.synthesize(text), TTS_TIMEOUT_S)
+        result = await asyncio.wait_for(_synthesize(client, text, attempt), TTS_TIMEOUT_S)
     except Exception as exc:
+        failed = attempt["client"]
         log.warning("speech synthesis failed, the phone will use its own voice: %s",
-                    describe_failure(exc, text, getattr(client, "api_key", "")))
+                    describe_failure(exc, text, getattr(failed, "api_key", "")))
         if is_not_found(exc):
-            await log_tts_models(client, exc)
+            await log_tts_models(failed, exc)
         return None
     finally:
         if session_id is not None:
@@ -305,7 +316,47 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     if not pcm:
         log.warning("speech synthesis returned empty audio")
         return None
-    return f"{base}/audio/{store(to_wav(pcm, rate), session_id)}.wav"
+    clip_id = store(to_wav(pcm, rate), session_id)
+    _served_by[clip_id] = attempt["client"]  # tied to this clip, not to the latest request
+    while len(_served_by) > MAX_CLIPS:
+        _served_by.popitem(last=False)
+    return f"{base}/audio/{clip_id}.wav"
+
+
+def client_for(audio_url: Optional[str]) -> Optional[Any]:
+    """The client that made the clip behind audio_url; the active client if unknown."""
+    if _client:
+        return _client
+    clip_id = audio_url.rsplit("/", 1)[-1].removesuffix(".wav") if audio_url else ""
+    return _served_by.get(clip_id) or active_speech_client()
+
+
+async def _synthesize(client: Any, text: str, attempt: dict) -> Any:
+    """client.synthesize(text); if ElevenLabs fails and a Gemini key is set, Gemini once.
+    attempt["client"] names the client that made (or last failed to make) the audio."""
+    try:
+        return await client.synthesize(text)
+    except Exception as exc:
+        fallback = _gemini_client() if isinstance(client, ElevenLabsSpeechClient) else None
+        if fallback is None:
+            raise
+        log.warning("ElevenLabs speech failed, trying Gemini: %s",
+                    describe_failure(exc, text, client.api_key))
+    attempt["client"] = fallback
+    return await fallback.synthesize(text)
+
+
+def _elevenlabs_client() -> Optional[ElevenLabsSpeechClient]:
+    """One client per key, voice and model; None unless both ElevenLabs variables are set."""
+    global _elevenlabs
+    key = os.environ.get("ELEVEN_LABS_API_KEY", "").strip()
+    voice = os.environ.get("ELEVEN_LABS_VOICE_ID", "").strip()
+    model = os.environ.get("MODEL_TTS_ELEVENLABS", "").strip() or DEFAULT_MODEL_TTS_ELEVENLABS
+    if not key or not voice:
+        return None
+    if _elevenlabs is None or (_elevenlabs.api_key, _elevenlabs.voice_id, _elevenlabs._configured_model) != (key, voice, model):
+        _elevenlabs = ElevenLabsSpeechClient(key, voice, model)
+    return _elevenlabs
 
 
 def _gemini_client() -> Optional[GeminiSpeechClient]:
@@ -321,8 +372,9 @@ def _gemini_client() -> Optional[GeminiSpeechClient]:
 
 
 def active_speech_client() -> Optional[Any]:
-    """Return the current TTS client without creating one; None if no client or key."""
-    return _client or _gemini
+    """Return the current TTS client without creating one; None if no client or key. For the
+    client that made a given clip (Gemini after an ElevenLabs failure), use client_for()."""
+    return _client or _elevenlabs or _gemini
 
 
 audio_router = APIRouter()
