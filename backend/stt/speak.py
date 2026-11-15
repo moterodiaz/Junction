@@ -45,6 +45,13 @@ _client: Any = None
 _gemini: Optional["GeminiSpeechClient"] = None
 
 
+def is_not_found(exc: BaseException) -> bool:
+    """True for a provider 404 (model not found). The generateContent client sets .code and
+    .status; the Interactions client raises NotFoundError with only .status_code."""
+    return (getattr(exc, "code", None) == 404 or getattr(exc, "status_code", None) == 404
+            or getattr(exc, "status", None) == "NOT_FOUND")
+
+
 class GeminiSpeechClient:
     def __init__(self, api_key: str, model: str):
         self.api_key, self.model, self._configured_model = api_key, model, model
@@ -87,7 +94,7 @@ class GeminiSpeechClient:
         try:
             response = await self._generate(text)
         except Exception as exc:
-            if getattr(exc, "code", None) != 404 and getattr(exc, "status", None) != "NOT_FOUND":
+            if not is_not_found(exc):
                 raise
             _orig_exc = exc
             try:
@@ -218,7 +225,8 @@ def describe_failure(exc: BaseException, text: str = "", key: str = "") -> str:
     """What to log about a failed synthesis: the exception type, the provider's HTTP code and
     status name, and a short single-line reason. Never the answer text or the API key."""
     parts = [type(exc).__name__]
-    code, status = getattr(exc, "code", None), getattr(exc, "status", None)
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    status = getattr(exc, "status", None)
     if isinstance(code, int):
         parts.append(f"code={code}")
     if isinstance(status, str) and status:
@@ -279,7 +287,7 @@ async def speak(text: str, session_id: Optional[str] = None) -> Optional[str]:
     except Exception as exc:
         log.warning("speech synthesis failed, the phone will use its own voice: %s",
                     describe_failure(exc, text, getattr(client, "api_key", "")))
-        if getattr(exc, "code", None) == 404 or getattr(exc, "status", None) == "NOT_FOUND":
+        if is_not_found(exc):
             await log_tts_models(client, exc)
         return None
     finally:
