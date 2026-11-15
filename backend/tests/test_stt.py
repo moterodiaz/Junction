@@ -662,6 +662,83 @@ class STTDebugLogTest(unittest.TestCase):
             self.assertFalse(self.debug_log._dirty)
         self.assertEqual(len(self.lines()), 2)
 
+    def test_line_written_while_the_timer_commits_is_committed_later(self):
+        started, release = threading.Event(), threading.Event()
+        commits = []
+
+        def slow_hook():
+            commits.append(1)
+            if len(commits) == 1:
+                started.set()
+                release.wait(5)
+
+        self.debug_log.set_commit_hook(slow_hook)
+        self.addCleanup(release.set)
+        with mock.patch.object(self.debug_log, "_last_commit", time.monotonic()), \
+                mock.patch.object(self.debug_log, "_timer", None), \
+                mock.patch.object(self.debug_log, "COMMIT_INTERVAL_S", 0.05):
+            self.debug_log.record(transcript="line1")  # throttled: the timer runs this commit
+            self.assertTrue(started.wait(5))
+            self.debug_log.record(transcript="line2")
+            self.debug_log.wait_for_commit()
+            release.set()
+            self.assertTrue(self.wait_until(lambda: len(commits) == 2), commits)
+            self.assertTrue(self.wait_until(lambda: not self.debug_log._dirty))
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_concurrent_schedules_arm_one_timer(self):
+        created = []
+
+        class FakeTimer:
+            def __init__(self, delay, fn):
+                time.sleep(0.01)  # widen the read-then-assign window
+                created.append(self)
+                self.daemon = False
+
+            def start(self):
+                pass
+
+        barrier = threading.Barrier(8)
+
+        def go():
+            barrier.wait(5)
+            self.debug_log._schedule(1.0)
+
+        with mock.patch.object(self.debug_log, "_timer", None), \
+                mock.patch.object(self.debug_log.threading, "Timer", FakeTimer):
+            workers = [threading.Thread(target=go) for _ in range(8)]
+            for w in workers:
+                w.start()
+            for w in workers:
+                w.join(5)
+        self.assertEqual(len(created), 1)
+
+    def test_line_after_the_timer_releases_the_lock_is_committed(self):
+        released, go = threading.Event(), threading.Event()
+        commits = []
+        self.debug_log.set_commit_hook(lambda: commits.append(1))
+        self.addCleanup(go.set)
+        real_retire = self.debug_log._retire_timer
+
+        def paused_retire():
+            if not released.is_set():
+                released.set()  # the timer's commit is over and _commit_lock is free
+                go.wait(5)
+            real_retire()
+
+        with mock.patch.object(self.debug_log, "_last_commit", time.monotonic()), \
+                mock.patch.object(self.debug_log, "_timer", None), \
+                mock.patch.object(self.debug_log, "_retire_timer", paused_retire), \
+                mock.patch.object(self.debug_log, "COMMIT_INTERVAL_S", 0.05):
+            self.debug_log.record(transcript="line1")  # throttled: the timer commits it
+            self.assertTrue(released.wait(5))
+            self.assertEqual(commits, [1])
+            self.debug_log.record(transcript="line2")
+            self.debug_log.wait_for_commit()
+            go.set()
+            self.assertTrue(self.wait_until(lambda: len(commits) == 2), commits)
+            self.assertTrue(self.wait_until(lambda: not self.debug_log._dirty))
+        self.assertEqual(len(self.lines()), 2)
     def test_failed_commit_is_retried(self):
         attempts = []
 
