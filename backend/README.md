@@ -35,6 +35,20 @@ It prints a URL like `https://<workspace>--metalab-web.modal.run`. Then:
 
 `backend/.env` is never uploaded; keys come only from the Modal secret. A missing required key stops the container when it starts (check `modal app logs metalab`), not `modal deploy` itself. The Whisper weights are baked into the image at build time, so the first deploy takes a few minutes longer. For the demo, set `min_containers=1` in `modal_app.py` so the first request does not wait for a cold start (this keeps one container running and billed).
 
+### STT debug log for glasses test runs (`REQ-OBS-02`)
+
+Off by default. While it is on, every transcription is appended as one JSON line to `transcripts.jsonl` on the Modal Volume `metalab-stt-logs` (mounted at `/stt-logs`). Each line holds `ts`, `session_id`, `engine`, `model`, `latency_ms`, `fallback_used`, `fallback_reason` (`no_key`, `bad_format`, `gemini_error`, `empty_response` or null), `clip_bytes`, `mime`, `transcript`, `ok` and `error_type`. A write failure never fails the request.
+
+The log holds what the student said, so it is the one exception to REQ-PRIV-01/02. Turn it on only for test runs and off again afterwards. Add `STT_DEBUG_LOG=on` to the `metalab` secret (Modal dashboard, Secrets; keep the existing values), then:
+
+```sh
+modal deploy backend/app/modal_app.py
+# after the test run
+modal volume get metalab-stt-logs transcripts.jsonl
+```
+
+Lines are committed to the Volume at most every 10 s and at shutdown. `STT_DEBUG_LOG_PATH` moves the file (default `/stt-logs/transcripts.jsonl`); locally, point it at a temp file.
+
 ---
 
 ## AI Architecture & Gemini Stack (Paid Tier 3)

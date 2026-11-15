@@ -38,6 +38,11 @@ image = (
 
 app = modal.App("metalab", image=image)
 
+# Holds the opt-in STT debug log (REQ-OBS-02); nothing is written unless STT_DEBUG_LOG=on.
+# Pull it with: modal volume get metalab-stt-logs transcripts.jsonl
+STT_LOG_DIR = "/stt-logs"
+stt_logs = modal.Volume.from_name("metalab-stt-logs", create_if_missing=True)
+
 
 @app.function(
     secrets=[modal.Secret.from_name(name) for name in (MODAL_SECRET_NAME, *ELEVENLABS_SECRET_NAMES)],
@@ -48,6 +53,7 @@ app = modal.App("metalab", image=image)
     memory=2048,
     scaledown_window=300,  # stay warm for 5 min after a request; set min_containers=1 for the demo
     timeout=600,
+    volumes={STT_LOG_DIR: stt_logs},
 )
 @modal.concurrent(max_inputs=20)
 @modal.asgi_app()
@@ -61,6 +67,9 @@ def web():
     get_settings()
     import stt
     from app.main import create_app
+    from stt import debug_log
+
+    debug_log.set_commit_hook(stt_logs.commit)
 
     fastapi_app = create_app(require_keys=True)
     try:

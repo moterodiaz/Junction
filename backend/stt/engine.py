@@ -38,6 +38,7 @@ _engine_lock = threading.Lock()
 _gemini_client: Any = None
 _fallback_engine: Engine | None = None
 _fallback_lock = threading.Lock()
+_run_info = threading.local()  # what the last transcription on this thread used (debug log)
 GEMINI_TIMEOUT_MS = 15_000  # below the 25 s stage deadline, leaving time for the Whisper fallback
 
 
@@ -79,6 +80,24 @@ def set_gemini_client(client: Any) -> Any:
     return previous
 
 
+def _set_run_info(engine: str, model: str, fallback_reason: str | None = None) -> None:
+    _run_info.value = {
+        "engine": engine,
+        "model": model,
+        "fallback_used": fallback_reason is not None,
+        "fallback_reason": fallback_reason,
+    }
+
+
+def last_run_info() -> dict[str, Any]:
+    """Engine, model and fallback of the last transcription on this thread. A swapped-in engine
+    (set_engine) reports nothing, so it shows as engine "custom"."""
+    info = getattr(_run_info, "value", None)
+    if info is None:
+        return {"engine": "custom", "model": None, "fallback_used": False, "fallback_reason": None}
+    return dict(info)
+
+
 def warm() -> None:
     """Load the engine now instead of on the first clip (e.g. at server startup)."""
     _loaded()
@@ -87,6 +106,13 @@ def warm() -> None:
 def transcribe(audio: bytes) -> str:
     """Transcribe one audio clip (any container ffmpeg can decode, e.g. WAV) to text."""
     return _loaded()(audio).strip()
+
+
+def transcribe_detailed(audio: bytes) -> tuple[str, dict[str, Any]]:
+    """transcribe(), plus which engine and model produced the text (see last_run_info)."""
+    _run_info.value = None
+    text = _loaded()(audio).strip()
+    return text, last_run_info()
 
 
 def _loaded() -> Engine:
@@ -110,6 +136,7 @@ def _faster_whisper() -> Engine:
     model = WhisperModel(WHISPER_MODEL, device="auto", compute_type="auto")
 
     def run(audio: bytes) -> str:
+        _set_run_info("whisper", WHISPER_MODEL)
         segments, _ = model.transcribe(io.BytesIO(audio), language="en", beam_size=1)
         return " ".join(s.text.strip() for s in segments)
 
@@ -141,7 +168,14 @@ def _gemini_engine(
 
     owned: list[Any] = []  # one lazily built client, reused across clips
 
+    def fallback(audio: bytes, reason: str) -> str:
+        _set_run_info("gemini", WHISPER_MODEL, reason)
+        text = _whisper_fallback()(audio)
+        _set_run_info("gemini", WHISPER_MODEL, reason)  # the Whisper run records itself as "whisper"
+        return text
+
     def run(audio: bytes) -> str:
+        _set_run_info("gemini", target_model)
         if not audio or not audio.strip(b"\x00 \t\r\n"):
             raise ValueError("Empty or invalid audio clip")
 
@@ -152,7 +186,7 @@ def _gemini_engine(
                 _log.debug("taking whisper fallback: GEMINI_API_KEY is not set")
                 if fallback_to_whisper:
                     try:
-                        return _whisper_fallback()(audio)
+                        return fallback(audio, "no_key")
                     except Exception as fb_exc:
                         _log.debug("whisper fallback also failed: %s: %s", type(fb_exc).__name__, fb_exc)
                 raise RuntimeError("GEMINI_API_KEY is not set for Gemini transcription")
@@ -173,7 +207,7 @@ def _gemini_engine(
             _log.debug("taking whisper fallback: unsupported audio format for Gemini")
             if fallback_to_whisper:
                 try:
-                    return _whisper_fallback()(audio)
+                    return fallback(audio, "bad_format")
                 except Exception as fb_exc:
                     _log.debug("whisper fallback also failed: %s: %s", type(fb_exc).__name__, fb_exc)
             raise ValueError("Unsupported audio format for Gemini transcription")
@@ -190,7 +224,7 @@ def _gemini_engine(
             _log.debug("taking whisper fallback: Gemini call failed: %s: %s", type(exc).__name__, exc)
             if fallback_to_whisper:
                 try:
-                    return _whisper_fallback()(audio)
+                    return fallback(audio, "gemini_error")
                 except Exception as fb_exc:
                     _log.debug("whisper fallback also failed: %s: %s", type(fb_exc).__name__, fb_exc)
             # REQ-PRIV-02: Never log or echo audio bytes or user speech in the exception message
@@ -209,7 +243,7 @@ def _gemini_engine(
             _log.debug("taking whisper fallback: Gemini returned empty/blocked response")
             if fallback_to_whisper:
                 try:
-                    return _whisper_fallback()(audio)
+                    return fallback(audio, "empty_response")
                 except Exception as fb_exc:
                     _log.debug("whisper fallback after empty response failed: %s: %s", type(fb_exc).__name__, fb_exc)
             raise RuntimeError("Gemini transcription returned no speech")
