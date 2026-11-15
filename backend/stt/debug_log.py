@@ -60,7 +60,10 @@ def record(**fields: Any) -> None:
     except Exception as exc:
         _log.debug("stt debug log write skipped: %s", type(exc).__name__)
         return
-    _commit_in_background()
+    try:
+        _commit_in_background()
+    except Exception as exc:  # e.g. the container cannot start another thread
+        _log.debug("stt debug log commit skipped: %s", type(exc).__name__)
 
 
 _worker: threading.Thread | None = None
